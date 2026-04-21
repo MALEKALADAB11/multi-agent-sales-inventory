@@ -1,0 +1,327 @@
+promo_id,promo_name,start_date,end_date,sku,product_name,category,discount_pct,promo_type,scope
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,RCH-MOB-010,Mobile Recharge 10DT,Recharges,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,RCH-MOB-020,Mobile Recharge 20DT,Recharges,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,RCH-INT-050,Internet Package 50GB,Recharges,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,RCH-STR-001,Monthly Streaming Subscription,Recharges,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,PHN-IPH-15,iPhone 15,Smartphones,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,PHN-OPP-F5,Oppo Find X5,Smartphones,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,PHN-BUD-001,Budget Phone 4G,Smartphones,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,TAB-IPD-AIR,iPad Air,Tablets,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,TAB-SAM-S9,Samsung Tab S9,Tablets,25,religious,national
+PROMO-0001,Ramadan 2024,2024-03-11,2024-04-09,TAB-LEN-P11,Lenovo Tab P11,Tablets,25,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,PHN-IPH-15,iPhone 15,Smartphones,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,PHN-OPP-F5,Oppo Find X5,Smartphones,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,PHN-BUD-001,Budget Phone 4G,Smartphones,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,TAB-IPD-AIR,iPad Air,Tablets,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,TAB-SAM-S9,Samsung Tab S9,Tablets,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-CAM-001,Outdoor Security Camera,Accessories,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-BUD-001,Wireless Earbuds Pro,Accessories,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-BUD-002,Wireless Earbuds Basic,Accessories,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-WAT-001,Smartwatch Pro,Accessories,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-WAT-002,Smartwatch Fitness,Accessories,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-CHG-001,Fast Charger 65W,Accessories,30,religious,national
+PROMO-0002,Eid Al-Fitr 2024,2024-04-10,2024-04-12,ACC-CAS-001,Phone Case Premium,Accessories,30,religious,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,RTR-4G-001,4G Home Router Basic,Routers,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,RTR-4G-002,4G Router Pro,Routers,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,RTR-5G-001,5G Router Premium,Routers,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,RTR-5G-002,5G Router Enterprise,Routers,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,PHN-IPH-15,iPhone 15,Smartphones,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,PHN-OPP-F5,Oppo Find X5,Smartphones,20,tech,national
+PROMO-0003,5G Launch Campaign,2024-05-01,2024-06-30,PHN-BUD-001,Budget Phone 4G,Smartphones,20,tech,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,PHN-IPH-15,iPhone 15,Smartphones,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,PHN-OPP-F5,Oppo Find X5,Smartphones,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,PHN-BUD-001,Budget Phone 4G,Smartphones,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-CAM-001,Outdoor Security Camera,Accessories,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-BUD-001,Wireless Earbuds Pro,Accessories,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-BUD-002,Wireless Earbuds Basic,Accessories,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-WAT-001,Smartwatch Pro,Accessories,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-WAT-002,Smartwatch Fitness,Accessories,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-CHG-001,Fast Charger 65W,Accessories,20,religious,national
+PROMO-0004,Eid Al-Adha 2024,2024-06-16,2024-06-19,ACC-CAS-001,Phone Case Premium,Accessories,20,religious,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,SIM-HOLI-001,Holiday SIM 10GB,SIM Cards,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,SIM-ESIM-001,eSIM Activation Kit,SIM Cards,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,SIM-PREP-001,Prepaid SIM Starter,SIM Cards,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,SIM-POST-001,Postpaid SIM Premium,SIM Cards,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,RCH-MOB-010,Mobile Recharge 10DT,Recharges,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,RCH-MOB-020,Mobile Recharge 20DT,Recharges,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,RCH-INT-050,Internet Package 50GB,Recharges,15,seasonal,national
+PROMO-0005,Summer Sales 2024,2024-07-01,2024-07-31,RCH-STR-001,Monthly Streaming Subscription,Recharges,15,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RTR-4G-001,4G Home Router Basic,Routers,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RTR-4G-002,4G Router Pro,Routers,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RTR-5G-001,5G Router Premium,Routers,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RTR-5G-002,5G Router Enterprise,Routers,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RCH-MOB-010,Mobile Recharge 10DT,Recharges,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RCH-MOB-020,Mobile Recharge 20DT,Recharges,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RCH-INT-050,Internet Package 50GB,Recharges,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,RCH-STR-001,Monthly Streaming Subscription,Recharges,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,TAB-IPD-AIR,iPad Air,Tablets,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,TAB-SAM-S9,Samsung Tab S9,Tablets,30,seasonal,national
+PROMO-0006,Back to School 2024,2024-08-15,2024-09-15,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,seasonal,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,RTR-4G-001,4G Home Router Basic,Routers,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,RTR-4G-002,4G Router Pro,Routers,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,RTR-5G-001,5G Router Premium,Routers,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,RTR-5G-002,5G Router Enterprise,Routers,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,PHN-IPH-15,iPhone 15,Smartphones,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,PHN-OPP-F5,Oppo Find X5,Smartphones,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,PHN-BUD-001,Budget Phone 4G,Smartphones,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,TAB-IPD-AIR,iPad Air,Tablets,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,TAB-SAM-S9,Samsung Tab S9,Tablets,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,TAB-LEN-P11,Lenovo Tab P11,Tablets,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-CAM-001,Outdoor Security Camera,Accessories,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-BUD-001,Wireless Earbuds Pro,Accessories,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-BUD-002,Wireless Earbuds Basic,Accessories,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-WAT-001,Smartwatch Pro,Accessories,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-WAT-002,Smartwatch Fitness,Accessories,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-CHG-001,Fast Charger 65W,Accessories,40,commercial,national
+PROMO-0007,Black Friday 2024,2024-11-25,2024-12-02,ACC-CAS-001,Phone Case Premium,Accessories,40,commercial,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,RCH-MOB-010,Mobile Recharge 10DT,Recharges,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,RCH-MOB-020,Mobile Recharge 20DT,Recharges,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,RCH-INT-050,Internet Package 50GB,Recharges,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,RCH-STR-001,Monthly Streaming Subscription,Recharges,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,PHN-IPH-15,iPhone 15,Smartphones,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,PHN-OPP-F5,Oppo Find X5,Smartphones,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,PHN-BUD-001,Budget Phone 4G,Smartphones,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,TAB-IPD-AIR,iPad Air,Tablets,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,TAB-SAM-S9,Samsung Tab S9,Tablets,25,religious,national
+PROMO-0008,Ramadan 2025,2025-03-01,2025-03-29,TAB-LEN-P11,Lenovo Tab P11,Tablets,25,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,PHN-IPH-15,iPhone 15,Smartphones,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,PHN-OPP-F5,Oppo Find X5,Smartphones,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,PHN-BUD-001,Budget Phone 4G,Smartphones,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,TAB-IPD-AIR,iPad Air,Tablets,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,TAB-SAM-S9,Samsung Tab S9,Tablets,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-CAM-001,Outdoor Security Camera,Accessories,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-BUD-001,Wireless Earbuds Pro,Accessories,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-BUD-002,Wireless Earbuds Basic,Accessories,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-WAT-001,Smartwatch Pro,Accessories,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-WAT-002,Smartwatch Fitness,Accessories,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-CHG-001,Fast Charger 65W,Accessories,30,religious,national
+PROMO-0009,Eid Al-Fitr 2025,2025-03-30,2025-04-01,ACC-CAS-001,Phone Case Premium,Accessories,30,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,PHN-IPH-15,iPhone 15,Smartphones,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,PHN-OPP-F5,Oppo Find X5,Smartphones,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,PHN-BUD-001,Budget Phone 4G,Smartphones,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-CAM-001,Outdoor Security Camera,Accessories,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-BUD-001,Wireless Earbuds Pro,Accessories,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-BUD-002,Wireless Earbuds Basic,Accessories,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-WAT-001,Smartwatch Pro,Accessories,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-WAT-002,Smartwatch Fitness,Accessories,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-CHG-001,Fast Charger 65W,Accessories,20,religious,national
+PROMO-0010,Eid Al-Adha 2025,2025-06-06,2025-06-09,ACC-CAS-001,Phone Case Premium,Accessories,20,religious,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,SIM-HOLI-001,Holiday SIM 10GB,SIM Cards,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,SIM-ESIM-001,eSIM Activation Kit,SIM Cards,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,SIM-PREP-001,Prepaid SIM Starter,SIM Cards,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,SIM-POST-001,Postpaid SIM Premium,SIM Cards,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,RCH-MOB-010,Mobile Recharge 10DT,Recharges,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,RCH-MOB-020,Mobile Recharge 20DT,Recharges,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,RCH-INT-050,Internet Package 50GB,Recharges,15,seasonal,national
+PROMO-0011,Summer Sales 2025,2025-07-01,2025-07-31,RCH-STR-001,Monthly Streaming Subscription,Recharges,15,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RTR-4G-001,4G Home Router Basic,Routers,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RTR-4G-002,4G Router Pro,Routers,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RTR-5G-001,5G Router Premium,Routers,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RTR-5G-002,5G Router Enterprise,Routers,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RCH-MOB-010,Mobile Recharge 10DT,Recharges,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RCH-MOB-020,Mobile Recharge 20DT,Recharges,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RCH-INT-050,Internet Package 50GB,Recharges,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,RCH-STR-001,Monthly Streaming Subscription,Recharges,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,TAB-IPD-AIR,iPad Air,Tablets,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,TAB-SAM-S9,Samsung Tab S9,Tablets,30,seasonal,national
+PROMO-0012,Back to School 2025,2025-08-15,2025-09-15,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,seasonal,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,RCH-MOB-010,Mobile Recharge 10DT,Recharges,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,RCH-MOB-020,Mobile Recharge 20DT,Recharges,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,RCH-INT-050,Internet Package 50GB,Recharges,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,RCH-STR-001,Monthly Streaming Subscription,Recharges,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,PHN-IPH-15,iPhone 15,Smartphones,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,PHN-OPP-F5,Oppo Find X5,Smartphones,15,sports,national
+PROMO-0013,World Cup Qualifiers,2025-09-01,2025-10-15,PHN-BUD-001,Budget Phone 4G,Smartphones,15,sports,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,RTR-4G-001,4G Home Router Basic,Routers,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,RTR-4G-002,4G Router Pro,Routers,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,RTR-5G-001,5G Router Premium,Routers,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,RTR-5G-002,5G Router Enterprise,Routers,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,PHN-IPH-15,iPhone 15,Smartphones,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,PHN-OPP-F5,Oppo Find X5,Smartphones,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,PHN-BUD-001,Budget Phone 4G,Smartphones,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,TAB-IPD-AIR,iPad Air,Tablets,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,TAB-SAM-S9,Samsung Tab S9,Tablets,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,TAB-LEN-P11,Lenovo Tab P11,Tablets,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-CAM-001,Outdoor Security Camera,Accessories,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-BUD-001,Wireless Earbuds Pro,Accessories,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-BUD-002,Wireless Earbuds Basic,Accessories,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-WAT-001,Smartwatch Pro,Accessories,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-WAT-002,Smartwatch Fitness,Accessories,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-CHG-001,Fast Charger 65W,Accessories,40,commercial,national
+PROMO-0014,Black Friday 2025,2025-11-28,2025-12-05,ACC-CAS-001,Phone Case Premium,Accessories,40,commercial,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-MOB-010,Mobile Recharge 10DT,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-MOB-020,Mobile Recharge 20DT,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-INT-050,Internet Package 50GB,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-STR-001,Monthly Streaming Subscription,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-IPH-15,iPhone 15,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-OPP-F5,Oppo Find X5,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-BUD-001,Budget Phone 4G,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,TAB-IPD-AIR,iPad Air,Tablets,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,TAB-SAM-S9,Samsung Tab S9,Tablets,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,TAB-LEN-P11,Lenovo Tab P11,Tablets,25,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-IPH-15,iPhone 15,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-OPP-F5,Oppo Find X5,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-BUD-001,Budget Phone 4G,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,TAB-IPD-AIR,iPad Air,Tablets,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,TAB-SAM-S9,Samsung Tab S9,Tablets,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-CAM-001,Outdoor Security Camera,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-BUD-001,Wireless Earbuds Pro,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-BUD-002,Wireless Earbuds Basic,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-WAT-001,Smartwatch Pro,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-WAT-002,Smartwatch Fitness,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-CHG-001,Fast Charger 65W,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-CAS-001,Phone Case Premium,Accessories,30,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-IPH-15,iPhone 15,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-OPP-F5,Oppo Find X5,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-BUD-001,Budget Phone 4G,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-CAM-001,Outdoor Security Camera,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-BUD-001,Wireless Earbuds Pro,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-BUD-002,Wireless Earbuds Basic,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-WAT-001,Smartwatch Pro,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-WAT-002,Smartwatch Fitness,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-CHG-001,Fast Charger 65W,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-CAS-001,Phone Case Premium,Accessories,20,religious,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-HOLI-001,Holiday SIM 10GB,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-ESIM-001,eSIM Activation Kit,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-PREP-001,Prepaid SIM Starter,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-POST-001,Postpaid SIM Premium,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-MOB-010,Mobile Recharge 10DT,Recharges,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-MOB-020,Mobile Recharge 20DT,Recharges,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-INT-050,Internet Package 50GB,Recharges,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-STR-001,Monthly Streaming Subscription,Recharges,15,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,TAB-IPD-AIR,iPad Air,Tablets,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,TAB-SAM-S9,Samsung Tab S9,Tablets,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-4G-001,4G Home Router Basic,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-4G-002,4G Router Pro,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-5G-001,5G Router Premium,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-5G-002,5G Router Enterprise,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-MOB-010,Mobile Recharge 10DT,Recharges,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-MOB-020,Mobile Recharge 20DT,Recharges,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-INT-050,Internet Package 50GB,Recharges,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-STR-001,Monthly Streaming Subscription,Recharges,30,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-IPH-15,iPhone 15,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-OPP-F5,Oppo Find X5,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-BUD-001,Budget Phone 4G,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,TAB-IPD-AIR,iPad Air,Tablets,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,TAB-SAM-S9,Samsung Tab S9,Tablets,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,TAB-LEN-P11,Lenovo Tab P11,Tablets,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-4G-001,4G Home Router Basic,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-4G-002,4G Router Pro,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-5G-001,5G Router Premium,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-5G-002,5G Router Enterprise,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-CAM-001,Outdoor Security Camera,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-BUD-001,Wireless Earbuds Pro,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-BUD-002,Wireless Earbuds Basic,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-WAT-001,Smartwatch Pro,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-WAT-002,Smartwatch Fitness,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-CHG-001,Fast Charger 65W,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-CAS-001,Phone Case Premium,Accessories,40,seasonal,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-MOB-010,Mobile Recharge 10DT,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-MOB-020,Mobile Recharge 20DT,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-INT-050,Internet Package 50GB,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,RCH-STR-001,Monthly Streaming Subscription,Recharges,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-IPH-15,iPhone 15,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-OPP-F5,Oppo Find X5,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,PHN-BUD-001,Budget Phone 4G,Smartphones,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,TAB-IPD-AIR,iPad Air,Tablets,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,TAB-SAM-S9,Samsung Tab S9,Tablets,25,religious,national
+PROMO-0015,Ramadan 2026,2026-02-19,2026-03-19,TAB-LEN-P11,Lenovo Tab P11,Tablets,25,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-IPH-15,iPhone 15,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-OPP-F5,Oppo Find X5,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,PHN-BUD-001,Budget Phone 4G,Smartphones,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,TAB-IPD-AIR,iPad Air,Tablets,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,TAB-SAM-S9,Samsung Tab S9,Tablets,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-CAM-001,Outdoor Security Camera,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-BUD-001,Wireless Earbuds Pro,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-BUD-002,Wireless Earbuds Basic,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-WAT-001,Smartwatch Pro,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-WAT-002,Smartwatch Fitness,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-CHG-001,Fast Charger 65W,Accessories,30,religious,national
+PROMO-0016,Eid Al-Fitr 2026,2026-03-20,2026-03-22,ACC-CAS-001,Phone Case Premium,Accessories,30,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-IPH-15,iPhone 15,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-OPP-F5,Oppo Find X5,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,PHN-BUD-001,Budget Phone 4G,Smartphones,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-CAM-001,Outdoor Security Camera,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-BUD-001,Wireless Earbuds Pro,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-BUD-002,Wireless Earbuds Basic,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-WAT-001,Smartwatch Pro,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-WAT-002,Smartwatch Fitness,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-CHG-001,Fast Charger 65W,Accessories,20,religious,national
+PROMO-0017,Eid Al-Adha 2026,2026-06-06,2026-06-09,ACC-CAS-001,Phone Case Premium,Accessories,20,religious,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-HOLI-001,Holiday SIM 10GB,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-ESIM-001,eSIM Activation Kit,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-PREP-001,Prepaid SIM Starter,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,SIM-POST-001,Postpaid SIM Premium,SIM Cards,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-MOB-010,Mobile Recharge 10DT,Recharges,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-MOB-020,Mobile Recharge 20DT,Recharges,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-INT-050,Internet Package 50GB,Recharges,15,seasonal,national
+PROMO-0018,Summer Sales 2026,2026-07-01,2026-07-31,RCH-STR-001,Monthly Streaming Subscription,Recharges,15,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,TAB-IPD-AIR,iPad Air,Tablets,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,TAB-SAM-S9,Samsung Tab S9,Tablets,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,TAB-LEN-P11,Lenovo Tab P11,Tablets,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-4G-001,4G Home Router Basic,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-4G-002,4G Router Pro,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-5G-001,5G Router Premium,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RTR-5G-002,5G Router Enterprise,Routers,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-MOB-010,Mobile Recharge 10DT,Recharges,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-MOB-020,Mobile Recharge 20DT,Recharges,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-INT-050,Internet Package 50GB,Recharges,30,seasonal,national
+PROMO-0019,Back to School 2026,2026-08-15,2026-09-15,RCH-STR-001,Monthly Streaming Subscription,Recharges,30,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-SAM-S24,Samsung Galaxy S24,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-IPH-15,iPhone 15,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-XIA-13,Xiaomi 13 Pro,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-OPP-F5,Oppo Find X5,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,PHN-BUD-001,Budget Phone 4G,Smartphones,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,TAB-IPD-AIR,iPad Air,Tablets,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,TAB-SAM-S9,Samsung Tab S9,Tablets,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,TAB-LEN-P11,Lenovo Tab P11,Tablets,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-4G-001,4G Home Router Basic,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-4G-002,4G Router Pro,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-5G-001,5G Router Premium,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,RTR-5G-002,5G Router Enterprise,Routers,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-CAM-001,Outdoor Security Camera,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-BUD-001,Wireless Earbuds Pro,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-BUD-002,Wireless Earbuds Basic,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-WAT-001,Smartwatch Pro,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-WAT-002,Smartwatch Fitness,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-CHG-001,Fast Charger 65W,Accessories,40,seasonal,national
+PROMO-0020,Black Friday 2026,2026-11-27,2026-12-04,ACC-CAS-001,Phone Case Premium,Accessories,40,seasonal,national
