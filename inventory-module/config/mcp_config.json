@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "inventory-advisor": {
+      "command": "python",
+      "args": ["inventory/services/mcp_server.py"],
+      "env": {},
+      "description": "Inventory analysis tools for stock management, forecasting, and risk assessment"
+    }
+  }
+}

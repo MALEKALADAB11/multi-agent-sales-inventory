@@ -1,0 +1,30 @@
+# Core framework
+langgraph==0.2.45
+langchain==0.3.7
+langchain-groq==0.2.1
+langchain-openai==0.2.9
+
+# MCP support
+mcp==1.1.2
+nest_asyncio>=1.5.0
+
+# Forecasting - TimesFM Integration
+timesfm>=1.0.0
+torch>=2.0.0,<2.2.0
+utilsforecast>=0.0.10
+matplotlib>=3.7.0
+scikit-learn>=1.3.0
+seaborn>=0.12.0
+
+# Data & ML
+pandas==2.2.0
+numpy==1.26.4
+
+# HTTP & API
+httpx==0.27.0
+requests==2.31.0
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
