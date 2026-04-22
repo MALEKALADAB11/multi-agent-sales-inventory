@@ -1,0 +1,42 @@
+[
+  {
+    "id": "adv-kb",
+    "advisor_code": "kb",
+    "name": "Karim Benali",
+    "initials": "KB",
+    "role": "Smartphones 5G",
+    "avatar_color": "#6C5CE7",
+    "ca_target": 2000,
+    "coach_score": 0.91
+  },
+  {
+    "id": "adv-sm",
+    "advisor_code": "sm",
+    "name": "Sara Moulai",
+    "initials": "SM",
+    "role": "Fiber · Pro Offers",
+    "avatar_color": "#00B894",
+    "ca_target": 2000,
+    "coach_score": 0.73
+  },
+  {
+    "id": "adv-at",
+    "advisor_code": "at",
+    "name": "Amine Tazi",
+    "initials": "AT",
+    "role": "Accessories",
+    "avatar_color": "#F9A825",
+    "ca_target": 2000,
+    "coach_score": 0.44
+  },
+  {
+    "id": "adv-lk",
+    "advisor_code": "lk",
+    "name": "Leila Khadri",
+    "initials": "LK",
+    "role": "Retention · CRM",
+    "avatar_color": "#2D9CDB",
+    "ca_target": 2000,
+    "coach_score": 0.28
+  }
+]

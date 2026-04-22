@@ -1,0 +1,12 @@
+[
+  {"advisor_id": "adv-kb", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 9},
+  {"advisor_id": "adv-kb", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 9},
+  {"advisor_id": "adv-sm", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 9},
+  {"advisor_id": "adv-at", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 9},
+  {"advisor_id": "adv-kb", "sku": "SAMA55",   "product_name": "Samsung A55",       "category": "Smartphone", "amount": 499, "units": 1, "hour": 10},
+  {"advisor_id": "adv-sm", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 10},
+  {"advisor_id": "adv-kb", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 11},
+  {"advisor_id": "adv-at", "sku": "AIRPDP3",  "product_name": "AirPods Pro 3",     "category": "Accessory",  "amount": 279, "units": 1, "hour": 11},
+  {"advisor_id": "adv-sm", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 12},
+  {"advisor_id": "adv-lk", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 12}
+]
