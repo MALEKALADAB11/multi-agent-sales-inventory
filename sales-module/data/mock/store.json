@@ -1,0 +1,8 @@
+{
+  "id": "store-lac2",
+  "store_code": "lac2",
+  "name": "Lac 2",
+  "city": "Tunis",
+  "capacity": 20,
+  "active": true
+}
