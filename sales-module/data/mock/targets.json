@@ -1,0 +1,6 @@
+[
+  {"advisor_id": "adv-kb", "ca_target": 2000, "units_target": 18},
+  {"advisor_id": "adv-sm", "ca_target": 2000, "units_target": 8},
+  {"advisor_id": "adv-at", "ca_target": 2000, "units_target": 9},
+  {"advisor_id": "adv-lk", "ca_target": 2000, "units_target": 6}
+]
