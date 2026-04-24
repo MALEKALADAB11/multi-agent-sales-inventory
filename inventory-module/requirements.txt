@@ -28,3 +28,6 @@ requests==2.31.0
 python-dotenv==1.0.1
 pydantic==2.10.3
 pydantic-settings==2.6.1
+
+fastapi==0.111.0
+uvicorn==0.45.0
