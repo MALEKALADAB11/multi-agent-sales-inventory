@@ -1,0 +1,37 @@
+{
+  "stores": [
+    {
+      "store_id": "OOR_LAC_01",
+      "name": "Ooredoo Lac 1",
+      "city": "Tunis",
+      "region": "Grand Tunis",
+      "address": "Centre Commercial Lac 1, Tunis",
+      "opening_hour": 9,
+      "closing_hour": 20,
+      "active_sellers": 4,
+      "manager": "Mehdi Slama"
+    },
+    {
+      "store_id": "OOR_MENZAH_02",
+      "name": "Ooredoo Menzah 9",
+      "city": "Tunis",
+      "region": "Grand Tunis",
+      "address": "Avenue Jugurtha, Menzah 9",
+      "opening_hour": 9,
+      "closing_hour": 20,
+      "active_sellers": 3,
+      "manager": "Sana Agrebi"
+    },
+    {
+      "store_id": "OOR_SFAX_03",
+      "name": "Ooredoo Sfax Centre",
+      "city": "Sfax",
+      "region": "Sfax",
+      "address": "Avenue Habib Bourguiba, Sfax",
+      "opening_hour": 9,
+      "closing_hour": 19,
+      "active_sellers": 5,
+      "manager": "Karim Tlili"
+    }
+  ]
+}
