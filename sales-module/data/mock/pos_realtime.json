@@ -1,0 +1,47 @@
+{
+  "OOR_LAC_01": {
+    "store_id": "OOR_LAC_01",
+    "snapshot_time": "15:10",
+    "daily_target_tnd": 18000.0,
+    "current_revenue_tnd": 7850.0,
+    "nb_transactions_today": 23,
+    "last_transaction_at": "15:07",
+    "active_sellers": 4,
+    "sellers": [
+      { "name": "Ahmed Ben Ali", "revenue_today": 2400.0, "nb_ventes": 7 },
+      { "name": "Nour Hamdi", "revenue_today": 1950.0, "nb_ventes": 6 },
+      { "name": "Rami Jlassi", "revenue_today": 2100.0, "nb_ventes": 5 },
+      { "name": "Ines Baccouche", "revenue_today": 1400.0, "nb_ventes": 5 }
+    ]
+  },
+  "OOR_MENZAH_02": {
+    "store_id": "OOR_MENZAH_02",
+    "snapshot_time": "15:10",
+    "daily_target_tnd": 14000.0,
+    "current_revenue_tnd": 11200.0,
+    "nb_transactions_today": 31,
+    "last_transaction_at": "15:09",
+    "active_sellers": 3,
+    "sellers": [
+      { "name": "Sami Ferchichi", "revenue_today": 4200.0, "nb_ventes": 12 },
+      { "name": "Lina Trabelsi", "revenue_today": 3800.0, "nb_ventes": 10 },
+      { "name": "Yassine Ouali", "revenue_today": 3200.0, "nb_ventes": 9 }
+    ]
+  },
+  "OOR_SFAX_03": {
+    "store_id": "OOR_SFAX_03",
+    "snapshot_time": "15:10",
+    "daily_target_tnd": 20000.0,
+    "current_revenue_tnd": 4100.0,
+    "nb_transactions_today": 12,
+    "last_transaction_at": "14:50",
+    "active_sellers": 5,
+    "sellers": [
+      { "name": "Khaled Mejri", "revenue_today": 1200.0, "nb_ventes": 3 },
+      { "name": "Mariem Saidi", "revenue_today": 900.0, "nb_ventes": 3 },
+      { "name": "Slim Bouaziz", "revenue_today": 800.0, "nb_ventes": 2 },
+      { "name": "Dorra Mansour", "revenue_today": 700.0, "nb_ventes": 2 },
+      { "name": "Fares Khelifi", "revenue_today": 500.0, "nb_ventes": 2 }
+    ]
+  }
+}
