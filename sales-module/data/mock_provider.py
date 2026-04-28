@@ -140,21 +140,25 @@ class MockDataProvider:
         hours_remaining = max(1, 20 - current_hour)
 
         dynamic_ca  = self._compute_dynamic_revenue(store_id)
-        hourly_rate = dynamic_ca / hours_elapsed
 
-        forecast_rem = round(
-            hourly_rate * hours_remaining * random.uniform(0.85, 1.05)
-        )
+        # ── Taux horaire réaliste ─────────────────────────────
+        # Éviter la division par 1h le matin → utiliser progression attendue
+        if hours_elapsed <= 1:
+            # Début de journée → forecast basé sur tendance historique
+            expected_daily = target * 0.85
+            forecast_eod   = min(round(expected_daily), int(target * 1.10))
+        else:
+            hourly_rate  = dynamic_ca / hours_elapsed
+            forecast_rem = round(hourly_rate * hours_remaining * random.uniform(0.85, 1.05))
+            max_allowed  = int(target * 1.10)
+            forecast_eod = min(round(dynamic_ca + forecast_rem), max_allowed)
 
-        # ── PLAFOND STRICT : max 110% objectif ───────────
-        max_allowed  = int(target * 1.10)
-        forecast_eod = min(round(dynamic_ca + forecast_rem), max_allowed)
-        ci_spread    = round(forecast_eod * 0.07)
+        ci_spread = round(forecast_eod * 0.07)
 
         logger.info(
             f"[MOCK] TimesFM {store_id} → "
-            f"CA={dynamic_ca:,.0f} | rate={hourly_rate:,.0f}/h | "
-            f"EOD={forecast_eod:,.0f} (max={max_allowed:,.0f})"
+            f"CA={dynamic_ca:,.0f} | "
+            f"EOD={forecast_eod:,.0f} (max={int(target*1.10):,.0f})"
         )
 
         return {
@@ -163,17 +167,17 @@ class MockDataProvider:
             "forecast_remaining":      max(0, forecast_eod - round(dynamic_ca)),
             "forecast_remaining_tnd":  max(0, forecast_eod - round(dynamic_ca)),
             "forecast_hourly": [
-                round(min(hourly_rate * random.uniform(0.80, 1.10), target / 11))
+                round(min(dynamic_ca / max(hours_elapsed,1) * random.uniform(0.80, 1.10),
+                        target / 11))
                 for _ in range(hours_remaining)
             ],
             "confidence_interval": {
                 "low":  max(round(dynamic_ca), forecast_eod - ci_spread),
-                "high": min(forecast_eod + ci_spread, max_allowed),
+                "high": min(forecast_eod + ci_spread, int(target * 1.10)),
             },
             "model_version": "timesfm-1.0-dynamic",
             "source":        "dynamic_mock",
-        }
-
+    }
     async def fetch_pos_context(self, store_id: str) -> dict | None:
         return None
 
