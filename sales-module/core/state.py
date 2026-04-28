@@ -27,6 +27,19 @@ class SalesAgentState(TypedDict, total=False):
     # --- Stratégie ---
     strategie: Optional[str]
     rag_context: Optional[list[dict]]
+     # ── Stratège ─────────────────────────────────────────
+    external_context:    Optional[dict]   # ← NOUVEAU
+    root_cause:          Optional[str]    # ← NOUVEAU
+    context_factors:     list[str]        # ← NOUVEAU
+    strategie_data:      Optional[dict]   # ← NOUVEAU
+    strategie:           Optional[str]
+    strategie_actions:   list[dict]       # ← NOUVEAU
+    focus_produits:      list[str]        # ← NOUVEAU
+    message_manager:     Optional[str]    # ← NOUVEAU
+    cause_racine:        Optional[str]    # ← NOUVEAU
+    context_heatmap:     Optional[dict]   # ← NOUVEAU
+    context_signals:     list[dict]       # ← NOUVEAU
+
 
     # --- Conseil final ---
     conseil_final: Optional[str]
@@ -35,5 +48,5 @@ class SalesAgentState(TypedDict, total=False):
     feedback_history: list[dict]
 
     # --- Routing flags ---
-    route_to: Optional[Literal["strategie", "coach", "end"]]
+    route_to:Optional[Literal["strategie", "coach", "end"]]
     error: Optional[str]
