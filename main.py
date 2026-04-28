@@ -27,7 +27,8 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 # ── Inventory Module ──────────────────────────────────────────
-from src.api.routes import router as inventory_router
+from src.api.routes import router as inventory_router, invalidate_store
+from src.tools.internal.stock_tools import _DataCache as InventoryDataCache
 
 # ── Sales Module Routers ──────────────────────────────────────
 from api.routers.cycle    import router as cycle_router,    set_orchestrator
@@ -108,6 +109,17 @@ async def startup_event():
     simulator.start()
     app.state.simulator = simulator
     logger.info("✅ POS Simulator started")
+
+    # ── Inventory ↔ Sales sync ────────────────────────────────────────────
+    # Wire the simulator's on_sale callback directly to the inventory module.
+    # Every time _inject_transaction fires, it calls this with the exact SKU
+    # and units sold — no polling, no guessing from ca_today.
+    def _on_sale(store_id: str, sku: str, units: int) -> None:
+        InventoryDataCache.record_sale('STORE-001', sku, float(units))
+        invalidate_store('STORE-001')
+
+    simulator.on_sale = _on_sale
+    logger.info("✅ Inventory ↔ Sales sync wired (per-SKU, per-sale)")
 
     # Orchestrator + cron trigger
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)

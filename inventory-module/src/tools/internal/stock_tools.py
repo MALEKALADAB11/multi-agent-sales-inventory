@@ -51,6 +51,12 @@ class _DataCache:
     _sales_df: pd.DataFrame | None = None
     _forecast_df: pd.DataFrame | None = None
 
+    # In-memory stock overrides: (sku, store_id) -> current units on hand.
+    # Populated by record_sale() as the sales simulator fires events.
+    # This avoids re-reading the CSV (which never updates at runtime)
+    # while still reflecting live sales depletion.
+    _stock_overrides: dict = {}
+
     @classmethod
     def stock(cls) -> pd.DataFrame:
         if cls._stock_df is None:
@@ -82,12 +88,52 @@ class _DataCache:
         return cls._forecast_df
 
     @classmethod
+    def record_sale(cls, store_id: str, sku: str, qty: float) -> None:
+        """
+        Decrement in-memory stock when the sales simulator fires a sale event.
+        Called by the inventory sale hook in main.py on every simulator tick.
+        Thread-safe: GIL protects dict writes at this granularity.
+        """
+        key = (sku, store_id)
+        if key not in cls._stock_overrides:
+            # Seed from the latest CSV row for this SKU so we start accurate
+            df = cls.stock()
+            rows = df[(df["sku"] == sku) & (df["store_id"] == store_id)]
+            if not rows.empty:
+                seed = float(rows.sort_values("date").iloc[-1]["stock_level"])
+            else:
+                seed = 0.0
+            cls._stock_overrides[key] = seed
+        cls._stock_overrides[key] = max(0.0, cls._stock_overrides[key] - qty)
+        logger.debug(
+            "Sale recorded: %s@%s  −%.0f units  → %.0f remaining",
+            sku, store_id, qty, cls._stock_overrides[key],
+        )
+
+    @classmethod
+    def get_current_stock(cls, sku: str, store_id: str) -> float:
+        """
+        Returns the live stock level for a SKU.
+        Uses the in-memory override if sales have been recorded since startup,
+        otherwise falls back to the last row of the stock_history CSV.
+        """
+        key = (sku, store_id)
+        if key in cls._stock_overrides:
+            return cls._stock_overrides[key]
+        df = cls.stock()
+        rows = df[(df["sku"] == sku) & (df["store_id"] == store_id)]
+        if rows.empty:
+            return 0.0
+        return float(rows.sort_values("date").iloc[-1]["stock_level"])
+
+    @classmethod
     def invalidate(cls) -> None:
         """Call this if the underlying CSVs have changed and you need fresh data."""
         cls._stock_df = None
         cls._product_df = None
         cls._sales_df = None
         cls._forecast_df = None
+        cls._stock_overrides = {}   # also reset live stock counters
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +270,7 @@ def get_stock_status(sku: str, store_id: str = DEFAULT_STORE) -> str:
         f"  Product          : {p.get('product_name', 'N/A')}\n"
         f"  Category         : {p.get('category', 'N/A')}\n"
         f"  Lifecycle stage  : {p.get('lifecycle_stage', 'N/A')}\n"
-        f"  Stock level      : {int(stock_row['stock_level'])} units\n"
+        f"  Stock level      : {int(_DataCache.get_current_stock(sku, store_id))} units\n"
         f"  Stockout flag    : {'YES' if stock_row.get('is_stockout', 0) else 'No'}\n"
         f"  Lead time avg    : {float(p['lead_time_days']):.0f} days\n"
         f"  Lead time std    : {float(p.get('lead_time_std', 0)):.1f} days\n"
@@ -330,7 +376,9 @@ def compute_inventory_metrics(
         return f"No forecast data for SKU '{sku}' at store '{store_id}'."
 
     # ── Product parameters ─────────────────────────────────────────────────
-    current_stock    = float(stock_row["stock_level"])
+    # current_stock comes from the live override (updated by sales events)
+    # rather than the static CSV, so risk metrics reflect real-time depletion.
+    current_stock    = _DataCache.get_current_stock(sku, store_id)
     lead_time_avg    = float(p["lead_time_days"])
     lead_time_std    = float(p.get("lead_time_std", 0))
     moq              = float(p["moq"])
