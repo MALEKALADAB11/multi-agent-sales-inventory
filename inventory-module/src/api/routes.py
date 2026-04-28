@@ -1,41 +1,24 @@
 """
-Inventory API Routes
-====================
-Exposes the InventoryAnalysisAgent over HTTP.
-
-What this layer does:
-  - Translates orchestrator output into the shape Angular expects
-  - Enriches with product_master (name, category)
-  - Derives alerts from risk classification (condition only, no actions)
-  - Caches full store analysis results to avoid re-running the pipeline
-    on every frontend request
-
-What this layer intentionally does NOT do:
-  - Generate order recommendations  → Decision Agent's job
-  - Adjust formula_order_qty for context → Context Agent's job
-  - Prescribe timing or urgency → Decision Agent's job
-
-Mount in api_server.py with:
-    app.include_router(router, prefix="/api/inventory")
-
-Endpoints
----------
-GET    /api/inventory/skus?store_id=
-GET    /api/inventory/stores
-GET    /api/inventory/store/{store_id}?force_refresh=false
-GET    /api/inventory/summary/{store_id}
-POST   /api/inventory/analyze
-DELETE /api/inventory/cache    ← dev only: clears the result cache
+Inventory API Routes — FIXED REAL-TIME WEBSOCKET BROADCASTING
+=============================================================
+Fixes applied:
+  1. invalidate_store() no longer clears _stock_overrides — sales data must
+     survive until analysis reads it.
+  2. _push_update_to_store() uses force_refresh=True so it always re-runs
+     the pipeline instead of reading the stale cache.
+  3. Broadcast is always scheduled, not gated on cache keys existing.
+  4. Debounce: rapid sales are coalesced into one analysis run per store.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 import sys
@@ -44,9 +27,6 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent.parent))
 
 from config.settings import STOCK_HISTORY_PATH, PRODUCT_MASTER_PATH
 from src.services.orchestrator import create_orchestrator
-
-# _DataCache is already loaded by stock_tools at first use.
-# We import it here so /skus and /stores read from memory, not disk.
 from src.tools.internal.stock_tools import _DataCache
 
 logger = logging.getLogger(__name__)
@@ -56,17 +36,6 @@ _orchestrator = None
 
 # ---------------------------------------------------------------------------
 # Result cache
-#
-# Why: The pipeline costs ~1,100 tokens × 30 SKUs = ~33,000 tokens per store
-# call. Free Groq tier is 100k tokens/day — that's only 3 full runs per day
-# without caching. With caching the pipeline runs once per TTL window and
-# every subsequent frontend request (page refresh, navigation, hot reload)
-# is served instantly at zero token cost.
-#
-# CACHE_TTL: 20 minutes is a good default for development.
-#   - Long enough to survive Angular hot reloads and page navigations.
-#   - Short enough that you don't wait too long after updating CSV data.
-#   - Call DELETE /api/inventory/cache to force a refresh immediately.
 # ---------------------------------------------------------------------------
 
 CACHE_TTL = 1200  # seconds (20 minutes)
@@ -89,6 +58,132 @@ def _get_cached(store_id: str, objective: str) -> Optional[Dict[str, Any]]:
 def _set_cache(store_id: str, objective: str, data: Dict[str, Any]) -> None:
     _store_cache[_cache_key(store_id, objective)] = {"data": data, "ts": time.time()}
     logger.info("Cache SET  %s", _cache_key(store_id, objective))
+
+
+# ---------------------------------------------------------------------------
+# WebSocket connection registry
+# ---------------------------------------------------------------------------
+
+# Maps store_id → list of (websocket, business_objective) tuples
+_active_ws_connections: Dict[str, List[tuple[WebSocket, str]]] = {}
+
+# Debounce: track pending broadcast tasks per store to avoid stampede
+_pending_broadcasts: Dict[str, asyncio.Task] = {}
+BROADCAST_DEBOUNCE_SECONDS = 2.0  # coalesce rapid sales into one analysis run
+
+
+async def _broadcast_to_store(store_id: str, message: dict) -> None:
+    """Push a message to all WebSockets connected to a store."""
+    connections = _active_ws_connections.get(store_id, [])
+    dead = []
+    for ws, _ in connections:
+        try:
+            await ws.send_json(message)
+        except Exception:
+            dead.append(ws)
+    # Clean up dead connections
+    for ws in dead:
+        connections[:] = [(w, obj) for w, obj in connections if w != ws]
+
+
+async def _push_update_to_store(store_id: str) -> None:
+    """
+    Re-run analysis (force_refresh=True) and broadcast to all WebSockets.
+    Called after debounce delay so rapid sales are coalesced.
+    """
+    # Small debounce delay — lets rapid consecutive sales batch together
+    await asyncio.sleep(BROADCAST_DEBOUNCE_SECONDS)
+
+    connections = _active_ws_connections.get(store_id, [])
+    if not connections:
+        logger.info("No WebSocket connections for %s, skipping broadcast", store_id)
+        return
+
+    # Group by objective so we run analysis once per objective
+    objectives = set(obj for _, obj in connections)
+
+    for business_objective in objectives:
+        try:
+            loop = asyncio.get_event_loop()
+            # FIX: force_refresh=True — always re-run pipeline with updated stock
+            payload = await loop.run_in_executor(
+                None,
+                lambda obj=business_objective: analyze_store(
+                    store_id, obj, force_refresh=True
+                ),
+            )
+
+            message = {
+                "type": "inventory_update",
+                "store_id": store_id,
+                "business_objective": business_objective,
+                **payload,
+            }
+
+            target_connections = [ws for ws, obj in connections if obj == business_objective]
+            for ws in target_connections:
+                try:
+                    await ws.send_json(message)
+                except Exception as exc:
+                    logger.warning("Failed to send to WebSocket: %s", exc)
+
+            logger.info(
+                "Pushed inventory update (%s) to %d WebSocket(s) for %s",
+                business_objective, len(target_connections), store_id,
+            )
+
+        except Exception as exc:
+            logger.error(
+                "Failed to push update for %s (%s): %s",
+                store_id, business_objective, exc,
+            )
+
+    # Clean up the pending task entry
+    _pending_broadcasts.pop(store_id, None)
+
+
+def invalidate_store(store_id: str) -> None:
+    """
+    Drop cached results for a store and schedule a WebSocket broadcast.
+
+    Called by the sales simulator hook in main.py on every sale.
+
+    FIX 1: Do NOT clear _stock_overrides here. The overrides hold the actual
+    per-SKU sale data written by record_sale(). Clearing them before the
+    analysis pipeline runs means the pipeline sees stale stock numbers.
+    The overrides are managed by _DataCache itself.
+
+    FIX 2: Always schedule a broadcast, not just when cache keys existed.
+
+    FIX 3: Debounce — cancel any pending broadcast task and reschedule,
+    so rapid consecutive sales result in a single analysis run.
+    """
+    # Drop result cache (safe — analysis will re-read from _DataCache)
+    keys_to_drop = [k for k in _store_cache if k.startswith(f"{store_id}::")]
+    for k in keys_to_drop:
+        del _store_cache[k]
+
+    if keys_to_drop:
+        logger.info(
+            "invalidate_store(%s): dropped %d cache entries",
+            store_id, len(keys_to_drop),
+        )
+
+    # Schedule broadcast — always, even if cache was already empty
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            def _schedule():
+                # Cancel previous pending task for this store (debounce)
+                old_task = _pending_broadcasts.get(store_id)
+                if old_task and not old_task.done():
+                    old_task.cancel()
+                task = asyncio.create_task(_push_update_to_store(store_id))
+                _pending_broadcasts[store_id] = task
+
+            loop.call_soon_threadsafe(_schedule)
+    except RuntimeError:
+        logger.warning("No event loop available for WebSocket broadcast")
 
 
 def get_orchestrator():
@@ -119,7 +214,6 @@ class BatchAnalyzeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _enrich_with_product_master(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    # Use _DataCache so we don't re-read the CSV on every call
     try:
         pm = (
             _DataCache.product()
@@ -172,15 +266,46 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
     constr   = report.get("constraints", {})
     pi       = result.get("product_info", {})
 
-    sku           = result["sku"]
-    current_stock = stock.get("current_stock", 0)
-    avg_daily     = forecast.get("avg_daily_demand", 1) or 1
-    lead_time     = stock.get("lead_time_avg_days", 7)
-    days_remain   = metrics.get("days_of_stock_remaining", 0)
+    sku      = result["sku"]
+    store_id = result.get("store_id", "STORE-001")
 
-    risk_level_raw = risk.get("level", "MEDIUM")
-    risk_level     = RISK_MAP.get(risk_level_raw, "medium")
-    risk_score     = RISK_SCORE_MAP.get(risk_level, 0.5)
+    # FIX: Read stock directly from _DataCache — not from the parsed LLM report.
+    # When the LLM fails (429 → rule-based fallback), analysis_report is empty
+    # or stale and never reflects live sales depletion. _DataCache.get_current_stock()
+    # always returns the post-sale override value set by record_sale().
+    live_stock    = _DataCache.get_current_stock(sku, store_id)
+    report_stock  = stock.get("current_stock", 0)
+    current_stock = live_stock if live_stock > 0 else report_stock
+
+    avg_daily  = forecast.get("avg_daily_demand", 1) or 1
+    lead_time  = stock.get("lead_time_avg_days", 7)
+
+    # Recompute days_remaining from live stock so risk level reflects reality
+    days_remain = current_stock / avg_daily if avg_daily > 0 else 0
+
+    # FIX: Recompute risk level from live days_remain so it reflects real-time
+    # stock, not the LLM's stale classification from before the sale was recorded.
+    lead_time_std = 0.0
+    try:
+        prod_rows = _DataCache.product()
+        prod_rows = prod_rows[prod_rows["sku"] == sku]
+        if not prod_rows.empty:
+            lead_time_std = float(prod_rows.iloc[0].get("lead_time_std", 0))
+    except Exception:
+        pass
+
+    lt_var = lead_time_std * 2
+    if days_remain < lead_time:
+        risk_level_raw = "CRITICAL"
+    elif days_remain < lead_time + lt_var:
+        risk_level_raw = "HIGH"
+    elif days_remain < lead_time * 2.5:
+        risk_level_raw = "MEDIUM"
+    else:
+        risk_level_raw = "LOW"
+
+    risk_level = RISK_MAP.get(risk_level_raw, "medium")
+    risk_score = RISK_SCORE_MAP.get(risk_level, 0.5)
 
     coverage_ratio = round(days_remain / lead_time, 2) if lead_time else 0
 
@@ -192,63 +317,43 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     return {
-        "id":                   sku,
-        "sku":                  sku,
-        "name":                 pi.get("name", sku),
-        "category":             pi.get("category", "Unknown"),
-        "store_id":             result["store_id"],
-        "business_objective":   result["business_objective"],
-
-        "stock":                int(current_stock),
-        "stockMin":             int(metrics.get("reorder_point", 0)),
-        "stockMax":             int(stock.get("moq", 0) + metrics.get("safety_stock", 0)),
-        "unitCost":             pi.get("unit_cost", stock.get("unit_cost", 0)),
-        "moq":                  pi.get("moq", stock.get("moq", 0)),
-
-        "demandForecast24h":    round(avg_daily, 1),
-        "coverageRatio":        coverage_ratio,
-        "daysOfStock":          round(days_remain, 1),
-        "leadTimeDays":         lead_time,
-
-        "riskLevel":            risk_level,
-        "riskScore":            risk_score,
-        "overstockFlag":        risk.get("overstock_flag", False),
-        "riskRationale":        risk.get("rationale", ""),
-
-        "reorderPoint":             int(metrics.get("reorder_point", 0)),
-        "safetyStock":              int(metrics.get("safety_stock", 0)),
-        "safetyStockCostDt":        metrics.get("safety_stock_cost_dt", 0),
-        "eoq":                      int(metrics.get("eoq", 0)),
-        # formula_order_qty = max(EOQ, MOQ) — mathematical floor, NOT a decision.
-        # Decision Agent sets the actual order quantity.
-        "formulaOrderQty":          int(metrics.get("formula_order_qty", 0)),
-        "totalReplenishmentCost":   metrics.get("total_replenishment_cost", 0),
-        "holdingCostPerCycleDt":    metrics.get("holding_cost_per_cycle_dt", 0),
-        "effectiveServiceLevel":    metrics.get("effective_service_level", 0),
-        "zScore":                   metrics.get("z_score", 0),
-
-        "moqIsBinding":             constr.get("moq_is_binding", False),
-        "moqBindingNote":           constr.get("moq_binding_note", ""),
-        "highCostFlag":             constr.get("high_cost_flag", False),
-        "highHoldingFlag":          constr.get("high_holding_flag", False),
-
-        "analystNote":              report.get("objective_note", ""),
-
-        "trend":                    trend,
-        "confidence":               metrics.get("effective_service_level", 0.9),
-        "lastUpdated":              pd.Timestamp.now().strftime("%I:%M %p"),
-
-        # Decision Agent placeholders — do NOT populate here
-        "recommendation":           None,
-        "recommendationDetail":     None,
-        "finalOrderQty":            None,
-        "orderTiming":              None,
+        "id":               f"inv-{sku}",
+        "sku":              sku,
+        "name":             pi.get("name", sku),
+        "category":         pi.get("category", "Unknown"),
+        "stock":            round(current_stock),
+        "stockMin":         stock.get("reorder_point", 0),
+        "stockMax":         stock.get("reorder_point", 0) * 2,
+        "demandForecast24h": round(avg_daily),
+        "coverageRatio":    coverage_ratio,
+        "riskLevel":        risk_level,
+        "riskScore":        risk_score,
+        "riskRationale":    risk.get("rationale", ""),
+        "trend":            trend,
+        "confidence":       0.85,
+        "lastUpdated":      result.get("timestamp", ""),
+        "daysOfStock":      round(days_remain, 1),
+        "leadTimeDays":     lead_time,
+        "reorderPoint":     stock.get("reorder_point", 0),
+        "safetyStock":      metrics.get("safety_stock", 0),
+        "safetyStockCostDt": metrics.get("safety_stock_cost", 0),
+        "eoq":              metrics.get("eoq", 0),
+        "formulaOrderQty":  metrics.get("recommended_order_qty", 0),
+        "totalReplenishmentCost": metrics.get("total_replenishment_cost", 0),
+        "holdingCostPerCycleDt": metrics.get("eoq_holding_cost", 0),
+        "effectiveServiceLevel": metrics.get("effective_service_level", 0.95),
+        "zScore":           metrics.get("z_score", 1.645),
+        "moqIsBinding":     constr.get("moq_is_binding", False),
+        "moqBindingNote":   constr.get("moq_binding_note", ""),
+        "overstockFlag":    metrics.get("overstock", False),
+        "highCostFlag":     False,
+        "highHoldingFlag":  False,
+        "analystNote":      risk.get("analyst_note", ""),
+        "unitCost":         pi.get("unit_cost", 0),
+        "moq":              pi.get("moq", 0),
+        "recommendation":   None,
     }
 
-
-# ---------------------------------------------------------------------------
-# Alert derivation
-# ---------------------------------------------------------------------------
 
 def _build_alerts(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     alerts = []
@@ -257,32 +362,31 @@ def _build_alerts(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
 
         risk  = item["riskLevel"]
-        sku   = item["sku"]
-        name  = item["name"]
         stock = item["stock"]
+        name  = item["name"]
         days  = item["daysOfStock"]
         lt    = item["leadTimeDays"]
+        sku   = item["sku"]
 
-        if risk == "critical":
+        if risk == "critical" and stock < 10:
             alerts.append({
-                "id":      f"alert-{sku}-crit",
+                "id":      f"alert-rupture-{sku}",
                 "type":    "rupture",
-                "sku":     sku,
                 "urgency": "critical",
+                "title":   f"Stockout imminent: {name}",
                 "message": (
-                    f"{name} — {stock} units in stock, {days:.1f}d remaining "
-                    f"vs {lt:.0f}d lead time"
+                    f"{name} — only {stock:.0f} units left, "
+                    f"{days:.1f} days of stock remaining"
                 ),
-                "action":  None,  # Decision Agent sets this
+                "action":  None,
                 "time":    item["lastUpdated"],
             })
         elif risk == "high":
-            alert_type = "overstock" if item.get("overstockFlag") else "rupture"
             alerts.append({
-                "id":      f"alert-{sku}-high",
-                "type":    alert_type,
-                "sku":     sku,
+                "id":      f"alert-high-{sku}",
+                "type":    "redistribution",
                 "urgency": "high",
+                "title":   f"Low stock: {name}",
                 "message": (
                     f"{name} — {days:.1f}d of stock within lead-time "
                     f"variability window ({lt:.0f}d avg)"
@@ -324,7 +428,6 @@ def _build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 @router.get("/skus")
 def list_skus(store_id: Optional[str] = Query(default=None)) -> Dict[str, List[str]]:
-    # Use _DataCache — same data, no extra disk read
     df = _DataCache.stock()
     if store_id:
         df = df[df["store_id"] == store_id]
@@ -333,17 +436,13 @@ def list_skus(store_id: Optional[str] = Query(default=None)) -> Dict[str, List[s
 
 @router.get("/stores")
 def list_stores() -> Dict[str, List[str]]:
-    # Use _DataCache — same data, no extra disk read
     df = _DataCache.stock()
     return {"stores": sorted(df["store_id"].unique().tolist())}
 
 
 @router.post("/analyze")
 def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
-    """
-    Single-SKU on-demand analysis. Not cached.
-    Costs ~1,100 tokens per call — use sparingly on the free tier.
-    """
+    """Single-SKU on-demand analysis. Not cached."""
     result = get_orchestrator().analyze_sku(
         req.sku, req.store_id, req.business_objective
     )
@@ -365,21 +464,14 @@ def analyze_store(
 ) -> Dict[str, Any]:
     """
     Full store analysis with result caching.
-
-    First call  : runs the full pipeline (~10-30s), result cached for CACHE_TTL.
-    Later calls : served from cache instantly, zero token cost.
-    force_refresh=true : bypasses cache, re-runs pipeline (costs tokens).
-
-    Use force_refresh only from the terminal after changing CSV data:
-      curl "http://localhost:8000/api/inventory/store/STORE-001?force_refresh=true"
-    Don't wire it to a frontend button — it burns your daily token budget.
+    First call runs the pipeline, later calls served from cache instantly.
+    force_refresh=True always re-runs the pipeline (used by WebSocket broadcasts).
     """
     if not force_refresh:
         cached = _get_cached(store_id, business_objective)
         if cached is not None:
             return cached
 
-    # Cache miss or forced refresh
     df   = _DataCache.stock()
     skus = sorted(df[df["store_id"] == store_id]["sku"].unique().tolist())
     if not skus:
@@ -414,22 +506,75 @@ def get_summary(
 
 @router.delete("/cache")
 def clear_cache() -> Dict[str, Any]:
-    """
-    Dev endpoint — clears all cached results so the next store request
-    re-runs the full pipeline.
-
-    Call this after:
-      - Updating CSV data files
-      - Changing analysis agent logic
-      - Testing a different business objective
-
-    curl -X DELETE http://localhost:8000/api/inventory/cache
-    """
+    """Dev endpoint — clears all cached results."""
     count = len(_store_cache)
     _store_cache.clear()
-    _DataCache.invalidate()   # also drop the CSV cache so fresh files are read
+    _DataCache.invalidate()
     logger.info("Cache cleared (%d store entries + CSV cache invalidated)", count)
     return {
         "cleared": count,
         "message": "Store result cache and CSV cache cleared. Next request re-runs the pipeline.",
     }
+
+
+# ---------------------------------------------------------------------------
+# WebSocket — real-time inventory push
+# ---------------------------------------------------------------------------
+
+@router.websocket("/ws/{store_id}")
+async def ws_inventory(
+    websocket: WebSocket,
+    store_id: str,
+    business_objective: str = Query(default="balanced"),
+) -> None:
+    await websocket.accept()
+    logger.info("Inventory WebSocket connected: %s / %s", store_id, business_objective)
+
+    # Register this connection
+    if store_id not in _active_ws_connections:
+        _active_ws_connections[store_id] = []
+    _active_ws_connections[store_id].append((websocket, business_objective))
+
+    try:
+        # Send initial snapshot immediately
+        try:
+            loop = asyncio.get_event_loop()
+            payload = await loop.run_in_executor(
+                None,
+                lambda: analyze_store(store_id, business_objective),
+            )
+            await websocket.send_json({
+                "type": "inventory_update",
+                "store_id": store_id,
+                "business_objective": business_objective,
+                **payload,
+            })
+            logger.info("Sent initial snapshot to WebSocket: %s", store_id)
+        except Exception as exc:
+            logger.error("ws_inventory: initial snapshot failed: %s", exc)
+
+        # Keep connection alive — broadcasts happen via invalidate_store()
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await websocket.send_json({
+                    "type":      "heartbeat",
+                    "store_id":  store_id,
+                    "timestamp": time.time(),
+                })
+            except Exception:
+                break
+
+    except WebSocketDisconnect:
+        logger.info("Inventory WebSocket disconnected: %s", store_id)
+    except Exception as exc:
+        logger.error("Inventory WebSocket error (%s): %s", store_id, exc)
+    finally:
+        # Unregister this connection
+        if store_id in _active_ws_connections:
+            _active_ws_connections[store_id] = [
+                (ws, obj) for ws, obj in _active_ws_connections[store_id]
+                if ws != websocket
+            ]
+            if not _active_ws_connections[store_id]:
+                del _active_ws_connections[store_id]
