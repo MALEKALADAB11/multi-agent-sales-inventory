@@ -2,102 +2,102 @@
   "total": 3,
   "events": [
     {
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "729,00 DT",
+      "details": "Honor X7C 8/256 5G | 729,00 DT",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-04-29T20:59:03.462405"
+    },
+    {
       "title": "SAMSUNG",
       "type": "new_offer",
-      "category": "mobile",
+      "category": "promotion",
       "price": "799,00 DT",
       "details": "SAMSUNG GALAXY A17 6/128 5G | 799,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-04-28T14:17:49.454852"
+      "date": "2026-04-29T20:59:03.468432"
     },
     {
       "title": "INFINIX",
       "type": "new_offer",
-      "category": "mobile",
+      "category": "promotion",
       "price": "129,00 DT",
       "details": "INFINIX NOTE 60 EDGE 8/256 5G | 1 129,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-04-28T14:17:49.468890"
-    },
-    {
-      "title": "HONOR",
-      "type": "new_offer",
-      "category": "mobile",
-      "price": "249,00 DT",
-      "details": "HONOR X9C 12/256 5G | 1 249,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-04-28T14:17:49.474054"
+      "date": "2026-04-29T20:59:03.490521"
     }
   ],
   "active": [
     {
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "729,00 DT",
+      "details": "Honor X7C 8/256 5G | 729,00 DT",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-04-29T20:59:03.462405"
+    },
+    {
       "title": "SAMSUNG",
       "type": "new_offer",
-      "category": "mobile",
+      "category": "promotion",
       "price": "799,00 DT",
       "details": "SAMSUNG GALAXY A17 6/128 5G | 799,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-04-28T14:17:49.454852"
+      "date": "2026-04-29T20:59:03.468432"
     },
     {
       "title": "INFINIX",
       "type": "new_offer",
-      "category": "mobile",
+      "category": "promotion",
       "price": "129,00 DT",
       "details": "INFINIX NOTE 60 EDGE 8/256 5G | 1 129,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-04-28T14:17:49.468890"
-    },
-    {
-      "title": "HONOR",
-      "type": "new_offer",
-      "category": "mobile",
-      "price": "249,00 DT",
-      "details": "HONOR X9C 12/256 5G | 1 249,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-04-28T14:17:49.474054"
+      "date": "2026-04-29T20:59:03.490521"
     }
   ],
   "promotions": [],
   "new_offers": [
     {
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "729,00 DT",
+      "details": "Honor X7C 8/256 5G | 729,00 DT",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-04-29T20:59:03.462405"
+    },
+    {
       "title": "SAMSUNG",
       "type": "new_offer",
-      "category": "mobile",
+      "category": "promotion",
       "price": "799,00 DT",
       "details": "SAMSUNG GALAXY A17 6/128 5G | 799,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-04-28T14:17:49.454852"
+      "date": "2026-04-29T20:59:03.468432"
     },
     {
       "title": "INFINIX",
       "type": "new_offer",
-      "category": "mobile",
+      "category": "promotion",
       "price": "129,00 DT",
       "details": "INFINIX NOTE 60 EDGE 8/256 5G | 1 129,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-04-28T14:17:49.468890"
-    },
-    {
-      "title": "HONOR",
-      "type": "new_offer",
-      "category": "mobile",
-      "price": "249,00 DT",
-      "details": "HONOR X9C 12/256 5G | 1 249,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-04-28T14:17:49.474054"
+      "date": "2026-04-29T20:59:03.490521"
     }
   ],
   "tarifs": [],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-04-28T14:17:50.613143"
+  "fetched_at": "2026-04-29T20:59:10.814849"
 }

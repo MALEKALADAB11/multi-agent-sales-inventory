@@ -1,27 +1,7 @@
-"""
-Inventory Analysis Agent
-========================
-Pipeline position : 1st
-Feeds into        : Context Agent → Decision Agent
-
-Two-node LangGraph graph:
-  fetch  → batch_inventory_data() — pure Python, no subprocess, no async
-  reason → one LLM call for objective_note + risk_rationale prose only
-
-All structured numbers are parsed deterministically from tool output text.
-The LLM never touches numbers.
-
-Performance knobs (change these, nothing else):
-  USE_LLM      = False  →  skip LLM entirely, rule-based prose, instant.
-                            Use when out of Groq tokens or during heavy dev.
-  LLM_TIMEOUT_S = 8    →  hard timeout per SKU LLM call. If Groq doesn't
-                            respond in time, rule-based fallback fires and
-                            that thread is unblocked immediately.
-"""
-
+import os
 from typing import TypedDict, Annotated, Sequence, Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
+from langchain_ollama import ChatOllama  # Importation de ChatOllama
 from langgraph.graph import StateGraph, END
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import operator
@@ -29,7 +9,6 @@ import json
 import re
 import logging
 
-from config.settings import settings
 from src.tools.internal.mcp_wrappers import batch_inventory_data
 
 logger = logging.getLogger(__name__)
@@ -38,8 +17,8 @@ logger = logging.getLogger(__name__)
 # Performance knobs
 # ---------------------------------------------------------------------------
 
-USE_LLM       = True   # set False to skip LLM and use rule-based prose
-LLM_TIMEOUT_S = 8      # seconds before giving up on Groq and falling back
+USE_LLM = False   # set False to skip LLM and use rule-based prose
+LLM_TIMEOUT_S = 8      # seconds before giving up on Ollama and falling back
 
 
 # ---------------------------------------------------------------------------
@@ -145,8 +124,6 @@ def _parse_tool_outputs(raw: Dict[str, str]) -> Dict[str, Any]:
             "safety_stock_cost_dt":      safety_stock_cost,
             "reorder_point":             reorder_point,
             "eoq":                       eoq,
-            # formula_order_qty = max(EOQ, MOQ) — mathematical floor, NOT a decision.
-            # The Decision Agent sets actual order qty after context + constraints.
             "formula_order_qty":         recommended_qty,
             "holding_cost_per_cycle_dt": round(holding_cost_dt, 2),
             "total_replenishment_cost":  total_replen,
@@ -194,6 +171,28 @@ def _rule_based_prose(objective: str, structured: Dict[str, Any]) -> Dict[str, s
             f"Stock covers {dos:.1f}d vs {lt:.0f}d lead time."
         ),
     }
+
+
+def _parse_reasoning(content: str) -> Dict[str, str]:
+    """
+    Parse JSON response from LLM containing objective_note and risk_rationale.
+    Handles both raw JSON and markdown-wrapped JSON.
+    """
+    # Remove markdown code fence if present
+    content = re.sub(r"```(?:json)?\s*", "", content).strip()
+    
+    try:
+        data = json.loads(content)
+        return {
+            "objective_note": data.get("objective_note", ""),
+            "risk_rationale": data.get("risk_rationale", ""),
+        }
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning("Failed to parse LLM reasoning as JSON: %s", e)
+        return {
+            "objective_note": "",
+            "risk_rationale": "",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -250,19 +249,17 @@ class InventoryAnalysisAgent:
         "action", "suggested_order",
     )
 
-    def __init__(self, api_key: str = None):
-        api_key = api_key or settings.groq_api_key
-        if not api_key:
-            raise ValueError("GROQ_API_KEY not found in environment")
-
-        self.llm = ChatGroq(
-            model=settings.llm_model,
-            api_key=api_key,
-            temperature=0.0,
+    def __init__(self):
+        # Utilisation de ChatOllama sans clé API
+        self.llm = ChatOllama(
+            model=os.getenv("OLLAMA_MODEL", "llama3.2:latest"),  # Modèle par défaut
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),  # URL de base
+            temperature=0.0,  # Température par défaut
         )
 
+        # Initialisation du graphe
         wf = StateGraph(AgentState)
-        wf.add_node("fetch",  self._fetch_node)
+        wf.add_node("fetch", self._fetch_node)
         wf.add_node("reason", self._reason_node)
         wf.set_entry_point("fetch")
         wf.add_edge("fetch", "reason")
@@ -287,19 +284,6 @@ class InventoryAnalysisAgent:
     def _reason_node(self, state: AgentState) -> Dict[str, Any]:
         """
         LLM call with hard timeout. Three possible paths:
-
-          Path 1 — USE_LLM=False:
-            Skip LLM entirely. Rule-based prose fills both fields. Instant.
-
-          Path 2 — LLM responds within LLM_TIMEOUT_S:
-            Use LLM output. Thread proceeds normally.
-
-          Path 3 — LLM times out or returns 429/error:
-            Rule-based fallback fires immediately. Thread is unblocked.
-            No retry, no hang, no crash. The batch continues.
-
-        The output structure is identical in all three paths — downstream
-        code (routes.py, frontend) cannot tell which path was taken.
         """
         structured = state["structured"]
 
@@ -323,22 +307,21 @@ class InventoryAnalysisAgent:
         )
 
         reasoning = None
-        msgs      = []
+        msgs = []
 
         def _call_llm():
-            return self.llm.invoke([
+            return self.llm.invoke([  # Appel à Ollama
                 SystemMessage(content=REASON_SYSTEM),
                 HumanMessage(content=prompt),
             ])
 
         try:
-            # Run in a thread so we can apply a hard wall-clock timeout.
-            # The Groq client has no built-in timeout parameter.
+            # Lancer la fonction avec un timeout
             with ThreadPoolExecutor(max_workers=1) as ex:
-                future   = ex.submit(_call_llm)
+                future = ex.submit(_call_llm)
                 response = future.result(timeout=LLM_TIMEOUT_S)
             reasoning = _parse_reasoning(response.content)
-            msgs      = [response]
+            msgs = [response]
             logger.debug("LLM OK for SKU %s", state["sku"])
 
         except FuturesTimeoutError:
@@ -370,12 +353,12 @@ class InventoryAnalysisAgent:
     ) -> Dict[str, Any]:
         try:
             result = self.graph.invoke({
-                "messages":           [],
-                "sku":                sku,
-                "store_id":           store_id,
+                "messages": [],
+                "sku": sku,
+                "store_id": store_id,
                 "business_objective": business_objective,
-                "raw_data":           {},
-                "structured":         {},
+                "raw_data": {},
+                "structured": {},
             })
 
             report = result["structured"]
@@ -383,44 +366,28 @@ class InventoryAnalysisAgent:
                 report.pop(key, None)
 
             report.update({
-                "sku":                sku,
-                "store_id":           store_id,
+                "sku": sku,
+                "store_id": store_id,
                 "business_objective": business_objective,
-                "report_type":        "BASELINE",
+                "report_type": "BASELINE",
             })
 
             return {
-                "sku":                sku,
-                "store_id":           store_id,
+                "sku": sku,
+                "store_id": store_id,
                 "business_objective": business_objective,
-                "analysis_report":    report,
+                "analysis_report": report,
             }
 
         except Exception as e:
             logger.error("InventoryAnalysisAgent failed for SKU=%s: %s", sku, e, exc_info=True)
             return {
-                "sku":                sku,
-                "store_id":           store_id,
+                "sku": sku,
+                "store_id": store_id,
                 "business_objective": business_objective,
-                "error":              str(e),
+                "error": str(e),
             }
 
 
-def _parse_reasoning(text: str) -> Dict[str, str]:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = "\n".join(
-            l for l in cleaned.splitlines() if not l.strip().startswith("```")
-        ).strip()
-    try:
-        start = cleaned.find("{")
-        end   = cleaned.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(cleaned[start:end])
-    except json.JSONDecodeError as e:
-        logger.warning("Reasoning JSON parse failed: %s", e)
-    return {"objective_note": cleaned[:400], "risk_rationale": ""}
-
-
-def create_analysis_agent(api_key: str = None) -> InventoryAnalysisAgent:
-    return InventoryAnalysisAgent(api_key=api_key)
+def create_analysis_agent() -> InventoryAnalysisAgent:
+    return InventoryAnalysisAgent()
