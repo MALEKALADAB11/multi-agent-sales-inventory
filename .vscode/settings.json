@@ -1,6 +1,7 @@
 {
     "python.analysis.extraPaths": [
-        "./sales-module"
+        "./sales-module",
+        "./inventory-module"
     ],
     "python-envs.defaultEnvManager": "ms-python.python:system"
 }

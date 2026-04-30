@@ -50,3 +50,33 @@ class SalesAgentState(TypedDict, total=False):
     # --- Routing flags ---
     route_to:Optional[Literal["strategie", "coach", "end"]]
     error: Optional[str]
+
+AgentState = SalesAgentState
+# ── Alias pour compatibilité avec main.py ─────────────────────
+def initial_state(store_id: str = "OOR_LAC_01", **kwargs) -> SalesAgentState:
+    """Accepte et ignore les kwargs supplémentaires comme cycle_id."""
+    return SalesAgentState(
+        pos_data           = {"store_id": store_id},
+        pos_history        = [],
+        gap_objectif       = 0.0,
+        gap_amount         = 0.0,
+        urgency_level      = "LOW",
+        urgency_score      = 0.0,
+        timesfm_prediction = None,
+        analyst_summary    = None,
+        external_context   = None,
+        root_cause         = None,
+        context_factors    = [],
+        strategie_data     = None,
+        strategie          = None,
+        strategie_actions  = [],
+        focus_produits     = [],
+        message_manager    = None,
+        cause_racine       = None,
+        context_heatmap    = None,
+        context_signals    = [],
+        conseil_final      = None,
+        feedback_history   = [],
+        route_to           = None,
+        error              = None,
+    )

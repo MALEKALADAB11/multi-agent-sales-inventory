@@ -71,21 +71,35 @@ class CycleOrchestrator:
         # ── Afficher début du cycle ───────────────────
         tracer.cycle_start(cycle_id, store_id, triggered_by)
 
-        state = initial_state(
-            store_id     = store_id,
-            cycle_id     = cycle_id,
-            triggered_by = triggered_by
-        )
+        # ── Créer le state initial sans kwargs inconnus ──
+        state = initial_state(store_id=store_id)
+
+        # ── Ajouter les champs supplémentaires manuellement ──
         state["metrics"] = {
-            "cycle_id":   cycle_id,
-            "started_at": datetime.utcnow().isoformat(),
-            "store_id":   store_id
+            "cycle_id":    cycle_id,
+            "started_at":  datetime.utcnow().isoformat(),
+            "store_id":    store_id,
+            "triggered_by": triggered_by,
         }
+
+        # ── Stocker cycle_id dans pos_data pour traçabilité ──
+        if "pos_data" not in state or state["pos_data"] is None:
+            state["pos_data"] = {}
+        state["pos_data"]["cycle_id"]    = cycle_id
+        state["pos_data"]["triggered_by"] = triggered_by
 
         started = datetime.utcnow()
         result  = await self.graph.ainvoke(state)
 
         duration = (datetime.utcnow() - started).total_seconds() * 1000
+
+        # ── Guard : result peut être None ────────────────
+        if result is None:
+            result = dict(state)
+
+        if "metrics" not in result or result["metrics"] is None:
+            result["metrics"] = {}
+
         result["metrics"]["total_ms"]     = round(duration, 2)
         result["metrics"]["completed_at"] = datetime.utcnow().isoformat()
 

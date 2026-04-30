@@ -1,27 +1,20 @@
-"""
-Inventory Analysis Orchestrator
-================================
-Drives the analysis pipeline and passes the structured baseline report
-to downstream agents when they are available.
-
-"""
-
 import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from src.agents.analysis_agent import create_analysis_agent
-from config.settings import settings
+from src.agents.analysis_agent import create_analysis_agent  # Importation de l'agent d'analyse
+from langchain_ollama import ChatOllama  # Importation de ChatOllama
 
 
 class InventoryOrchestrator:
 
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key or settings.groq_api_key
-        self.analysis_agent = create_analysis_agent(api_key=self.api_key)
+    def __init__(self):
+        # Initialisation sans clé API, utilisant ChatOllama configuré par des variables d'environnement
+        self.analysis_agent = create_analysis_agent()
 
     def analyze_sku(
         self,
@@ -183,5 +176,5 @@ class InventoryOrchestrator:
         print(f"Objective note      : {report.get('objective_note', '')}\n")
 
 
-def create_orchestrator(api_key: str = None) -> InventoryOrchestrator:
-    return InventoryOrchestrator(api_key=api_key)
+def create_orchestrator() -> InventoryOrchestrator:
+    return InventoryOrchestrator()
