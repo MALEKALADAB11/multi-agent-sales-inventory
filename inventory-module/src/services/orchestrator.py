@@ -7,6 +7,7 @@ to downstream agents when they are available.
 """
 
 import sys
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,6 +16,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from src.agents.analysis_agent import create_analysis_agent, USE_LLM
 from config.settings import settings
+
+logger = logging.getLogger(__name__)  # FIX 3: logger was never defined
 
 
 class InventoryOrchestrator:
@@ -67,17 +70,12 @@ class InventoryOrchestrator:
         store_id: str = "STORE-001",
         business_objective: str = "balanced",
     ) -> Dict[str, Any]:
-        print(f"\n{'='*70}")
-        print(f"ANALYSIS PIPELINE  |  SKU: {sku}  |  Store: {store_id}")
-        print(f"Objective: {business_objective}")
-        print(f"{'='*70}")
-
         result = self.analysis_agent.run(
             sku=sku,
             store_id=store_id,
             business_objective=business_objective,
         )
-        self._log_result(result)
+        self._log_result(sku, result)
         return result
 
     def _analyze_sku_safe(
@@ -86,14 +84,10 @@ class InventoryOrchestrator:
         store_id: str,
         business_objective: str,
     ) -> Dict[str, Any]:
-        """
-        Thread-safe wrapper for analyze_sku.
-        Catches exceptions and returns error dict instead of raising.
-        """
         try:
             return self.analyze_sku(sku, store_id, business_objective)
         except Exception as e:
-            print(f"[ERROR] SKU {sku}: {e}")
+            logger.error("[SKU %s] Error: %s", sku, e)
             return {"sku": sku, "store_id": store_id, "error": str(e)}
 
     def analyze_batch(
@@ -134,31 +128,42 @@ class InventoryOrchestrator:
             future_to_sku = {
                 executor.submit(
                     self._analyze_sku_safe,
-                    sku,
-                    store_id,
-                    business_objective
+                    sku, store_id, business_objective
                 ): sku
                 for sku in skus
             }
-
             for future in as_completed(future_to_sku):
                 sku = future_to_sku[future]
                 try:
-                    result = future.result()
-                    results_dict[sku] = result
+                    results_dict[sku] = future.result()
                 except Exception as e:
-                    print(f"[ERROR] Unexpected failure for SKU {sku}: {e}")
+                    logger.error("[INVENTORY] SKU %s unexpected error: %s", sku, e)
                     results_dict[sku] = {
-                        "sku": sku,
+                        "sku":      sku,
                         "store_id": store_id,
-                        "error": f"Unexpected error: {str(e)}"
+                        "error":    str(e),
                     }
 
-        return [results_dict[sku] for sku in skus]
+        # FIX 1: summary moved before return so it actually executes
+        results  = [results_dict[s] for s in skus]
+        critical = sum(1 for r in results
+                       if r.get("analysis_report", {})
+                           .get("risk_assessment", {})
+                           .get("level") == "CRITICAL")
+        high     = sum(1 for r in results
+                       if r.get("analysis_report", {})
+                           .get("risk_assessment", {})
+                           .get("level") == "HIGH")
+        errors   = sum(1 for r in results if "error" in r)
 
-    # ------------------------------------------------------------------
-    # Read-only accessors for downstream agents
-    # ------------------------------------------------------------------
+        logger.info(
+            "[INVENTORY] ✅ Batch done — Critical: %d | High: %d | Errors: %d",
+            critical, high, errors
+        )
+
+        return results
+
+    # ── Read-only accessors ───────────────────────────────────────────────
 
     def get_risk_level(self, result: Dict[str, Any]) -> Optional[str]:
         return (
@@ -175,32 +180,25 @@ class InventoryOrchestrator:
         )
 
     def get_formula_order_qty(self, result: Dict[str, Any]) -> Optional[float]:
-        """
-        max(EOQ, MOQ) — the mathematically derived quantity floor.
-        This is NOT a recommendation. The Decision Agent reads this
-        alongside Context Agent output to set the actual order quantity.
-        """
         return (
             result.get("analysis_report", {})
                   .get("metrics", {})
                   .get("formula_order_qty")
         )
 
-    # ------------------------------------------------------------------
-    # Internal logging
-    # ------------------------------------------------------------------
+    # ── Log minimal par SKU ───────────────────────────────────────────────
 
     @staticmethod
-    def _log_result(result: Dict[str, Any]) -> None:
+    def _log_result(sku: str, result: Dict[str, Any]) -> None:
         if "error" in result:
-            print(f"[ERROR] {result['error']}")
+            logger.warning("[SKU %s] ❌ Error: %s", sku, result["error"])
             return
 
         report      = result.get("analysis_report", {})
         risk        = report.get("risk_assessment", {})
         metrics     = report.get("metrics", {})
-        constraints = report.get("constraints", {})
-        stock       = report.get("stock_status", {})
+        stock       = report.get("stock", {})        # FIX 2a: was undefined
+        constraints = report.get("constraints", {})  # FIX 2b: was undefined
 
         print(f"\nReport type         : {report.get('report_type', 'N/A')}")
         print(f"Lifecycle stage     : {stock.get('lifecycle_stage', 'N/A')}")

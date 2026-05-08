@@ -11,7 +11,9 @@ import httpx
 import redis.asyncio as aioredis
 from google.cloud import bigquery
 
-from sales_module.core.config import get_config
+from core.config import get_config
+
+
 
 logger = logging.getLogger(__name__)
 config = get_config()

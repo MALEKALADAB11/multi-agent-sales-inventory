@@ -1,12 +1,14 @@
 {
-  "weather": "Rain 2:00 PM – 6:00 PM",
-  "weather_impact": "+40% accessory demand",
-  "weather_icon": "rain",
-  "event": "Concert tonight 2km",
-  "event_time": "8:00 PM",
-  "event_impact": "+60% visitors expected 5-7 PM",
-  "stock_alert": "iPhone 15 — 3 units left",
-  "traffic_h": 42,
-  "traffic_capacity": 20,
-  "traffic_vs_forecast": -22
+  "weather": "Couvert - Pas de pluie",
+  "weather_impact": "-5% trafic boutique",
+  "weather_icon": "cloudy",
+  "event": "Aucun evenement majeur",
+  "event_time": "",
+  "event_impact": "",
+  "stock_alert": "Forfait Flexi 25Go — stock limité",
+  "traffic_h": 26,
+  "traffic_capacity": 40,
+  "traffic_vs_forecast": -35,
+  "next_holiday": "Fete de la Republique dans 80 jours",
+  "promotions_actives": 0
 }

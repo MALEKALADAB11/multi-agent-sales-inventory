@@ -1,37 +1,37 @@
 {
   "stores": [
     {
-      "store_id": "OOR_LAC_01",
-      "name": "Ooredoo Lac 1",
+      "store_id": "I63",
+      "name": "FR LAC2 TUNISIA MALL",
       "city": "Tunis",
       "region": "Grand Tunis",
-      "address": "Centre Commercial Lac 1, Tunis",
+      "address": "Tunisia Mall, Les Berges du Lac 2, Tunis",
       "opening_hour": 9,
-      "closing_hour": 20,
+      "closing_hour": 21,
       "active_sellers": 4,
-      "manager": "Mehdi Slama"
+      "manager": "Manager LAC2"
     },
     {
-      "store_id": "OOR_MENZAH_02",
-      "name": "Ooredoo Menzah 9",
+      "store_id": "M23",
+      "name": "Boutique HABIB BOURGUIBA",
       "city": "Tunis",
       "region": "Grand Tunis",
-      "address": "Avenue Jugurtha, Menzah 9",
+      "address": "Avenue Habib Bourguiba, Tunis",
       "opening_hour": 9,
       "closing_hour": 20,
-      "active_sellers": 3,
-      "manager": "Sana Agrebi"
+      "active_sellers": 8,
+      "manager": "Manager HB"
     },
     {
-      "store_id": "OOR_SFAX_03",
-      "name": "Ooredoo Sfax Centre",
+      "store_id": "M03",
+      "name": "Boutique SFAX I",
       "city": "Sfax",
       "region": "Sfax",
       "address": "Avenue Habib Bourguiba, Sfax",
       "opening_hour": 9,
       "closing_hour": 19,
-      "active_sellers": 5,
-      "manager": "Karim Tlili"
+      "active_sellers": 4,
+      "manager": "Manager Sfax"
     }
   ]
 }
