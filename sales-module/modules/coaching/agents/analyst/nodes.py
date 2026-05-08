@@ -12,7 +12,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from core.config import get_config
 from core.state import SalesAgentState
 from data.mock_provider import get_data_provider
-
 from .prompts import ANALYST_SYSTEM_PROMPT, ANALYST_USER_PROMPT
 
 logger = logging.getLogger(__name__)

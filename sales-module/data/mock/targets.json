@@ -1,6 +1,26 @@
 [
-  {"advisor_id": "adv-kb", "ca_target": 2000, "units_target": 18},
-  {"advisor_id": "adv-sm", "ca_target": 2000, "units_target": 8},
-  {"advisor_id": "adv-at", "ca_target": 2000, "units_target": 9},
-  {"advisor_id": "adv-lk", "ca_target": 2000, "units_target": 6}
+  {
+    "advisor_id": "adv-zi",
+    "agent_id": "7296",
+    "ca_target": 385.0,
+    "units_target": 12
+  },
+  {
+    "advisor_id": "adv-mh",
+    "agent_id": "8987",
+    "ca_target": 352.0,
+    "units_target": 10
+  },
+  {
+    "advisor_id": "adv-bm",
+    "agent_id": "7451",
+    "ca_target": 275.0,
+    "units_target": 8
+  },
+  {
+    "advisor_id": "adv-mk",
+    "agent_id": "8988",
+    "ca_target": 88.0,
+    "units_target": 5
+  }
 ]
