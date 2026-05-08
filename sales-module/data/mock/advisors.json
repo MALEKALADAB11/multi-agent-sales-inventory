@@ -1,42 +1,46 @@
 [
   {
-    "id": "adv-kb",
-    "advisor_code": "kb",
-    "name": "Karim Benali",
-    "initials": "KB",
-    "role": "Smartphones 5G",
+    "id": "adv-zi",
+    "advisor_code": "zi",
+    "agent_id": "7296",
+    "name": "Zouiten Insaf",
+    "initials": "ZI",
+    "role": "Forfaits & Services",
     "avatar_color": "#6C5CE7",
-    "ca_target": 2000,
-    "coach_score": 0.91
+    "ca_target": 385.0,
+    "coach_score": 0.88
   },
   {
-    "id": "adv-sm",
-    "advisor_code": "sm",
-    "name": "Sara Moulai",
-    "initials": "SM",
-    "role": "Fiber · Pro Offers",
+    "id": "adv-mh",
+    "advisor_code": "mh",
+    "agent_id": "8987",
+    "name": "Mansour Hela",
+    "initials": "MH",
+    "role": "Postpayé & Terminaux",
     "avatar_color": "#00B894",
-    "ca_target": 2000,
-    "coach_score": 0.73
+    "ca_target": 352.0,
+    "coach_score": 0.75
   },
   {
-    "id": "adv-at",
-    "advisor_code": "at",
-    "name": "Amine Tazi",
-    "initials": "AT",
-    "role": "Accessories",
+    "id": "adv-bm",
+    "advisor_code": "bm",
+    "agent_id": "7451",
+    "name": "Ben Ammar Meriam",
+    "initials": "BM",
+    "role": "Smartphones & Data",
     "avatar_color": "#F9A825",
-    "ca_target": 2000,
-    "coach_score": 0.44
+    "ca_target": 275.0,
+    "coach_score": 0.62
   },
   {
-    "id": "adv-lk",
-    "advisor_code": "lk",
-    "name": "Leila Khadri",
-    "initials": "LK",
-    "role": "Retention · CRM",
+    "id": "adv-mk",
+    "advisor_code": "mk",
+    "agent_id": "8988",
+    "name": "Mansour Khouloud",
+    "initials": "MK",
+    "role": "Recharge & Accessoires",
     "avatar_color": "#2D9CDB",
-    "ca_target": 2000,
-    "coach_score": 0.28
+    "ca_target": 88.0,
+    "coach_score": 0.41
   }
 ]

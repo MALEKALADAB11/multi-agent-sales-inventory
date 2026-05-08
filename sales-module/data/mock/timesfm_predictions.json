@@ -1,32 +1,62 @@
 {
-  "OOR_LAC_01": {
-    "store_id": "OOR_LAC_01",
+  "I63": {
+    "store_id": "I63",
     "generated_at": "15:10",
-    "forecast_end_of_day_tnd": 11200.0,
-    "forecast_remaining_tnd": 3350.0,
-    "forecast_hourly_tnd": [680.0, 620.0, 710.0, 690.0, 650.0],
-    "confidence_interval": { "low": 10400.0, "high": 12000.0 },
-    "forecast_horizon_hours": 5,
-    "model_version": "timesfm-1.0"
-  },
-  "OOR_MENZAH_02": {
-    "store_id": "OOR_MENZAH_02",
-    "generated_at": "15:10",
-    "forecast_end_of_day_tnd": 14300.0,
-    "forecast_remaining_tnd": 3100.0,
-    "forecast_hourly_tnd": [620.0, 580.0, 640.0, 610.0, 650.0],
-    "confidence_interval": { "low": 13600.0, "high": 15000.0 },
-    "forecast_horizon_hours": 5,
-    "model_version": "timesfm-1.0"
-  },
-  "OOR_SFAX_03": {
-    "store_id": "OOR_SFAX_03",
-    "generated_at": "15:10",
-    "forecast_end_of_day_tnd": 8500.0,
-    "forecast_remaining_tnd": 4400.0,
-    "forecast_hourly_tnd": [900.0, 850.0, 920.0, 880.0],
-    "confidence_interval": { "low": 7800.0, "high": 9200.0 },
+    "forecast_end_of_day_tnd": 915.0,
+    "forecast_remaining_tnd": 420.0,
+    "forecast_hourly_tnd": [
+      100.0,
+      95.0,
+      105.0,
+      120.0
+    ],
+    "confidence_interval": {
+      "low": 780.0,
+      "high": 1050.0
+    },
     "forecast_horizon_hours": 4,
-    "model_version": "timesfm-1.0"
+    "model_version": "timesfm-postgres-v1",
+    "source": "historical_ratio",
+    "ratio_used": 1.85
+  },
+  "M23": {
+    "store_id": "M23",
+    "generated_at": "15:10",
+    "forecast_end_of_day_tnd": 1860.0,
+    "forecast_remaining_tnd": 860.0,
+    "forecast_hourly_tnd": [
+      215.0,
+      200.0,
+      220.0,
+      225.0
+    ],
+    "confidence_interval": {
+      "low": 1580.0,
+      "high": 2140.0
+    },
+    "forecast_horizon_hours": 4,
+    "model_version": "timesfm-postgres-v1",
+    "source": "historical_ratio",
+    "ratio_used": 1.78
+  },
+  "M03": {
+    "store_id": "M03",
+    "generated_at": "15:10",
+    "forecast_end_of_day_tnd": 960.0,
+    "forecast_remaining_tnd": 440.0,
+    "forecast_hourly_tnd": [
+      110.0,
+      105.0,
+      115.0,
+      110.0
+    ],
+    "confidence_interval": {
+      "low": 820.0,
+      "high": 1100.0
+    },
+    "forecast_horizon_hours": 4,
+    "model_version": "timesfm-postgres-v1",
+    "source": "historical_ratio",
+    "ratio_used": 1.8
   }
 }

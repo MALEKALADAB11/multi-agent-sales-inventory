@@ -1,47 +1,110 @@
 {
-  "OOR_LAC_01": {
-    "store_id": "OOR_LAC_01",
+  "I63": {
+    "store_id": "I63",
+    "store_name": "FR LAC2 TUNISIA MALL",
     "snapshot_time": "15:10",
-    "daily_target_tnd": 18000.0,
-    "current_revenue_tnd": 7850.0,
-    "nb_transactions_today": 23,
+    "daily_target_tnd": 1100.0,
+    "current_revenue_tnd": 550.0,
+    "nb_transactions_today": 16,
     "last_transaction_at": "15:07",
     "active_sellers": 4,
     "sellers": [
-      { "name": "Ahmed Ben Ali", "revenue_today": 2400.0, "nb_ventes": 7 },
-      { "name": "Nour Hamdi", "revenue_today": 1950.0, "nb_ventes": 6 },
-      { "name": "Rami Jlassi", "revenue_today": 2100.0, "nb_ventes": 5 },
-      { "name": "Ines Baccouche", "revenue_today": 1400.0, "nb_ventes": 5 }
+      {
+        "name": "ZOUITEN INSAF",
+        "agent_id": "7296",
+        "revenue_today": 192.5,
+        "nb_ventes": 6
+      },
+      {
+        "name": "MANSOUR HELA",
+        "agent_id": "8987",
+        "revenue_today": 176.0,
+        "nb_ventes": 5
+      },
+      {
+        "name": "BEN AMMAR MERIAM",
+        "agent_id": "7451",
+        "revenue_today": 137.5,
+        "nb_ventes": 4
+      },
+      {
+        "name": "MANSOUR KHOULOUD",
+        "agent_id": "8988",
+        "revenue_today": 44.0,
+        "nb_ventes": 1
+      }
     ]
   },
-  "OOR_MENZAH_02": {
-    "store_id": "OOR_MENZAH_02",
+  "M23": {
+    "store_id": "M23",
+    "store_name": "Boutique HABIB BOURGUIBA",
     "snapshot_time": "15:10",
-    "daily_target_tnd": 14000.0,
-    "current_revenue_tnd": 11200.0,
-    "nb_transactions_today": 31,
-    "last_transaction_at": "15:09",
-    "active_sellers": 3,
+    "daily_target_tnd": 2200.0,
+    "current_revenue_tnd": 1100.0,
+    "nb_transactions_today": 35,
+    "last_transaction_at": "15:07",
+    "active_sellers": 4,
     "sellers": [
-      { "name": "Sami Ferchichi", "revenue_today": 4200.0, "nb_ventes": 12 },
-      { "name": "Lina Trabelsi", "revenue_today": 3800.0, "nb_ventes": 10 },
-      { "name": "Yassine Ouali", "revenue_today": 3200.0, "nb_ventes": 9 }
+      {
+        "name": "DRIDI NABIL",
+        "agent_id": "1104",
+        "revenue_today": 330.0,
+        "nb_ventes": 11
+      },
+      {
+        "name": "BENABDALLAH ABDELHEDI",
+        "agent_id": "0600",
+        "revenue_today": 308.0,
+        "nb_ventes": 10
+      },
+      {
+        "name": "BEN FADHLA ISSAM",
+        "agent_id": "0996",
+        "revenue_today": 264.0,
+        "nb_ventes": 8
+      },
+      {
+        "name": "ELMAY FETHI",
+        "agent_id": "0440",
+        "revenue_today": 198.0,
+        "nb_ventes": 6
+      }
     ]
   },
-  "OOR_SFAX_03": {
-    "store_id": "OOR_SFAX_03",
+  "M03": {
+    "store_id": "M03",
+    "store_name": "Boutique SFAX I",
     "snapshot_time": "15:10",
-    "daily_target_tnd": 20000.0,
-    "current_revenue_tnd": 4100.0,
-    "nb_transactions_today": 12,
-    "last_transaction_at": "14:50",
-    "active_sellers": 5,
+    "daily_target_tnd": 1150.0,
+    "current_revenue_tnd": 575.0,
+    "nb_transactions_today": 17,
+    "last_transaction_at": "15:07",
+    "active_sellers": 4,
     "sellers": [
-      { "name": "Khaled Mejri", "revenue_today": 1200.0, "nb_ventes": 3 },
-      { "name": "Mariem Saidi", "revenue_today": 900.0, "nb_ventes": 3 },
-      { "name": "Slim Bouaziz", "revenue_today": 800.0, "nb_ventes": 2 },
-      { "name": "Dorra Mansour", "revenue_today": 700.0, "nb_ventes": 2 },
-      { "name": "Fares Khelifi", "revenue_today": 500.0, "nb_ventes": 2 }
+      {
+        "name": "ZOUARI IMEN",
+        "agent_id": "3703",
+        "revenue_today": 258.75,
+        "nb_ventes": 8
+      },
+      {
+        "name": "TRABELSI MED ALI",
+        "agent_id": "1447",
+        "revenue_today": 138.0,
+        "nb_ventes": 4
+      },
+      {
+        "name": "REKHISS AYMEN",
+        "agent_id": "2607",
+        "revenue_today": 97.75,
+        "nb_ventes": 3
+      },
+      {
+        "name": "Kharrat SLIM",
+        "agent_id": "2664",
+        "revenue_today": 80.5,
+        "nb_ventes": 2
+      }
     ]
   }
 }

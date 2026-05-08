@@ -44,7 +44,7 @@ from orchestration.graph         import CycleOrchestrator
 from orchestration.trigger       import CronTrigger
 
 # ── Vos Agents IA ─────────────────────────────────────────────
-from data.mock_provider                            import get_data_provider
+from data.mock_provider import get_data_provider
 from modules.coaching.agents.analyst.agent         import get_analyst_agent
 from modules.coaching.agents.stratege.agent        import get_stratege_agent
 
