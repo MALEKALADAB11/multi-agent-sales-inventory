@@ -1,12 +1,17 @@
 [
-  {"advisor_id": "adv-kb", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 9},
-  {"advisor_id": "adv-kb", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 9},
-  {"advisor_id": "adv-sm", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 9},
-  {"advisor_id": "adv-at", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 9},
-  {"advisor_id": "adv-kb", "sku": "SAMA55",   "product_name": "Samsung A55",       "category": "Smartphone", "amount": 499, "units": 1, "hour": 10},
-  {"advisor_id": "adv-sm", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 10},
-  {"advisor_id": "adv-kb", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 11},
-  {"advisor_id": "adv-at", "sku": "AIRPDP3",  "product_name": "AirPods Pro 3",     "category": "Accessory",  "amount": 279, "units": 1, "hour": 11},
-  {"advisor_id": "adv-sm", "sku": "FIB2GPRO", "product_name": "Fiber Box 2G Pro",  "category": "Internet",   "amount": 49,  "units": 1, "hour": 12},
-  {"advisor_id": "adv-lk", "sku": "ASRPREM",  "product_name": "Premium Insurance", "category": "Service",    "amount": 9,   "units": 1, "hour": 12}
+  {"advisor_id": "adv-kb", "sku": "PHN-IPH-15", "product_name": "iPhone 15", "category": "Smartphone", "amount": 2999, "units": 1, "hour": 9},
+  {"advisor_id": "adv-kb", "sku": "SIM-PREP-001", "product_name": "Prepaid SIM", "category": "SIM", "amount": 9, "units": 1, "hour": 9},
+  {"advisor_id": "adv-sm", "sku": "FBR-BOX-001", "product_name": "Fiber Box Standard", "category": "Internet", "amount": 99, "units": 1, "hour": 9},
+  {"advisor_id": "adv-at", "sku": "SIM-PREP-001", "product_name": "Prepaid SIM", "category": "SIM", "amount": 9, "units": 1, "hour": 9},
+  {"advisor_id": "adv-kb", "sku": "PHN-SAM-S24", "product_name": "Samsung Galaxy S24", "category": "Smartphone", "amount": 1999, "units": 1, "hour": 10},
+  {"advisor_id": "adv-sm", "sku": "SIM-PREP-001", "product_name": "Prepaid SIM", "category": "SIM", "amount": 9, "units": 1, "hour": 10},
+  {"advisor_id": "adv-kb", "sku": "FBR-BOX-001", "product_name": "Fiber Box Standard", "category": "Internet", "amount": 99, "units": 1, "hour": 11},
+  {"advisor_id": "adv-at", "sku": "ACC-BUD-001", "product_name": "Wireless Earbuds", "category": "Accessory", "amount": 199, "units": 1, "hour": 11},
+  {"advisor_id": "adv-sm", "sku": "FBR-BOX-002", "product_name": "Fiber Box Plus", "category": "Internet", "amount": 149, "units": 1, "hour": 12},
+  {"advisor_id": "adv-lk", "sku": "SIM-POST-001", "product_name": "Postpaid SIM", "category": "SIM", "amount": 19, "units": 1, "hour": 12},
+  {"advisor_id": "adv-kb", "sku": "RCH-MOB-010", "product_name": "Mobile Recharge 10", "category": "Recharge", "amount": 10, "units": 1, "hour": 13},
+  {"advisor_id": "adv-sm", "sku": "ACC-WAT-001", "product_name": "Smartwatch Lite", "category": "Accessory", "amount": 449, "units": 1, "hour": 13},
+  {"advisor_id": "adv-at", "sku": "SIM-PREP-001", "product_name": "Prepaid SIM", "category": "SIM", "amount": 9, "units": 1, "hour": 14},
+  {"advisor_id": "adv-lk", "sku": "RCH-MOB-020", "product_name": "Mobile Recharge 20", "category": "Recharge", "amount": 20, "units": 1, "hour": 14},
+  {"advisor_id": "adv-kb", "sku": "PHN-IPH-15", "product_name": "iPhone 15", "category": "Smartphone", "amount": 2999, "units": 1, "hour": 15}
 ]

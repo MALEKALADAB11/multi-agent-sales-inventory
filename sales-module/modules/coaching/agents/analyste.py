@@ -59,7 +59,7 @@ class AnalysteAgent:
         return state
 
     async def _execute(self, state: AgentState) -> AgentState:
-        store_id = state["store_id"]
+        store_id = (state.get("pos_data") or {}).get("store_id", "store-lac2")
         t        = self.tracer
 
         # ── Step 1 — Lire POS ─────────────────────────

@@ -6,7 +6,7 @@ Central configuration for the inventory agent system.
 
 from pathlib import Path
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, Literal
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -61,17 +61,44 @@ BUSINESS_OBJECTIVE_SETTINGS = {
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
-    # LLM Configuration
+    # ══════════════════════════════════════════════════════════════════════
+    # LLM Provider Configuration
+    # ══════════════════════════════════════════════════════════════════════
+    
+    # Provider selection (groq, ollama, openai, anthropic, etc.)
+    llm_provider: Literal["groq", "ollama", "openai", "anthropic"] = "ollama"
+    llm_temperature: float = 0.0  # Default for reasoning tasks
+    
+    # ── Groq Configuration ────────────────────────────────────────────────
     groq_api_key: Optional[str] = None
-    llm_model: str = "llama-3.3-70b-versatile"
-    llm_temperature: float = 0.7
-    llm_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    
+    # ── Ollama Configuration ──────────────────────────────────────────────
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2:latest"
+    
+    # ── OpenAI Configuration ──────────────────────────────────────────────
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    
+    # ── Anthropic Configuration ───────────────────────────────────────────
+    anthropic_api_key: Optional[str] = None
+    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    
+    # ══════════════════════════════════════════════════════════════════════
+    # Legacy fields (for backward compatibility)
+    # ══════════════════════════════════════════════════════════════════════
+    llm_model: Optional[str] = None  # Deprecated - use provider-specific model
+    llm_base_url: Optional[str] = None  # Deprecated - use provider-specific base_url
 
     # MCP Configuration
     mcp_server_url: Optional[str] = None
+    
     # App
-    environment: Optional[str] = None
-    log_level: Optional[str] = None
+    environment: str = "development"
+    log_level: str = "INFO"
     
     class Config:
         env_file = ".env"
@@ -81,11 +108,8 @@ class Settings(BaseSettings):
 # Global settings instance
 settings = Settings()
 
-
-# Initialize settings
-settings = Settings()
+# Legacy exports (for backward compatibility)
 GROQ_API_KEY = settings.groq_api_key
-LLM_MODEL = settings.llm_model
+LLM_MODEL = settings.llm_model or settings.groq_model
 LLM_TEMPERATURE = settings.llm_temperature
-LLM_BASE_URL = settings.llm_base_url
-
+LLM_BASE_URL = settings.llm_base_url or settings.groq_base_url

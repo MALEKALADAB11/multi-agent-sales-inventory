@@ -113,6 +113,16 @@ def _flag(val: bool, warn_if_true: bool = True) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Reasoning source badge
+# ---------------------------------------------------------------------------
+
+def _reasoning_badge(source: str) -> str:
+    if not source or source == "unknown":
+        return "unknown"
+    return source
+
+
+# ---------------------------------------------------------------------------
 # Report printer
 # ---------------------------------------------------------------------------
 
@@ -169,7 +179,8 @@ def print_report(result: dict) -> None:
     print(f"  Reorder point      : {_units(metrics.get('reorder_point'))} units  "
           f"(trigger reorder when stock falls here)")
     print(f"  EOQ                : {_units(metrics.get('eoq'))} units  (economically optimal batch size)")
-    print(f"  Formula order qty  : {_units(metrics.get('formula_order_qty'))} units  [{_dt(metrics.get('total_replenishment_cost'))}]  (max(EOQ, MOQ) — input to Decision Agent)")
+    print(f"  Formula order qty  : {_units(metrics.get('formula_order_qty'))} units  "
+          f"[{_dt(metrics.get('total_replenishment_cost'))}]  (max(EOQ, MOQ) — input to Decision Agent)")
     print(f"  Holding cost/cycle : {_dt(metrics.get('holding_cost_per_cycle_dt'))}")
 
     # ── Risk assessment ────────────────────────────────────────────────────
@@ -198,6 +209,10 @@ def print_report(result: dict) -> None:
     # ── Analyst note ───────────────────────────────────────────────────────
     print(f"\nAnalyst Note")
     print(f"  {report.get('objective_note', 'N/A')}")
+
+    # ── Reasoning source ───────────────────────────────────────────────────
+    print(f"\nReasoning source   : {_reasoning_badge(report.get('reasoning_source', 'unknown'))}")
+
     print("=" * 70 + "\n")
 
 

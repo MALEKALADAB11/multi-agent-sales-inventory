@@ -49,8 +49,8 @@ class SalesAgentState(TypedDict, total=False):
 
     # --- Routing flags ---
     route_to:Optional[Literal["strategie", "coach", "end"]]
-    error: Optional[str]
-
+    errors:  list[str]
+    metrics: dict
 AgentState = SalesAgentState
 # ── Alias pour compatibilité avec main.py ─────────────────────
 def initial_state(store_id: str = "OOR_LAC_01", **kwargs) -> SalesAgentState:
@@ -78,5 +78,6 @@ def initial_state(store_id: str = "OOR_LAC_01", **kwargs) -> SalesAgentState:
         conseil_final      = None,
         feedback_history   = [],
         route_to           = None,
-        error              = None,
+        errors             = [],
+        metrics            = {}
     )

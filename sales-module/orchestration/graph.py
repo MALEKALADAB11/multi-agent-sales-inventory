@@ -81,6 +81,7 @@ class CycleOrchestrator:
             "store_id":    store_id,
             "triggered_by": triggered_by,
         }
+        
 
         # ── Stocker cycle_id dans pos_data pour traçabilité ──
         if "pos_data" not in state or state["pos_data"] is None:
