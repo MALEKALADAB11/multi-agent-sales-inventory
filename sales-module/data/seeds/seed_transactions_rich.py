@@ -3,14 +3,16 @@ import asyncpg
 import random
 from datetime import datetime, date, timedelta
 
-
 PRODUCTS = [
-    {"sku": "IPH16PRO",  "name": "iPhone 16 Pro",    "cat": "Smartphone", "price": 1299.0, "margin": 0.18},
-    {"sku": "SAMA55",    "name": "Samsung A55",       "cat": "Smartphone", "price": 699.0,  "margin": 0.15},
-    {"sku": "AIRPDP3",   "name": "AirPods Pro 3",     "cat": "Accessory",  "price": 279.0,  "margin": 0.35},
-    {"sku": "APLWTCH",   "name": "Apple Watch S10",   "cat": "Accessory",  "price": 449.0,  "margin": 0.22},
-    {"sku": "FIB2GPRO",  "name": "Fiber Box 2G Pro",  "cat": "Internet",   "price": 49.0,   "margin": 0.42},
-    {"sku": "ASRPREM",   "name": "Premium Insurance", "cat": "Service",    "price": 9.0,    "margin": 0.80},
+    {"sku": "PHN-IPH-15",  "name": "iPhone 15",         "cat": "Smartphone", "price": 2999.0, "margin": 0.18},
+    {"sku": "PHN-SAM-S24", "name": "Samsung Galaxy S24", "cat": "Smartphone", "price": 1999.0, "margin": 0.15},
+    {"sku": "ACC-BUD-001", "name": "Wireless Earbuds",   "cat": "Accessory",  "price": 199.0,  "margin": 0.35},
+    {"sku": "ACC-WAT-001", "name": "Smartwatch Lite",    "cat": "Accessory",  "price": 449.0,  "margin": 0.22},
+    {"sku": "FBR-BOX-001", "name": "Fiber Box Standard", "cat": "Internet",   "price": 99.0,   "margin": 0.42},
+    {"sku": "SIM-PREP-001", "name": "Prepaid SIM",       "cat": "SIM",        "price": 9.0,    "margin": 0.80},
+    {"sku": "SIM-POST-001", "name": "Postpaid SIM",      "cat": "SIM",        "price": 19.0,   "margin": 0.75},
+    {"sku": "RCH-MOB-010",  "name": "Mobile Recharge 10","cat": "Recharge",   "price": 10.0,   "margin": 0.50},
+    {"sku": "RCH-MOB-020",  "name": "Mobile Recharge 20","cat": "Recharge",   "price": 20.0,   "margin": 0.50},
 ]
 
 ADVISORS = [
@@ -20,13 +22,11 @@ ADVISORS = [
     {"id": "adv-lk", "ca_target": 2000, "weight": 0.15},
 ]
 
-
 async def seed():
     conn = await asyncpg.connect(
         "postgresql://asc_user:asc_password@localhost:5432/asc_db"
     )
 
-    # Supprimer les transactions du jour pour repartir propre
     today = date.today()
     await conn.execute("""
         DELETE FROM pos_transactions
@@ -37,28 +37,22 @@ async def seed():
     inserted = 0
     now = datetime.now()
 
-    # Générer des transactions sur les 8 dernières heures
     for hour_offset in range(8):
-        hour = 9 + hour_offset  # 9h → 16h
+        hour = 9 + hour_offset
         n_transactions = random.randint(4, 12)
 
         for _ in range(n_transactions):
-            # Choisir advisor selon son poids
             adv = random.choices(
                 ADVISORS,
                 weights=[a["weight"] for a in ADVISORS]
             )[0]
 
-            # Choisir produit
             product = random.choice(PRODUCTS)
 
-            # Timestamp aléatoire dans l'heure
-            minute  = random.randint(0, 59)
-            second  = random.randint(0, 59)
-            ts      = datetime(today.year, today.month, today.day,
-                               hour, minute, second)
+            minute = random.randint(0, 59)
+            second = random.randint(0, 59)
+            ts = datetime(today.year, today.month, today.day, hour, minute, second)
 
-            # Ne pas insérer dans le futur
             if ts > now:
                 continue
 
@@ -80,7 +74,6 @@ async def seed():
             )
             inserted += 1
 
-    # Résumé par advisor
     rows = await conn.fetch("""
         SELECT
             a.name,
@@ -108,7 +101,6 @@ async def seed():
     print(f"\nTarget: 8,000 DT · Attainment: {round(total/8000*100, 1)}%")
 
     await conn.close()
-
 
 if __name__ == "__main__":
     asyncio.run(seed())

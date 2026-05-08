@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from data.json_service import JsonDataService
-
+from shared_module.store_mapper import to_canonical_store_id
 router   = APIRouter(prefix="/api/v1", tags=["stores"])
 _json:   JsonDataService = None
 
@@ -17,7 +17,8 @@ async def list_stores():
 
 @router.get("/stores/{store_id}/metrics")
 async def get_store_metrics(store_id: str):
-    return _json.get_store_metrics()
+    canonical_id = to_canonical_store_id(store_id)  # "lac2" → "STORE-001"
+    return _json.get_store_metrics(canonical_id)
 
 
 @router.get("/stores/{store_id}/advisors")

@@ -1,7 +1,6 @@
 import os
 from typing import TypedDict, Annotated, Sequence, Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama  # Importation de ChatOllama
 from langgraph.graph import StateGraph, END
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import operator
@@ -10,6 +9,7 @@ import re
 import logging
 
 from src.tools.internal.mcp_wrappers import batch_inventory_data
+from src.utils.llm_factory import get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 # Performance knobs
 # ---------------------------------------------------------------------------
 
-USE_LLM = False   # set False to skip LLM and use rule-based prose
-LLM_TIMEOUT_S = 8      # seconds before giving up on Ollama and falling back
+USE_LLM = True   # set False to skip LLM and use rule-based prose
+LLM_TIMEOUT_S = 8    # seconds before giving up on LLM and falling back
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ def _parse_reasoning(content: str) -> Dict[str, str]:
     """
     # Remove markdown code fence if present
     content = re.sub(r"```(?:json)?\s*", "", content).strip()
-    
+
     try:
         data = json.loads(content)
         return {
@@ -249,15 +249,52 @@ class InventoryAnalysisAgent:
         "action", "suggested_order",
     )
 
-    def __init__(self):
-        # Utilisation de ChatOllama sans clé API
-        self.llm = ChatOllama(
-            model=os.getenv("OLLAMA_MODEL", "llama3.2:latest"),  # Modèle par défaut
-            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),  # URL de base
-            temperature=0.0,  # Température par défaut
+    def __init__(self, provider: str = None, api_key: str = None, use_llm: bool = None):
+        """
+        Initialize the analysis agent with flexible LLM provider support.
+
+        Args:
+            provider: LLM provider ("groq", "ollama", "openai", "anthropic")
+                     If None, uses LLM_PROVIDER from .env (defaults to "ollama")
+            api_key: API key for cloud providers (groq, openai, anthropic)
+                    If None, reads from .env (e.g., GROQ_API_KEY)
+            use_llm: Override the module-level USE_LLM flag for this instance.
+                    Pass False to skip LLM entirely (fast, rule-based only).
+                    If None, falls back to the module-level USE_LLM constant.
+
+        Examples:
+            # Use default provider from .env, module-level USE_LLM
+            agent = InventoryAnalysisAgent()
+
+            # Force LLM off for this instance (e.g. live WebSocket broadcasts)
+            agent = InventoryAnalysisAgent(use_llm=False)
+
+            # Force LLM on regardless of module constant
+            agent = InventoryAnalysisAgent(provider="groq", use_llm=True)
+        """
+        self.provider = provider or "default"
+
+        # Per-instance use_llm: explicit arg wins, falls back to module constant
+        self.use_llm = use_llm if use_llm is not None else USE_LLM
+
+        # Initialize LLM using factory pattern
+        self.llm = get_llm(
+            provider=provider,
+            api_key=api_key,
+            temperature=0.0,  # Reasoning tasks need deterministic output
         )
 
-        # Initialisation du graphe
+        llm_class = self.llm.__class__.__name__
+        logger.info(
+            "InventoryAnalysisAgent initialized | provider=%s | llm_class=%s | use_llm=%s",
+            provider or "default", llm_class, self.use_llm,
+        )
+        print(
+            f"[AnalysisAgent] provider={provider or 'default'} | "
+            f"llm_class={llm_class} | use_llm={self.use_llm}"
+        )
+
+        # Initialize LangGraph workflow
         wf = StateGraph(AgentState)
         wf.add_node("fetch", self._fetch_node)
         wf.add_node("reason", self._reason_node)
@@ -284,18 +321,24 @@ class InventoryAnalysisAgent:
     def _reason_node(self, state: AgentState) -> Dict[str, Any]:
         """
         LLM call with hard timeout. Three possible paths:
+
+          Path 1 — USE_LLM=False  → rule-based, no LLM attempted
+          Path 2 — LLM succeeded  → LLM prose, reasoning_source = "llm (<class>)"
+          Path 3 — LLM failed/timeout → rule-based fallback, reasoning_source says why
         """
         structured = state["structured"]
 
-        # Path 1: LLM disabled
-        if not USE_LLM:
+        # ── Path 1: LLM disabled ────────────────────────────────────────────
+        if not self.use_llm:
             reasoning = _rule_based_prose(state["business_objective"], structured)
             updated = dict(structured)
             updated["objective_note"] = reasoning["objective_note"]
             updated["risk_assessment"]["rationale"] = reasoning["risk_rationale"]
+            updated["reasoning_source"] = "rule_based (USE_LLM=False)"
+            logger.debug("SKU %s — reasoning_source: rule_based (USE_LLM=False)", state["sku"])
             return {"structured": updated, "messages": []}
 
-        # Paths 2 & 3: attempt LLM with hard timeout
+        # ── Paths 2 & 3: attempt LLM with hard timeout ──────────────────────
         raw = state["raw_data"]
         prompt = REASON_USER.format(
             sku=state["sku"],
@@ -308,41 +351,56 @@ class InventoryAnalysisAgent:
 
         reasoning = None
         msgs = []
+        llm_class = self.llm.__class__.__name__
 
         def _call_llm():
-            return self.llm.invoke([  # Appel à Ollama
+            return self.llm.invoke([
                 SystemMessage(content=REASON_SYSTEM),
                 HumanMessage(content=prompt),
             ])
 
         try:
-            # Lancer la fonction avec un timeout
             with ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(_call_llm)
                 response = future.result(timeout=LLM_TIMEOUT_S)
             reasoning = _parse_reasoning(response.content)
             msgs = [response]
-            logger.debug("LLM OK for SKU %s", state["sku"])
+            logger.debug("LLM OK for SKU %s | class=%s", state["sku"], llm_class)
 
         except FuturesTimeoutError:
             logger.warning(
                 "LLM timed out (%ds) for SKU %s — rule-based fallback.",
                 LLM_TIMEOUT_S, state["sku"],
             )
+            fallback_reason = f"rule_based (llm_timeout >{LLM_TIMEOUT_S}s)"
+
         except Exception as e:
             logger.warning(
                 "LLM failed (%s) for SKU %s — rule-based fallback.",
                 e, state["sku"],
             )
-
-        if reasoning is None:
-            reasoning = _rule_based_prose(state["business_objective"], structured)
+            fallback_reason = f"rule_based (llm_error: {type(e).__name__})"
 
         updated = dict(structured)
-        updated["objective_note"] = reasoning.get("objective_note", "")
-        updated["risk_assessment"]["rationale"] = reasoning.get(
-            "risk_rationale", updated["risk_assessment"]["rationale"]
-        )
+
+        if reasoning is not None:
+            # ── Path 2: LLM succeeded ──────────────────────────────────────
+            updated["objective_note"] = reasoning.get("objective_note", "")
+            updated["risk_assessment"]["rationale"] = reasoning.get(
+                "risk_rationale", updated["risk_assessment"]["rationale"]
+            )
+            updated["reasoning_source"] = f"llm ({llm_class})"
+            logger.debug("SKU %s — reasoning_source: llm (%s)", state["sku"], llm_class)
+        else:
+            # ── Path 3: LLM failed — rule-based fallback ───────────────────
+            reasoning = _rule_based_prose(state["business_objective"], structured)
+            updated["objective_note"] = reasoning.get("objective_note", "")
+            updated["risk_assessment"]["rationale"] = reasoning.get(
+                "risk_rationale", updated["risk_assessment"]["rationale"]
+            )
+            updated["reasoning_source"] = fallback_reason
+            logger.warning("SKU %s — reasoning_source: %s", state["sku"], fallback_reason)
+
         return {"structured": updated, "messages": msgs}
 
     def run(
@@ -389,5 +447,31 @@ class InventoryAnalysisAgent:
             }
 
 
-def create_analysis_agent() -> InventoryAnalysisAgent:
-    return InventoryAnalysisAgent()
+# ══════════════════════════════════════════════════════════════════════════════
+# Factory function for backward compatibility
+# ══════════════════════════════════════════════════════════════════════════════
+
+def create_analysis_agent(
+    provider: str = None,
+    api_key: str = None,
+    use_llm: bool = None,
+) -> InventoryAnalysisAgent:
+    """
+    Factory function to create an InventoryAnalysisAgent.
+
+    Args:
+        provider: LLM provider ("groq", "ollama", "openai", "anthropic")
+                 If None, uses LLM_PROVIDER from .env
+        api_key: API key for cloud providers. If None, reads from .env
+        use_llm: Override the module-level USE_LLM for this instance.
+                Pass False for fast rule-based mode (live broadcasts).
+                If None, uses the module-level USE_LLM constant.
+    """
+    if api_key and not provider:
+        logger.warning(
+            "Passing api_key without provider is deprecated. "
+            "Use create_analysis_agent(provider='groq', api_key=...) instead"
+        )
+        provider = "groq"
+
+    return InventoryAnalysisAgent(provider=provider, api_key=api_key, use_llm=use_llm)

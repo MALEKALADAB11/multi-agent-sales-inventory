@@ -121,7 +121,10 @@ async def startup_event():
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:
         InventoryDataCache.record_sale('STORE-001', sku, float(units))
-        invalidate_store('STORE-001')
+        # Pass sku + new live stock so invalidate_store can fire an instant
+        # stock_delta broadcast before the full pipeline re-runs (~10s later).
+        new_stock = InventoryDataCache.get_current_stock(sku, 'STORE-001')
+        invalidate_store('STORE-001', sku=sku, new_stock=new_stock)
 
     simulator.on_sale = _on_sale
     logger.info("✅ Inventory ↔ Sales sync wired")
@@ -475,9 +478,11 @@ async def ws_store(websocket: WebSocket, store_id: str):
     await websocket.accept()
 
     if store_id in _active_stores:
-        print(f"⚠️  Double connexion bloquée → {store_id}")
-        await websocket.close(code=1008)
-        return
+        await asyncio.sleep(2)          # give the slot time to clear if it's mid-cleanup
+        if store_id in _active_stores:  # re-check after waiting
+            print(f"⚠️  Double connexion bloquée → {store_id}")
+            await websocket.close(code=1008)
+            return
 
     _active_stores.add(store_id)
     print(f"\n🔌 Frontend connecté → {store_id}")
@@ -529,8 +534,21 @@ async def ws_store(websocket: WebSocket, store_id: str):
 
         # Cycle principal
         while True:
-            cycle   += 1
-            analysis = await _run_agents(mapped_id, cycle)
+            cycle      += 1
+            agent_task  = asyncio.create_task(_run_agents(mapped_id, cycle))
+            while not agent_task.done():
+                await asyncio.sleep(30)
+                if not agent_task.done():
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type":      "processing",
+                            "message":   "Analyse en cours...",
+                            "timestamp": datetime.now().isoformat(),
+                        }))
+                    except Exception:
+                        agent_task.cancel()
+                        break
+            analysis = await agent_task
             msg      = _build_payload(analysis)
             await websocket.send_text(json.dumps(msg, default=str))
             print(f"\n📤 Payload cycle #{cycle} ({len(json.dumps(msg,default=str)):,} bytes)")
