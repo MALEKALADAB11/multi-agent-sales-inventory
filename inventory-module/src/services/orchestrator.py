@@ -95,7 +95,7 @@ class InventoryOrchestrator:
         skus: List[str],
         store_id: str = "STORE-001",
         business_objective: str = "balanced",
-        max_workers: int = 6,
+        max_workers: int = 3,
     ) -> List[Dict[str, Any]]:
         """
         Analyze multiple SKUs IN PARALLEL using ThreadPoolExecutor.
