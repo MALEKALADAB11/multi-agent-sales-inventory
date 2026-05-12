@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 USE_LLM = True   # set False to skip LLM and use rule-based prose
-LLM_TIMEOUT_S = 8    # seconds before giving up on LLM and falling back
+LLM_TIMEOUT_S = 30    # seconds before giving up on LLM and falling back
 
 
 # ---------------------------------------------------------------------------
