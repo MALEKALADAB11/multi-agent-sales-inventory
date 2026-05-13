@@ -11,7 +11,7 @@ Usage examples:
     python main.py --sku ACC-BUD-001 --store STORE-002 --objective service_level
 
     # All SKUs in one store
-    python main.py --store STORE-001
+    python main.py --store I63
 
     # All SKUs across all stores
     python main.py --all
@@ -289,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
     parser.add_argument("--sku",       help="SKU to analyze")
-    parser.add_argument("--store",     help="Store ID (default: STORE-001)", default="STORE-001")
+    parser.add_argument("--store",     help="Store ID (default: I63)", default="I63")
     parser.add_argument("--objective", help="Business objective", choices=OBJECTIVES, default="balanced")
     parser.add_argument("--all",       help="Analyze all SKUs across all stores", action="store_true")
     parser.add_argument("--list",      help="List available SKUs, stores, and objectives", action="store_true")

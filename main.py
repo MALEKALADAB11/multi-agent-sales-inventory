@@ -9,6 +9,7 @@ import sys
 import os
 import asyncio
 import logging
+from typing import Dict
 from dotenv import load_dotenv
 
 # ── Fix module paths ──────────────────────────────────────────
@@ -115,18 +116,53 @@ async def startup_event():
     app.state.timefm = timefm
     logger.info("✅ TimesFM model loaded")
 
-    simulator = RealtimeSimulator(json_svc, interval_seconds=15)
-    simulator.start()
-    app.state.simulator = simulator
+    simulator = RealtimeSimulator(json_svc, interval_seconds=15, store_id="I63")
+
+    # ✅ In-memory stock tracker (since _DataCache doesn't track live stock)
+    _live_stock: Dict[str, float] = {}
+
+    def _init_stock_from_cache():
+        """Load initial stock levels from stock_history CSV"""
+        try:
+            stock_df = InventoryDataCache.stock()
+            store_stock = stock_df[stock_df["store_id"] == "I63"]
+            if not store_stock.empty:
+                # Get latest stock per SKU, ensure string keys
+                latest = store_stock.sort_values('date').groupby('sku').last()
+                for sku, row in latest.iterrows():
+                    _live_stock[str(sku)] = float(row.get('stock_level', 0))
+                logger.info(f"✅ Loaded {len(_live_stock)} SKU stock levels for I63")
+        except Exception as e:
+            logger.warning(f"Could not load initial stock: {e}")
+
+    _init_stock_from_cache()
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:
-        InventoryDataCache.record_sale('STORE-001', sku, float(units))
-        # Pass sku + new live stock so invalidate_store can fire an instant
-        # stock_delta broadcast before the full pipeline re-runs (~10s later).
-        new_stock = InventoryDataCache.get_current_stock(sku, 'STORE-001')
-        invalidate_store('STORE-001', sku=sku, new_stock=new_stock)
+        """Decrement stock and broadcast stock_delta"""
+        sku_str = str(sku)
 
+        # Get current stock (default to 0 if not tracked)
+        current = _live_stock.get(sku_str, 0)
+
+        # Decrement (don't go below 0)
+        new_stock = max(0, current - units)
+        _live_stock[sku_str] = new_stock
+
+        # FIX: keep _DataCache in sync so the pipeline also sees live stock
+        # Without this, compute_inventory_metrics reads stale CSV stock levels
+        InventoryDataCache.record_sale(store_id, sku_str, units)
+
+        logger.info(f"📉 Sale: {sku_str} | {current} → {new_stock} units (-{units})")
+
+        # Broadcast via WebSocket
+        invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+
+    # ✅ Wire on_sale callback BEFORE starting
     simulator.on_sale = _on_sale
+
+    # ✅ Now start
+    simulator.start()
+    app.state.simulator = simulator
     logger.info("✅ Inventory ↔ Sales sync wired")
 
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)

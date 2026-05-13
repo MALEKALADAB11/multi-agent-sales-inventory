@@ -406,7 +406,7 @@ class InventoryAnalysisAgent:
     def run(
         self,
         sku: str,
-        store_id: str = "STORE-001",
+        store_id: str = "I63",
         business_objective: str = "balanced",
     ) -> Dict[str, Any]:
         try:

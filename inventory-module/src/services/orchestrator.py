@@ -67,7 +67,7 @@ class InventoryOrchestrator:
     def analyze_sku(
         self,
         sku: str,
-        store_id: str = "STORE-001",
+        store_id: str = "I63",
         business_objective: str = "balanced",
     ) -> Dict[str, Any]:
         result = self.analysis_agent.run(
@@ -93,7 +93,7 @@ class InventoryOrchestrator:
     def analyze_batch(
         self,
         skus: List[str],
-        store_id: str = "STORE-001",
+        store_id: str = "I63",
         business_objective: str = "balanced",
         max_workers: int = 6,
     ) -> List[Dict[str, Any]]:
