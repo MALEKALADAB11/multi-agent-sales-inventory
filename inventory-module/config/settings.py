@@ -13,15 +13,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Data directories
 DATA_DIR = BASE_DIR / "data"
-RAW_DATA_DIR = DATA_DIR / "raw"
+cleaned_DATA_DIR = DATA_DIR / "cleaned"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 FORECAST_DIR = DATA_DIR / "forecasts"
 
 # Data file paths
-STOCK_HISTORY_PATH = RAW_DATA_DIR / "stock_history.csv"
-SALES_HISTORY_PATH = RAW_DATA_DIR / "sales_history.csv"
-PRODUCT_MASTER_PATH = RAW_DATA_DIR / "product_master.csv"
-PROMOTIONS_PATH = RAW_DATA_DIR / "promotions.csv"
+STOCK_HISTORY_PATH = PROCESSED_DATA_DIR / "stock_history.csv"
+SALES_HISTORY_PATH = PROCESSED_DATA_DIR / "sales_history.csv"
+PRODUCT_MASTER_PATH = PROCESSED_DATA_DIR / "product_master.csv"
+PROMOTIONS_PATH = PROCESSED_DATA_DIR / "promotions.csv"
 FORECAST_OUTPUT_PATH = FORECAST_DIR / "timesFM_future_forecast.csv"
 
 # Inventory thresholds
@@ -31,7 +31,7 @@ HIGH_THRESHOLD_DAYS = 1.0      # Stock < 100% of lead time = HIGH
 MEDIUM_THRESHOLD_DAYS = 1.5    # Stock < 150% of lead time = MEDIUM
 
 # Default values
-DEFAULT_STORE = "STORE-001"
+DEFAULT_STORE = "I63"
 
 # Business objective settings
 BUSINESS_OBJECTIVE_SETTINGS = {

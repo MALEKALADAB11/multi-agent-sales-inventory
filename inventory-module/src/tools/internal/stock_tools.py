@@ -61,6 +61,10 @@ class _DataCache:
     def stock(cls) -> pd.DataFrame:
         if cls._stock_df is None:
             cls._stock_df = pd.read_csv(STOCK_HISTORY_PATH, parse_dates=["date"])
+            # FIX: cast sku/store_id to str so string lookups always match
+            cls._stock_df["sku"] = cls._stock_df["sku"].astype(str)
+            if "store_id" in cls._stock_df.columns:
+                cls._stock_df["store_id"] = cls._stock_df["store_id"].astype(str)
             logger.debug("Loaded stock_history CSV (%d rows)", len(cls._stock_df))
         return cls._stock_df
 
@@ -68,6 +72,8 @@ class _DataCache:
     def product(cls) -> pd.DataFrame:
         if cls._product_df is None:
             cls._product_df = pd.read_csv(PRODUCT_MASTER_PATH)
+            # FIX: cast sku to str so string lookups always match
+            cls._product_df["sku"] = cls._product_df["sku"].astype(str)
             logger.debug("Loaded product_master CSV (%d rows)", len(cls._product_df))
         return cls._product_df
 
@@ -75,6 +81,10 @@ class _DataCache:
     def sales(cls) -> pd.DataFrame:
         if cls._sales_df is None:
             cls._sales_df = pd.read_csv(SALES_HISTORY_PATH, parse_dates=["date"])
+            # FIX: cast sku/store_id to str so string lookups always match
+            cls._sales_df["sku"] = cls._sales_df["sku"].astype(str)
+            if "store_id" in cls._sales_df.columns:
+                cls._sales_df["store_id"] = cls._sales_df["store_id"].astype(str)
             logger.debug("Loaded sales_history CSV (%d rows)", len(cls._sales_df))
         return cls._sales_df
 
@@ -94,6 +104,9 @@ class _DataCache:
         Called by the inventory sale hook in main.py on every simulator tick.
         Thread-safe: GIL protects dict writes at this granularity.
         """
+        # FIX: normalise to str so the key always matches the CSV-loaded str skus
+        sku      = str(sku)
+        store_id = str(store_id)
         key = (sku, store_id)
         if key not in cls._stock_overrides:
             # Seed from the latest CSV row for this SKU so we start accurate
@@ -117,6 +130,9 @@ class _DataCache:
         Uses the in-memory override if sales have been recorded since startup,
         otherwise falls back to the last row of the stock_history CSV.
         """
+        # FIX: normalise to str so the key always matches
+        sku      = str(sku)
+        store_id = str(store_id)
         key = (sku, store_id)
         if key in cls._stock_overrides:
             return cls._stock_overrides[key]
@@ -224,7 +240,7 @@ def _demand_std(
     try:
         rows = _DataCache.sales()
         rows = rows[
-            (rows["sku"] == sku) & (rows["store_id"] == store_id)
+            (rows["sku"] == str(sku)) & (rows["store_id"] == str(store_id))
         ].copy()
 
         if len(rows) < 14:
@@ -249,6 +265,9 @@ def get_stock_status(sku: str, store_id: str = DEFAULT_STORE) -> str:
     costs, lifecycle stage, and service level target for a given SKU.
     Uses the cached DataFrames — no disk I/O on repeated calls.
     """
+    sku      = str(sku)
+    store_id = str(store_id)
+
     stock_df   = _DataCache.stock()
     product_df = _DataCache.product()
 
@@ -290,12 +309,15 @@ def get_forecast_summary(sku: str, store_id: str = DEFAULT_STORE) -> str:
     Raw model output — no promotional adjustment applied.
     Uses the cached forecast DataFrame.
     """
+    sku      = str(sku)
+    store_id = str(store_id)
+
     df = _DataCache.forecast().copy()
 
     if "sku" in df.columns:
-        df = df[df["sku"] == sku]
+        df = df[df["sku"].astype(str) == sku]
     if "store_id" in df.columns:
-        df = df[df["store_id"] == store_id]
+        df = df[df["store_id"].astype(str) == store_id]
 
     if df.empty:
         return f"No forecast data found for SKU '{sku}' at store '{store_id}'."
@@ -309,9 +331,9 @@ def get_forecast_summary(sku: str, store_id: str = DEFAULT_STORE) -> str:
     end      = df["date"].max().date()
     days     = len(df)
 
-    half           = days // 2
-    df_sorted      = df.sort_values("date")
-    first_half_avg = df_sorted.head(half)["predicted_demand"].mean()
+    half            = days // 2
+    df_sorted       = df.sort_values("date")
+    first_half_avg  = df_sorted.head(half)["predicted_demand"].mean()
     second_half_avg = df_sorted.tail(half)["predicted_demand"].mean()
     if second_half_avg > first_half_avg * 1.05:
         trend = "up"
@@ -352,6 +374,9 @@ def compute_inventory_metrics(
     Computes full inventory replenishment metrics (APICS safety stock, EOQ,
     ROP, risk classification, service level).  Uses cached DataFrames.
     """
+    sku      = str(sku)
+    store_id = str(store_id)
+
     stock_df    = _DataCache.stock()
     product_df  = _DataCache.product()
     forecast_df = _DataCache.forecast().copy()
@@ -369,9 +394,9 @@ def compute_inventory_metrics(
     p = prod_rows.iloc[0]
 
     if "sku" in forecast_df.columns:
-        forecast_df = forecast_df[forecast_df["sku"] == sku]
+        forecast_df = forecast_df[forecast_df["sku"].astype(str) == sku]
     if "store_id" in forecast_df.columns:
-        forecast_df = forecast_df[forecast_df["store_id"] == store_id]
+        forecast_df = forecast_df[forecast_df["store_id"].astype(str) == store_id]
     if forecast_df.empty:
         return f"No forecast data for SKU '{sku}' at store '{store_id}'."
 

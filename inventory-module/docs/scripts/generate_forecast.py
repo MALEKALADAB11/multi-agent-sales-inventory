@@ -6,10 +6,12 @@ Standalone script to generate demand forecasts for all SKUs
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Must come before ANY local imports — points to inventory-module/
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pandas as pd
-from config.settings import RAW_DATA_DIR, FORECAST_DIR, FORECAST_OUTPUT_PATH
+from config.settings import PROCESSED_DATA_DIR, FORECAST_DIR, FORECAST_OUTPUT_PATH
 from src.data_pipeline.loader import DataLoader
 from src.forecasting.timesfm_forecaster import TimesFMForecaster
 
@@ -21,7 +23,7 @@ def main():
     print("=" * 70 + "\n")
 
     # Load data
-    loader = DataLoader(RAW_DATA_DIR)
+    loader = DataLoader(PROCESSED_DATA_DIR)
     sales_df = loader.load_sales_history()
 
     # Get unique SKU-store pairs
@@ -31,7 +33,7 @@ def main():
     # Initialize forecaster
     forecaster = TimesFMForecaster(horizon=30)
 
-    # Generate forecasts (no save_dir — we handle saving ourselves below)
+    # Generate forecasts
     print("Generating forecasts...\n")
     forecasts = forecaster.forecast_multiple(
         sales_df=sales_df,
