@@ -11,6 +11,8 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 
+from auth_router import router as auth_router, setup_auth_tables
+
 # ── Fix module paths ──────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(BASE_DIR, "inventory-module"))
@@ -47,6 +49,8 @@ from orchestration.trigger       import CronTrigger
 from data.mock_provider import get_data_provider
 from modules.coaching.agents.analyst.agent  import get_analyst_agent
 from modules.coaching.agents.stratege.agent import get_stratege_agent
+from monitoring_router import router as monitoring_router
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,18 +96,19 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────
+app.include_router(auth_router)
 app.include_router(inventory_router, prefix="/api/inventory")
 app.include_router(cycle_router)
 app.include_router(forecast_router)
 app.include_router(stores_router)
-
+app.include_router(monitoring_router)
 # ── Coach Chat RAG router ─────────────────────────────────────
 try:
     from coach_chat_rag import router as coach_rag_router
     app.include_router(coach_rag_router)
-    logger.info("✅ Coach Chat RAG router chargé")
+    logger.info(" Coach Chat RAG router chargé")
 except ImportError:
-    logger.warning("⚠️  coach_chat_rag non trouvé — coach chat standard actif")
+    logger.warning("  coach_chat_rag non trouvé — coach chat standard actif")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -112,11 +117,12 @@ except ImportError:
 
 @app.on_event("startup")
 async def startup_event():
+    setup_auth_tables()
     _active_stores.clear()
     load_dotenv(os.path.join(BASE_DIR, "inventory-module", ".env"), override=True)
     load_dotenv(os.path.join(BASE_DIR, "sales-module", ".env"), override=True)
     logger.info("✅ Environment variables loaded")
-
+    
     json_svc = JsonDataService()
     set_forecast_json(json_svc)
     set_stores_json(json_svc)
@@ -1079,11 +1085,11 @@ Règles : français direct, max 120 mots, prix réels Ooredoo, commence par l'ac
         from langchain_ollama import ChatOllama
         from langchain_core.messages import HumanMessage, SystemMessage
         llm = ChatOllama(
-            model       = os.getenv("OLLAMA_MODEL", "llama3.2:latest"),
+            model       = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b"),
             base_url    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             temperature = 0.3,
-            num_predict = 250,
-            num_ctx     = 2048,
+            num_predict = 120,
+            num_ctx     = 1024
         )
         response = await llm.ainvoke([
             SystemMessage(content=system_prompt),
@@ -1103,3 +1109,4 @@ Règles : français direct, max 120 mots, prix réels Ooredoo, commence par l'ac
             "timestamp": datetime.now().isoformat(),
             "rag_used":  False,
         })
+
