@@ -1,7 +1,8 @@
 {
     "python.analysis.extraPaths": [
         "./sales-module",
-        "./inventory-module"
+        "./inventory-module",
+        "./sales-module/modules/coaching/agents/coach"
     ],
     "python-envs.defaultEnvManager": "ms-python.python:system"
 }
