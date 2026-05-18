@@ -95,6 +95,13 @@ class Settings(BaseSettings):
 
     # MCP Configuration
     mcp_server_url: Optional[str] = None
+
+    # Database Configuration
+    db_host:     str = "localhost"
+    db_port:     int = 5432
+    db_name:     str = "asc_db"
+    db_user:     str = "asc_user"
+    db_password: str = "asc_password"
     
     # App
     environment: str = "development"
