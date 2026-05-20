@@ -12,7 +12,7 @@ class PostgresRepo:
             return
         self.pool = await asyncpg.create_pool(
             host     = "localhost",
-            port     = 5432,
+            port     = 5433,
             database = "asc_db",
             user     = "asc_user",
             password = "asc_password",

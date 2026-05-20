@@ -24,7 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 
 # ── Colours for terminal output ───────────────────────────────────────────────
 GREEN  = "\033[92m"
@@ -42,13 +43,14 @@ def info(msg): print(f"  {YELLOW}→ {msg}{RESET}")
 # =============================================================================
 print("\n── 1. DB Connection ─────────────────────────────────────────────")
 try:
+    
     import psycopg2
     conn = psycopg2.connect(
-        host     = os.getenv("DB_HOST",     "localhost"),
-        port     = int(os.getenv("DB_PORT", "5432")),
-        dbname   = os.getenv("DB_NAME",     "asc_db"),
-        user     = os.getenv("DB_USER",     "asc_user"),
-        password = os.getenv("DB_PASSWORD", "asc_password"),
+        host    = os.getenv("DOCKER_DB_HOST"),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        dbname  = os.getenv("DOCKER_DB_NAME"),
+        user    = os.getenv("DOCKER_DB_USER"),
+        password= os.getenv("DOCKER_DB_PASSWORD"),
     )
     conn.close()
     ok("Connected to DB")
@@ -67,9 +69,11 @@ from db.repositories.inventory_repo import SyncInventoryRepo
 # Pick the first available SKU from inv.products
 import psycopg2, psycopg2.extras, os
 conn = psycopg2.connect(
-    host=os.getenv("DB_HOST","localhost"), port=int(os.getenv("DB_PORT","5432")),
-    dbname=os.getenv("DB_NAME","asc_db"), user=os.getenv("DB_USER","asc_user"),
-    password=os.getenv("DB_PASSWORD","asc_password"),
+        host    = os.getenv("DOCKER_DB_HOST"),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        dbname  = os.getenv("DOCKER_DB_NAME"),
+        user    = os.getenv("DOCKER_DB_USER"),
+        password= os.getenv("DOCKER_DB_PASSWORD"),
 )
 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
     cur.execute("""
@@ -127,9 +131,11 @@ if run_id:
 
 # Verify in DB
 conn = psycopg2.connect(
-    host=os.getenv("DB_HOST","localhost"), port=int(os.getenv("DB_PORT","5432")),
-    dbname=os.getenv("DB_NAME","asc_db"), user=os.getenv("DB_USER","asc_user"),
-    password=os.getenv("DB_PASSWORD","asc_password"),
+        host    = os.getenv("DOCKER_DB_HOST"),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        dbname  = os.getenv("DOCKER_DB_NAME"),
+        user    = os.getenv("DOCKER_DB_USER"),
+        password= os.getenv("DOCKER_DB_PASSWORD"),
 )
 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
     cur.execute("SELECT * FROM inv.agent_runs WHERE id = %s", (run_id,))
@@ -156,7 +162,7 @@ SyncInventoryRepo.upsert_stock_level_sync(
 )
 readback = SyncInventoryRepo.get_stock_level(TEST_SKU, TEST_STORE_ID)
 if readback and readback.get("stock_current") == test_value:
-    ok(f"upsert_stock_level_sync: wrote {test_value}, read back {readback['stock_current']}")
+    ok(f"upsert_stock_level_sync: wrote {test_value}, read back {readback['stock_current']}") 
     # Restore original value
     SyncInventoryRepo.upsert_stock_level_sync(
         TEST_SKU, TEST_STORE_ID,
@@ -175,9 +181,11 @@ print("\n── 5. alert insert + dedup ─────────────�
 
 # Clean up any leftover test alert first
 conn = psycopg2.connect(
-    host=os.getenv("DB_HOST","localhost"), port=int(os.getenv("DB_PORT","5432")),
-    dbname=os.getenv("DB_NAME","asc_db"), user=os.getenv("DB_USER","asc_user"),
-    password=os.getenv("DB_PASSWORD","asc_password"),
+        host    = os.getenv("DOCKER_DB_HOST"),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        dbname  = os.getenv("DOCKER_DB_NAME"),
+        user    = os.getenv("DOCKER_DB_USER"),
+        password= os.getenv("DOCKER_DB_PASSWORD"),
 )
 with conn.cursor() as cur:
     cur.execute(

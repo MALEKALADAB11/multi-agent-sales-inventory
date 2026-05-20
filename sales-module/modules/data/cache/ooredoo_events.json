@@ -9,7 +9,7 @@
       "details": "HONOR X7D 6/128 5G | 649,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.314345"
+      "date": "2026-05-17T16:55:38.215605"
     },
     {
       "title": "SAMSUNG",
@@ -19,7 +19,7 @@
       "details": "SAMSUNG GALAXY A17 6/128 5G | 799,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.453205"
+      "date": "2026-05-17T16:55:38.233695"
     },
     {
       "title": "INFINIX",
@@ -29,7 +29,7 @@
       "details": "INFINIX NOTE 60 EDGE 8/256 5G | 1 129,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.667285"
+      "date": "2026-05-17T16:55:38.257827"
     }
   ],
   "active": [
@@ -41,7 +41,7 @@
       "details": "HONOR X7D 6/128 5G | 649,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.314345"
+      "date": "2026-05-17T16:55:38.215605"
     },
     {
       "title": "SAMSUNG",
@@ -51,7 +51,7 @@
       "details": "SAMSUNG GALAXY A17 6/128 5G | 799,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.453205"
+      "date": "2026-05-17T16:55:38.233695"
     },
     {
       "title": "INFINIX",
@@ -61,7 +61,7 @@
       "details": "INFINIX NOTE 60 EDGE 8/256 5G | 1 129,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.667285"
+      "date": "2026-05-17T16:55:38.257827"
     }
   ],
   "promotions": [],
@@ -74,7 +74,7 @@
       "details": "HONOR X7D 6/128 5G | 649,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.314345"
+      "date": "2026-05-17T16:55:38.215605"
     },
     {
       "title": "SAMSUNG",
@@ -84,7 +84,7 @@
       "details": "SAMSUNG GALAXY A17 6/128 5G | 799,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.453205"
+      "date": "2026-05-17T16:55:38.233695"
     },
     {
       "title": "INFINIX",
@@ -94,10 +94,10 @@
       "details": "INFINIX NOTE 60 EDGE 8/256 5G | 1 129,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-05-12T20:41:57.667285"
+      "date": "2026-05-17T16:55:38.257827"
     }
   ],
   "tarifs": [],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-05-12T20:42:05.426942"
+  "fetched_at": "2026-05-17T16:55:45.623571"
 }
