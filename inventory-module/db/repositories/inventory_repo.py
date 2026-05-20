@@ -18,7 +18,7 @@ from pathlib import Path
 import asyncpg
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,11 @@ class InventoryRepo:
         if self.pool is not None:
             return
         self.pool = await asyncpg.create_pool(
-            host     = os.getenv("DB_HOST",     "localhost"),
-            port     = int(os.getenv("DB_PORT", "5432")),
-            database = os.getenv("DB_NAME",     "asc_db"),
-            user     = os.getenv("DB_USER",     "asc_user"),
-            password = os.getenv("DB_PASSWORD", "asc_password"),
+            host     = os.getenv("DOCKER_DB_HOST"),
+            port     = int(os.getenv("DOCKER_DB_PORT", "5433")),
+            database = os.getenv("DOCKER_DB_NAME"),
+            user     = os.getenv("DOCKER_DB_USER"),
+            password = os.getenv("DOCKER_DB_PASSWORD"),
             min_size = 2,
             max_size = 10,
         )
@@ -645,11 +645,11 @@ class SyncInventoryRepo:
             return None
         try:
             return psycopg2.connect(
-                host     = os.getenv("DB_HOST",     "localhost"),
-                port     = int(os.getenv("DB_PORT", "5432")),
-                dbname   = os.getenv("DB_NAME",     "asc_db"),
-                user     = os.getenv("DB_USER",     "asc_user"),
-                password = os.getenv("DB_PASSWORD", "asc_password"),
+                host     = os.getenv("DOCKER_DB_HOST"),
+                port     = int(os.getenv("DOCKER_DB_PORT", "5433")),
+                dbname   = os.getenv("DOCKER_DB_NAME"),
+                user     = os.getenv("DOCKER_DB_USER"),
+                password = os.getenv("DOCKER_DB_PASSWORD"),
             )
         except Exception as exc:
             logger.warning("SyncInventoryRepo: DB connection failed: %s", exc)
