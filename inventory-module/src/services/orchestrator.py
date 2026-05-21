@@ -14,8 +14,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
+logger = logging.getLogger(__name__)
+
 from src.agents.analysis_agent import create_analysis_agent, USE_LLM
 from config.settings import settings
+
+try:
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    _DB_AVAILABLE = True
+except Exception:
+    _DB_AVAILABLE = False
+    logger.warning("SyncInventoryRepo not importable — agent_run logging disabled.")
 
 logger = logging.getLogger(__name__)  # FIX 3: logger was never defined
 
@@ -67,13 +76,15 @@ class InventoryOrchestrator:
     def analyze_sku(
         self,
         sku: str,
-        store_id: str = "STORE-001",
+        store_id: str = "I63",
         business_objective: str = "balanced",
+        agent_run_id: str = None,
     ) -> Dict[str, Any]:
         result = self.analysis_agent.run(
             sku=sku,
             store_id=store_id,
             business_objective=business_objective,
+            agent_run_id=agent_run_id,
         )
         self._log_result(sku, result)
         return result
@@ -83,9 +94,10 @@ class InventoryOrchestrator:
         sku: str,
         store_id: str,
         business_objective: str,
+        agent_run_id: str = None,
     ) -> Dict[str, Any]:
         try:
-            return self.analyze_sku(sku, store_id, business_objective)
+            return self.analyze_sku(sku, store_id, business_objective, agent_run_id)
         except Exception as e:
             logger.error("[SKU %s] Error: %s", sku, e)
             return {"sku": sku, "store_id": store_id, "error": str(e)}
@@ -93,26 +105,10 @@ class InventoryOrchestrator:
     def analyze_batch(
         self,
         skus: List[str],
-        store_id: str = "STORE-001",
+        store_id: str = "I63",
         business_objective: str = "balanced",
         max_workers: int = 3,
     ) -> List[Dict[str, Any]]:
-        """
-        Analyze multiple SKUs IN PARALLEL using ThreadPoolExecutor.
-
-        Performance improvement:
-        - Before: Sequential loop → 6 SKUs × 10s = 60s
-        - After:  Parallel execution → max(10s, 10s, ...) = ~10s
-
-        Args:
-            skus: List of SKU codes to analyze
-            store_id: Store identifier
-            business_objective: Business objective (cost|balanced|service_level|competitive)
-            max_workers: Maximum parallel threads (default: 6)
-
-        Returns:
-            List of analysis results in the SAME ORDER as input SKUs
-        """
         if not skus:
             return []
 
@@ -122,13 +118,23 @@ class InventoryOrchestrator:
         print(f"Provider: {self.provider} | use_llm={self.use_llm if self.use_llm is not None else USE_LLM}")
         print(f"{'='*70}\n")
 
+        # ── Open agent_run row in DB ──────────────────────────────────────────
+        agent_run_id = None
+        if _DB_AVAILABLE:
+            agent_run_id = SyncInventoryRepo.start_agent_run(
+                agent_name="analysis_agent",
+                store_id=store_id,
+            )
+            if agent_run_id:
+                logger.info("[Orchestrator] agent_run started: %s", agent_run_id)
+
         results_dict = {}
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_sku = {
                 executor.submit(
                     self._analyze_sku_safe,
-                    sku, store_id, business_objective
+                    sku, store_id, business_objective, agent_run_id
                 ): sku
                 for sku in skus
             }
@@ -144,7 +150,6 @@ class InventoryOrchestrator:
                         "error":    str(e),
                     }
 
-        # FIX 1: summary moved before return so it actually executes
         results  = [results_dict[s] for s in skus]
         critical = sum(1 for r in results
                        if r.get("analysis_report", {})
@@ -155,11 +160,23 @@ class InventoryOrchestrator:
                            .get("risk_assessment", {})
                            .get("level") == "HIGH")
         errors   = sum(1 for r in results if "error" in r)
+        alerts   = critical + high  # each CRITICAL/HIGH generates one alert
 
         logger.info(
-            "[INVENTORY] ✅ Batch done — Critical: %d | High: %d | Errors: %d",
+            "[INVENTORY] Batch done — Critical: %d | High: %d | Errors: %d",
             critical, high, errors
         )
+
+        # ── Close agent_run row in DB ─────────────────────────────────────────
+        if _DB_AVAILABLE and agent_run_id:
+            SyncInventoryRepo.complete_agent_run(
+                run_id           = agent_run_id,
+                status           = "failed" if errors == len(skus) else "completed",
+                items_processed  = len(skus) - errors,
+                alerts_generated = alerts,
+                error_message    = f"{errors} SKU(s) failed" if errors else None,
+            )
+            logger.info("[Orchestrator] agent_run completed: %s", agent_run_id)
 
         return results
 

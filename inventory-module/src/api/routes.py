@@ -1,13 +1,10 @@
 """
-Inventory API Routes — FIXED REAL-TIME WEBSOCKET BROADCASTING
-=============================================================
-Fixes applied:
-  1. invalidate_store() no longer clears _stock_overrides — sales data must
-     survive until analysis reads it.
-  2. _push_update_to_store() uses force_refresh=True so it always re-runs
-     the pipeline instead of reading the stale cache.
-  3. Broadcast is always scheduled, not gated on cache keys existing.
-  4. Debounce: rapid sales are coalesced into one analysis run per store.
+Inventory API Routes
+====================
+Multi-store aware. SKUs come from BOTH stock_history AND product_master
+(filtered to SKUs that actually have sales in the store) so all ~4 000
+products are reachable, not just the handful that appear in the
+stock-history snapshot.
 """
 
 from __future__ import annotations
@@ -20,8 +17,6 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent.parent))
 
-# Add these imports
-from shared_module.store_mapper import to_canonical_store_id, to_frontend_store_id
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -32,16 +27,34 @@ from src.tools.internal.stock_tools import _DataCache
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inventory"])
 
-# Two orchestrators: full LLM for on-demand HTTP, fast rule-based for live broadcasts
-_orchestrator      = None  # use_llm follows .env (for HTTP endpoints)
-_orchestrator_fast = None  # use_llm=False always (for WebSocket broadcasts)
+_orchestrator      = None
+_orchestrator_fast = None
 
 # ---------------------------------------------------------------------------
 # Result cache
 # ---------------------------------------------------------------------------
 
-CACHE_TTL = 1200  # seconds (20 minutes)
+CACHE_TTL = 1200  # 20 min
 _store_cache: Dict[str, Dict[str, Any]] = {}
+
+# ── Demo / quality settings ──────────────────────────────────────────────────
+# Cap the number of SKUs analyzed per store. This directly controls:
+#   - pipeline duration (fewer SKUs = faster)
+#   - alert count (fewer ghost products = fewer phantom criticals)
+# Set to 0 to disable the cap (process all SKUs).
+DEMO_SKU_CAP = 50
+
+# Per-store pipeline lock — only one pipeline run per store at a time.
+# Concurrent callers (WS + HTTP poll) block here and share the result.
+import threading
+_pipeline_locks: Dict[str, threading.Lock] = {}
+_pipeline_locks_guard: threading.Lock = threading.Lock()
+
+def _get_store_lock(store_id: str) -> threading.Lock:
+    with _pipeline_locks_guard:
+        if store_id not in _pipeline_locks:
+            _pipeline_locks[store_id] = threading.Lock()
+        return _pipeline_locks[store_id]
 
 
 def _cache_key(store_id: str, objective: str) -> str:
@@ -66,16 +79,12 @@ def _set_cache(store_id: str, objective: str, data: Dict[str, Any]) -> None:
 # WebSocket connection registry
 # ---------------------------------------------------------------------------
 
-# Maps store_id → list of (websocket, business_objective) tuples
 _active_ws_connections: Dict[str, List[tuple[WebSocket, str]]] = {}
-
-# Debounce: track pending broadcast tasks per store to avoid stampede
 _pending_broadcasts: Dict[str, asyncio.Task] = {}
-BROADCAST_DEBOUNCE_SECONDS = 2.0  # coalesce rapid sales into one analysis run
+BROADCAST_DEBOUNCE_SECONDS = 2.0
 
 
 async def _broadcast_to_store(store_id: str, message: dict) -> None:
-    """Push a message to all WebSockets connected to a store."""
     connections = _active_ws_connections.get(store_id, [])
     dead = []
     for ws, _ in connections:
@@ -83,7 +92,6 @@ async def _broadcast_to_store(store_id: str, message: dict) -> None:
             await ws.send_json(message)
         except Exception:
             dead.append(ws)
-    # Clean up dead connections
     for ws in dead:
         connections[:] = [(w, obj) for w, obj in connections if w != ws]
 
@@ -91,11 +99,6 @@ async def _broadcast_to_store(store_id: str, message: dict) -> None:
 async def _broadcast_stock_delta(store_id: str, sku: str, new_stock: float,
                                   risk_level: str, days_of_stock: float,
                                   coverage_ratio: float, risk_rationale: str) -> None:
-    """
-    Instant lightweight push — fires immediately on every sale (< 100ms).
-    Lets the frontend update the quadrant dot, KPI card, and product card
-    right away, before the full re-analysis pipeline finishes (~10s).
-    """
     message = {
         "type":           "stock_delta",
         "store_id":       store_id,
@@ -112,11 +115,6 @@ async def _broadcast_stock_delta(store_id: str, sku: str, new_stock: float,
 
 
 async def _push_update_to_store(store_id: str) -> None:
-    """
-    Re-run analysis (force_refresh=True) and broadcast to all WebSockets.
-    Called after debounce delay so rapid sales are coalesced.
-    """
-    # Small debounce delay — lets rapid consecutive sales batch together
     await asyncio.sleep(BROADCAST_DEBOUNCE_SECONDS)
 
     connections = _active_ws_connections.get(store_id, [])
@@ -124,13 +122,11 @@ async def _push_update_to_store(store_id: str) -> None:
         logger.info("No WebSocket connections for %s, skipping broadcast", store_id)
         return
 
-    # Group by objective so we run analysis once per objective
     objectives = set(obj for _, obj in connections)
 
     for business_objective in objectives:
         try:
             loop = asyncio.get_event_loop()
-            # FIX: force_refresh=True — always re-run pipeline with updated stock
             payload = await loop.run_in_executor(
                 None,
                 lambda obj=business_objective: analyze_store(
@@ -163,39 +159,22 @@ async def _push_update_to_store(store_id: str) -> None:
                 store_id, business_objective, exc,
             )
 
-    # Clean up the pending task entry
     _pending_broadcasts.pop(store_id, None)
 
 
 def invalidate_store(store_id: str, sku: str = None, new_stock: float = None) -> None:
-    """
-    Drop cached results for a store and schedule a WebSocket broadcast.
-
-    Two-phase push:
-      Phase 1 (instant, < 100ms): stock_delta message with recomputed risk for
-        the changed SKU only. Lets the frontend update immediately.
-      Phase 2 (debounced, ~10s): full inventory_update after re-analysis pipeline.
-
-    Called by the sales simulator hook in main.py on every sale.
-    """
-    # Drop result cache (safe — analysis will re-read from _DataCache)
     keys_to_drop = [k for k in _store_cache if k.startswith(f"{store_id}::")]
     for k in keys_to_drop:
         del _store_cache[k]
 
     if keys_to_drop:
-        logger.info(
-            "invalidate_store(%s): dropped %d cache entries",
-            store_id, len(keys_to_drop),
-        )
+        logger.info("invalidate_store(%s): dropped %d cache entries", store_id, len(keys_to_drop))
 
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
             def _schedule():
-                # ── Phase 1: instant stock_delta for the sold SKU ─────────
                 if sku is not None and new_stock is not None:
-                    # Recompute risk locally without running the full pipeline
                     risk_level, days_of_stock, coverage_ratio, rationale = \
                         _quick_risk(store_id, sku, new_stock)
                     asyncio.create_task(_broadcast_stock_delta(
@@ -203,7 +182,6 @@ def invalidate_store(store_id: str, sku: str = None, new_stock: float = None) ->
                         risk_level, days_of_stock, coverage_ratio, rationale,
                     ))
 
-                # ── Phase 2: debounced full re-analysis ───────────────────
                 old_task = _pending_broadcasts.get(store_id)
                 if old_task and not old_task.done():
                     old_task.cancel()
@@ -215,25 +193,280 @@ def invalidate_store(store_id: str, sku: str = None, new_stock: float = None) ->
         logger.warning("No event loop available for WebSocket broadcast")
 
 
-def _quick_risk(store_id: str, sku: str, current_stock: float):
+# ---------------------------------------------------------------------------
+# SKU quality filter — removes ghost products for demo stability
+# ---------------------------------------------------------------------------
+
+# Cache DB SKU set so we only query once per process lifetime
+_db_sku_cache: Optional[set] = None
+
+def _get_db_skus() -> Optional[set]:
     """
-    Fast, in-process risk recomputation for a single SKU.
-    No LLM, no full pipeline — just the threshold math from stock_tools.
-    Returns (risk_level, days_of_stock, coverage_ratio, rationale).
+    Returns the set of SKUs present in inv.products (DB).
+    Cached after first call — only queries DB once.
+    Returns None if DB is unavailable (fallback to CSV).
+    """
+    global _db_sku_cache
+    if _db_sku_cache is not None:
+        return _db_sku_cache
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return None
+        try:
+            import psycopg2.extras
+            with conn.cursor() as cur:
+                cur.execute("SELECT sku FROM inv.products")
+                rows = cur.fetchall()
+                _db_sku_cache = {str(r[0]) for r in rows}
+                logger.info("DB SKU cache: %d SKUs in inv.products", len(_db_sku_cache))
+                return _db_sku_cache
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("_get_db_skus failed (%s) — will fallback to CSV filter", exc)
+        return None
+
+
+def _filter_quality_skus(skus: List[str], store_id: str) -> List[str]:
+    """
+    Keep only SKUs that exist in inv.products (DB).
+    This guarantees:
+      - inv.stock_levels has a row for each SKU (seeded by init_stock_levels.py)
+      - inv.alerts FK constraint is satisfied on insert
+      - DB stock reads work in _to_inventory_item
+
+    Falls back to CSV-based filter (product_master.csv) if DB is unavailable,
+    which also drops Unknown-named products.
+    """
+    # ── Primary: intersect with inv.products ─────────────────────────────────────────────
+    db_skus = _get_db_skus()
+    if db_skus:
+        good = [s for s in skus if s in db_skus]
+        removed = len(skus) - len(good)
+        logger.info(
+            "Quality filter (DB): %d SKUs in inv.products for %s | dropped %d absent",
+            len(good), store_id, removed,
+        )
+        if good:
+            return good
+        logger.warning("DB filter removed all SKUs for %s — falling back to CSV", store_id)
+
+    # ── Fallback: CSV product_master, also drops Unknown names ─────────────────────
+    try:
+        pm = _DataCache.product()
+        pm = pm.copy()
+        pm["sku"] = pm["sku"].astype(str)
+        bad_names = {"unknown", "n/a", "nan", "none", "", "."}
+        name_col = "product_name" if "product_name" in pm.columns else None
+
+        good = []
+        sku_set = set(pm["sku"].unique())
+        for s in skus:
+            if s not in sku_set:
+                continue
+            if name_col:
+                name_val = pm.loc[pm["sku"] == s, name_col]
+                if name_val.empty:
+                    continue
+                name = str(name_val.iloc[0]).strip().lower()
+                if name in bad_names or name == s.lower():
+                    continue
+            good.append(s)
+
+        removed = len(skus) - len(good)
+        logger.info(
+            "Quality filter (CSV fallback): %d kept for %s | dropped %d",
+            len(good), store_id, removed,
+        )
+        return good if good else skus
+    except Exception as exc:
+        logger.warning("_filter_quality_skus CSV fallback failed (%s)", exc)
+        return skus
+
+
+def _top_n_by_sales(skus: List[str], store_id: str, n: int) -> List[str]:
+    """
+    Keep the N SKUs with the highest sales volume in this store.
+    Unseen SKUs (no sales history) are appended at the end up to the cap.
     """
     try:
-        prod_df = _DataCache.product()
-        rows = prod_df[prod_df["sku"] == sku]
-        if rows.empty:
-            return "ok", 999.0, 5.0, ""
-        p = rows.iloc[0]
+        sales_df = _DataCache.sales()
+        if "store_id" in sales_df.columns:
+            store_sales = sales_df[sales_df["store_id"] == store_id].copy()
+        else:
+            store_sales = sales_df.copy()
 
-        lead_time_avg = float(p.get("lead_time_days", 7))
-        lead_time_std = float(p.get("lead_time_std", 0))
+        store_sales["sku"] = store_sales["sku"].astype(str)
+        sku_set = set(skus)
+
+        volume = (
+            store_sales[store_sales["sku"].isin(sku_set)]
+            .groupby("sku")["quantity_sold"]
+            .sum()
+            .sort_values(ascending=False)
+        )
+
+        top     = [s for s in volume.index.tolist() if s in sku_set]
+        no_data = [s for s in skus if s not in set(top)]
+        result  = (top + no_data)[:n]
+
+        logger.info(
+            "Top-N filter: kept %d/%d SKUs by sales volume for %s",
+            len(result), len(skus), store_id,
+        )
+        return result
+    except Exception as exc:
+        logger.warning("_top_n_by_sales failed (%s) — returning first %d SKUs", exc, n)
+        return skus[:n]
+
+
+# ---------------------------------------------------------------------------
+# SKU resolution — MULTI-SOURCE
+# ---------------------------------------------------------------------------
+
+def _resolve_skus_for_store(store_id: str) -> List[str]:
+    """
+    Return all SKUs that are meaningful to analyse for a given store.
+
+    Priority / sources (merged, deduplicated):
+      1. stock_history.csv  — SKUs with a current stock snapshot for this store
+      2. sales_history.csv  — SKUs ever sold in this store (catches items not yet
+                              in the stock snapshot but moving off the shelf)
+      3. product_master.csv — Only as a cross-reference; we do NOT analyse every
+                              product in the master list for a store that has no
+                              sales data (that would be thousands of zero-demand
+                              rows that overwhelm the pipeline).
+
+    If the store is not found in either sales or stock data, raises 404.
+    """
+    skus: set[str] = set()
+
+    # ── 1. Stock snapshot ────────────────────────────────────────────────────
+    try:
+        stock_df = _DataCache.stock()
+        store_stock = stock_df[stock_df["store_id"] == store_id]
+        # ✅ Convert to strings to avoid integer SKUs
+        skus.update(store_stock["sku"].dropna().astype(str).unique().tolist())
+        logger.info("Store %s: %d SKUs from stock_history", store_id, len(skus))
+    except Exception as exc:
+        logger.warning("Could not read stock_history for %s: %s", store_id, exc)
+
+    # ── 2. Sales history ─────────────────────────────────────────────────────
+    try:
+        sales_df = _DataCache.sales()   # raises if missing — caught below
+        if "store_id" in sales_df.columns:
+            store_sales = sales_df[sales_df["store_id"] == store_id]
+        else:
+            store_sales = sales_df      # single-store CSV without store_id column
+        # ✅ Convert to strings to avoid integer SKUs
+        sales_skus = store_sales["sku"].dropna().astype(str).unique().tolist()
+        before = len(skus)
+        skus.update(sales_skus)
+        logger.info(
+            "Store %s: +%d SKUs from sales_history (total %d)",
+            store_id, len(skus) - before, len(skus)
+        )
+    except Exception as exc:
+        logger.warning("Could not read sales_history for %s: %s", store_id, exc)
+
+    # ── 3. Guard ─────────────────────────────────────────────────────────────
+    if not skus:
+        # Last resort: check product_master but warn loudly — this will be slow
+        try:
+            pm = _DataCache.product()
+            # ✅ Convert to strings to avoid integer SKUs
+            all_pm_skus = pm["sku"].dropna().astype(str).unique().tolist()
+            logger.warning(
+                "Store %s has NO stock/sales data. Falling back to full product_master "
+                "(%d SKUs). This will be very slow — check your store_id.",
+                store_id, len(all_pm_skus)
+            )
+            # Cap at 200 so we don't hang the server
+            skus.update(all_pm_skus[:200])
+        except Exception as exc:
+            logger.error("product_master also unavailable: %s", exc)
+
+    if not skus:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No SKUs found for store '{store_id}'. Available: {_list_store_ids()}"
+        )
+
+    all_skus = sorted(skus)
+
+    # ── Quality filter: drop ghost products (no valid name in product_master) ─
+    all_skus = _filter_quality_skus(all_skus, store_id)
+
+    if not all_skus:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No valid SKUs found for store '{store_id}' after quality filter. "
+                f"Check that product_master.csv has product_name populated."
+            ),
+        )
+
+    # ── Demo cap: keep top N by sales volume ──────────────────────────────────
+    if DEMO_SKU_CAP > 0 and len(all_skus) > DEMO_SKU_CAP:
+        all_skus = _top_n_by_sales(all_skus, store_id, DEMO_SKU_CAP)
+
+    return all_skus
+
+
+def _list_store_ids() -> List[str]:
+    """Return all store IDs known across stock + sales data."""
+    ids: set[str] = set()
+    try:
+        df = _DataCache.stock()
+        # ✅ Convert to strings to avoid integer store IDs
+        ids.update(df["store_id"].dropna().astype(str).unique().tolist())
+    except Exception:
+        pass
+    try:
+        df = _DataCache.sales()
+        if "store_id" in df.columns:
+            # ✅ Convert to strings to avoid integer store IDs
+            ids.update(df["store_id"].dropna().astype(str).unique().tolist())
+    except Exception:
+        pass
+    return sorted(ids)
+
+
+# ---------------------------------------------------------------------------
+# Quick risk (for stock_delta broadcast — no LLM)
+# ---------------------------------------------------------------------------
+
+def _quick_risk(store_id: str, sku: str, current_stock: float):
+    try:
+        sku_str = str(sku)
+
+        # ── Product data: DB first, CSV fallback ─────────────────────────────
+        lead_time_avg = 7.0
+        lead_time_std = 0.0
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo
+            db_product = SyncInventoryRepo.get_product(sku_str)
+            if db_product:
+                lead_time_avg = float(db_product.get("lead_time_days") or 7)
+                lead_time_std = float(db_product.get("lead_time_std")  or 0)
+            else:
+                raise ValueError("not in DB")
+        except Exception:
+            prod_df = _DataCache.product()
+            prod_df["sku"] = prod_df["sku"].astype(str)
+            rows = prod_df[prod_df["sku"] == sku_str]
+            if not rows.empty:
+                p = rows.iloc[0]
+                lead_time_avg = float(p.get("lead_time_days", 7))
+                lead_time_std = float(p.get("lead_time_std",  0))
 
         forecast_df = _DataCache.forecast()
         if "sku" in forecast_df.columns:
-            forecast_df = forecast_df[forecast_df["sku"] == sku]
+            # Convert sku column to string for comparison
+            forecast_df['sku'] = forecast_df['sku'].astype(str)
+            forecast_df = forecast_df[forecast_df["sku"] == sku_str]
         if "store_id" in forecast_df.columns:
             forecast_df = forecast_df[forecast_df["store_id"] == store_id]
 
@@ -255,7 +488,7 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
             risk_level = "high"
             rationale = (
                 f"Stock ({days_remaining:.1f}d) within lead time variability window "
-                f"({lead_time_avg:.0f}d ± {lead_time_std:.1f}d). Delayed shipment = stockout."
+                f"({lead_time_avg:.0f}d ± {lead_time_std:.1f}d)."
             )
         elif days_remaining < lead_time_avg * 2.5:
             risk_level = "medium"
@@ -271,8 +504,11 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
         return "ok", 0.0, 0.0, ""
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator helpers
+# ---------------------------------------------------------------------------
+
 def get_orchestrator():
-    """Full orchestrator — uses LLM when enabled. For HTTP endpoints."""
     global _orchestrator
     if _orchestrator is None:
         _orchestrator = create_orchestrator()
@@ -280,7 +516,6 @@ def get_orchestrator():
 
 
 def get_orchestrator_fast():
-    """Fast orchestrator — LLM always off. For WebSocket live broadcasts."""
     global _orchestrator_fast
     if _orchestrator_fast is None:
         _orchestrator_fast = create_orchestrator(use_llm=False)
@@ -293,12 +528,12 @@ def get_orchestrator_fast():
 
 class AnalyzeRequest(BaseModel):
     sku: str
-    store_id: str = Field(default="STORE-001")
+    store_id: str = Field(default="I63")
     business_objective: str = Field(default="balanced")
 
 
 class BatchAnalyzeRequest(BaseModel):
-    store_id: str = Field(default="STORE-001")
+    store_id: str = Field(default="I63")
     business_objective: str = Field(default="balanced")
     skus: Optional[List[str]] = None
 
@@ -361,24 +596,34 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
     pi       = result.get("product_info", {})
 
     sku      = result["sku"]
-    store_id = result.get("store_id", "STORE-001")
+    store_id = result.get("store_id", "I63")
 
-    # FIX: Read stock directly from _DataCache — not from the parsed LLM report.
-    # When the LLM fails (429 → rule-based fallback), analysis_report is empty
-    # or stale and never reflects live sales depletion. _DataCache.get_current_stock()
-    # always returns the post-sale override value set by record_sale().
-    live_stock    = _DataCache.get_current_stock(sku, store_id)
-    report_stock  = stock.get("current_stock", 0)
-    current_stock = live_stock if live_stock > 0 else report_stock
+    # ── Current stock: try DB directly, then in-memory override, then report ──
+    # report_stock comes from stock_tools which may have read stale CSV data.
+    # DB inv.stock_levels is the source of truth for live stock.
+    report_stock = stock.get("current_stock", 0)
+    db_stock = None
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+        db_row = SyncInventoryRepo.get_stock_level(sku, store_id)
+        if db_row and db_row.get("stock_current") is not None:
+            db_stock = int(db_row["stock_current"])
+    except Exception:
+        pass
+
+    mem_override = _DataCache._stock_overrides.get((sku, store_id))
+    if mem_override is not None:
+        current_stock = mem_override   # sale happened after last analysis
+    elif db_stock is not None:
+        current_stock = db_stock       # DB is source of truth
+    else:
+        current_stock = report_stock   # last resort: CSV-based value
 
     avg_daily  = forecast.get("avg_daily_demand", 1) or 1
     lead_time  = stock.get("lead_time_avg_days", 7)
 
-    # Recompute days_remaining from live stock so risk level reflects reality
     days_remain = current_stock / avg_daily if avg_daily > 0 else 0
 
-    # FIX: Recompute risk level from live days_remain so it reflects real-time
-    # stock, not the LLM's stale classification from before the sale was recorded.
     lead_time_std = 0.0
     try:
         prod_rows = _DataCache.product()
@@ -413,7 +658,7 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id":               f"inv-{sku}",
         "sku":              sku,
-        "name":             pi.get("name", sku),
+        "name":             str(pi.get("name", "") or sku).strip() or str(sku),
         "category":         pi.get("category", "Unknown"),
         "stock":            round(current_stock),
         "stockMin":         stock.get("reorder_point", 0),
@@ -430,7 +675,6 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
         "leadTimeDays":     lead_time,
         "reorderPoint":     stock.get("reorder_point", 0),
         "safetyStock":      metrics.get("safety_stock", 0),
-        # NOTE: key names must match _parse_tool_outputs() in analysis_agent.py exactly
         "safetyStockCostDt": metrics.get("safety_stock_cost_dt", 0),
         "eoq":              metrics.get("eoq", 0),
         "formulaOrderQty":  metrics.get("formula_order_qty", 0),
@@ -443,7 +687,6 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
         "overstockFlag":    risk.get("overstock_flag", False),
         "highCostFlag":     constr.get("high_cost_flag", False),
         "highHoldingFlag":  constr.get("high_holding_flag", False),
-        # analystNote: combine objective_note + risk rationale for flip card back
         "analystNote":      " | ".join(filter(None, [
                                 report.get("objective_note", ""),
                                 risk.get("rationale", ""),
@@ -457,7 +700,13 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_alerts(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dict[str, Any]]:
+    """
+    Build alert list from analyzed items.
+    If store_id is provided, each alert is upserted to inv.alerts and the
+    real DB UUID is returned as the alert id — so the frontend PATCH call works.
+    Falls back to a fake id (alert-<type>-<sku>) if DB is unavailable.
+    """
     alerts = []
     for item in items:
         if item.get("error"):
@@ -470,32 +719,61 @@ def _build_alerts(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         lt    = item["leadTimeDays"]
         sku   = item["sku"]
 
+        alert_type = None
+        urgency    = None
+        title      = None
+        message    = None
+
         if risk == "critical" and stock < 10:
-            alerts.append({
-                "id":      f"alert-rupture-{sku}",
-                "type":    "rupture",
-                "urgency": "critical",
-                "title":   f"Stockout imminent: {name}",
-                "message": (
-                    f"{name} — only {stock:.0f} units left, "
-                    f"{days:.1f} days of stock remaining"
-                ),
-                "action":  None,
-                "time":    item["lastUpdated"],
-            })
+            alert_type = "rupture"
+            urgency    = "critical"
+            title      = f"Stockout imminent: {name}"
+            message    = (
+                f"{name} — only {stock:.0f} units left, "
+                f"{days:.1f} days of stock remaining"
+            )
         elif risk == "high":
-            alerts.append({
-                "id":      f"alert-high-{sku}",
-                "type":    "redistribution",
-                "urgency": "high",
-                "title":   f"Low stock: {name}",
-                "message": (
-                    f"{name} — {days:.1f}d of stock within lead-time "
-                    f"variability window ({lt:.0f}d avg)"
-                ),
-                "action":  None,
-                "time":    item["lastUpdated"],
-            })
+            alert_type = "redistribution"
+            urgency    = "high"
+            title      = f"Low stock: {name}"
+            message    = (
+                f"{name} — {days:.1f}d of stock within lead-time "
+                f"variability window ({lt:.0f}d avg)"
+            )
+
+        if not alert_type:
+            continue
+
+        # Attempt to get-or-create a real DB row so PATCH calls work
+        alert_id = f"alert-{alert_type}-{sku}"  # fallback fake id
+        from_db  = False
+        if store_id:
+            try:
+                from db.repositories.inventory_repo import SyncInventoryRepo
+                db_id = SyncInventoryRepo.upsert_alert_and_return_id(
+                    sku=sku,
+                    store_id=store_id,
+                    alert_type=alert_type,
+                    severity=urgency,
+                    recommended_action=message,
+                )
+                if db_id:
+                    alert_id = db_id
+                    from_db  = True
+            except Exception as exc:
+                logger.warning("Could not persist alert to DB for %s@%s: %s", sku, store_id, exc)
+
+        alerts.append({
+            "id":      alert_id,
+            "sku":     sku,
+            "type":    alert_type,
+            "urgency": urgency,
+            "title":   title,
+            "message": message,
+            "action":  None,
+            "time":    item["lastUpdated"],
+            "fromDb":  from_db,  # frontend uses this to decide whether to call PATCH
+        })
     return alerts
 
 
@@ -528,18 +806,57 @@ def _build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 # Routes
 # ---------------------------------------------------------------------------
 
+@router.get("/stores")
+def list_stores() -> Dict[str, Any]:
+    """
+    Return all store IDs found in stock_history + sales_history,
+    together with a display label where available.
+    """
+    ids = _list_store_ids()
+    # Try to attach human-readable names from boutique / sales data
+    names: Dict[str, str] = {}
+    try:
+        sales_df = _DataCache.sales()
+        if {"store_id", "store_name"}.issubset(sales_df.columns):
+            mapping = (
+                sales_df[["store_id", "store_name"]]
+                .drop_duplicates("store_id")
+                .set_index("store_id")["store_name"]
+                .to_dict()
+            )
+            names.update(mapping)
+    except Exception:
+        pass
+
+    stores = [
+        {"id": sid, "name": names.get(sid, sid)}
+        for sid in ids
+    ]
+    return {"stores": stores, "store_ids": ids}
+
+
 @router.get("/skus")
 def list_skus(store_id: Optional[str] = Query(default=None)) -> Dict[str, List[str]]:
-    df = _DataCache.stock()
+    """
+    Return SKUs available for a store (stock + sales), or all SKUs if
+    no store_id is given.
+    """
     if store_id:
-        df = df[df["store_id"] == store_id]
-    return {"skus": sorted(df["sku"].unique().tolist())}
+        return {"skus": _resolve_skus_for_store(store_id)}
 
-
-@router.get("/stores")
-def list_stores() -> Dict[str, List[str]]:
-    df = _DataCache.stock()
-    return {"stores": sorted(df["store_id"].unique().tolist())}
+    # All known SKUs
+    all_skus: set[str] = set()
+    try:
+        # ✅ Convert to strings to avoid integer SKUs
+        all_skus.update(_DataCache.stock()["sku"].dropna().astype(str).unique().tolist())
+    except Exception:
+        pass
+    try:
+        # ✅ Convert to strings to avoid integer SKUs
+        all_skus.update(_DataCache.sales()["sku"].dropna().astype(str).unique().tolist())
+    except Exception:
+        pass
+    return {"skus": sorted(all_skus)}
 
 
 @router.post("/analyze")
@@ -559,47 +876,93 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
 
 
 @router.get("/store/{store_id}")
-def analyze_store(    
+def analyze_store(
     store_id: str,
     business_objective: str = Query(default="balanced"),
     force_refresh: bool = Query(default=False),
-    fast: bool = False,  # internal flag — True uses rule-based orchestrator (WebSocket path)
+    fast: bool = False,
+    # ── Pagination ────────────────────────────────────────────────────────
+    # page     : 1-based page index
+    # page_size: items per page (0 = return all, use with care on 4 000 SKUs)
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=0, le=500),
 ) -> Dict[str, Any]:
     """
-    Full store analysis with result caching.
-    First call runs the pipeline, later calls served from cache instantly.
-    force_refresh=True always re-runs the pipeline (used by WebSocket broadcasts).
-    fast=True uses the rule-based orchestrator (no LLM) for live broadcast updates.
+    Full store analysis with result caching and pagination.
+
+    With 100+ SKUs the pipeline can take 15-20 s on first call.
+    Subsequent calls within CACHE_TTL (20 min) are instant.
+    force_refresh=True always re-runs the pipeline.
+    fast=True uses the rule-based orchestrator (no LLM) for WS broadcasts.
+
+    Pagination:
+      GET /store/I63?page=1&page_size=100   → first 100 SKUs
+      GET /store/I63?page=2&page_size=100   → next 100
+      GET /store/I63?page_size=0            → all (slow — avoid on large stores)
     """
-    canonical_id = to_canonical_store_id(store_id)
+    # Check cache first (no lock needed for read)
     if not force_refresh:
-        cached = _get_cached(canonical_id, business_objective)
+        cached = _get_cached(store_id, business_objective)
         if cached is not None:
-            cached["store_id"] = to_frontend_store_id(canonical_id)
-            return cached
+            return _paginate(cached, page, page_size)
 
-    df   = _DataCache.stock()
-    skus = sorted(df[df["store_id"] == canonical_id]["sku"].unique().tolist())
-    if not skus:
-        raise HTTPException(status_code=404, detail=f"No SKUs found for store '{store_id}'")
+    # Acquire per-store lock so only ONE pipeline runs at a time.
+    # Concurrent callers (WS background task + HTTP poll) will block here
+    # and then immediately get the cache result once the first run completes.
+    lock = _get_store_lock(f"{store_id}::{business_objective}")
+    with lock:
+        # Re-check cache inside the lock — another thread may have populated it
+        cached = _get_cached(store_id, business_objective)
+        if cached is not None:
+            logger.info("Cache populated by concurrent run for %s — reusing", store_id)
+            return _paginate(cached, page, page_size)
 
-    orchestrator = get_orchestrator_fast() if fast else get_orchestrator()
-    logger.info("Running pipeline for %s (%d SKUs) [fast=%s]...", canonical_id, len(skus), fast)
-    results = orchestrator.analyze_batch(skus, canonical_id, business_objective)
-    results = _enrich_with_product_master(results)
+        skus = _resolve_skus_for_store(store_id)   # raises 404 if nothing found
 
-    items   = [_to_inventory_item(r) for r in results]
-    alerts  = _build_alerts(items)
-    payload = {
-        "store_id":            to_frontend_store_id(canonical_id),
-        "business_objective": business_objective,
-        "items":              items,
-        "alerts":             alerts,
-        "summary":            _build_summary(items),
+        orchestrator = get_orchestrator_fast() if fast else get_orchestrator()
+        logger.info(
+            "Running pipeline for %s (%d SKUs) [fast=%s, objective=%s]...",
+            store_id, len(skus), fast, business_objective,
+        )
+        results = orchestrator.analyze_batch(skus, store_id, business_objective)
+        results = _enrich_with_product_master(results)
+
+        items   = [_to_inventory_item(r) for r in results]
+        alerts  = _build_alerts(items, store_id=store_id)
+        payload = {
+            "store_id":           store_id,
+            "business_objective": business_objective,
+            "total_skus":         len(items),
+            "items":              items,
+            "alerts":             alerts,
+            "summary":            _build_summary(items),
+        }
+
+        _set_cache(store_id, business_objective, payload)
+        return _paginate(payload, page, page_size)
+
+
+def _paginate(payload: Dict[str, Any], page: int, page_size: int) -> Dict[str, Any]:
+    """Slice `items` for the requested page; keep everything else intact."""
+    if page_size == 0:
+        # Caller explicitly requested all items — return as-is
+        return {**payload, "page": 1, "page_size": 0, "total_pages": 1}
+
+    all_items  = payload.get("items", [])
+    total      = len(all_items)
+    total_pages = max(1, -(-total // page_size))   # ceiling division
+    page        = min(page, total_pages)
+    start       = (page - 1) * page_size
+    end         = start + page_size
+
+    return {
+        **payload,
+        "items":       all_items[start:end],
+        "page":        page,
+        "page_size":   page_size,
+        "total_pages": total_pages,
+        "total_skus":  total,
     }
-
-    _set_cache(canonical_id, business_objective, payload)
-    return payload
 
 
 @router.get("/summary/{store_id}")
@@ -608,19 +971,21 @@ def get_summary(
     business_objective: str = Query(default="balanced"),
 ) -> Dict[str, Any]:
     """Summary only — benefits from the same store cache."""
-    return analyze_store(store_id, business_objective)
+    payload = analyze_store(store_id, business_objective, page=1, page_size=0)
+    return payload["summary"]
 
 
 @router.delete("/cache")
 def clear_cache() -> Dict[str, Any]:
-    """Dev endpoint — clears all cached results."""
+    global _db_sku_cache
     count = len(_store_cache)
     _store_cache.clear()
     _DataCache.invalidate()
-    logger.info("Cache cleared (%d store entries + CSV cache invalidated)", count)
+    _db_sku_cache = None   # force re-query inv.products on next resolve
+    logger.info("Cache cleared (%d store entries + CSV + DB SKU cache)", count)
     return {
         "cleared": count,
-        "message": "Store result cache and CSV cache cleared. Next request re-runs the pipeline.",
+        "message": "All caches cleared. Next request re-runs the pipeline.",
     }
 
 
@@ -635,53 +1000,272 @@ async def ws_inventory(
     business_objective: str = Query(default="balanced"),
 ) -> None:
     await websocket.accept()
-    canonical_id = to_canonical_store_id(store_id)
-    frontend_id = to_frontend_store_id(canonical_id)
-    logger.info("Inventory WebSocket connected: %s -> %s (objective: %s)", store_id, canonical_id, business_objective)
-    # Register this connection
-    if canonical_id not in _active_ws_connections:
-        _active_ws_connections[canonical_id] = []
-    _active_ws_connections[canonical_id].append((websocket, business_objective))
+    logger.info(
+        "Inventory WebSocket connected: %s (objective: %s)", store_id, business_objective
+    )
+
+    if store_id not in _active_ws_connections:
+        _active_ws_connections[store_id] = []
+    _active_ws_connections[store_id].append((websocket, business_objective))
+
     try:
-        # Send initial snapshot immediately
-        try:
-            loop = asyncio.get_event_loop()
-            payload = await loop.run_in_executor(
-                None,
-                lambda: analyze_store(frontend_id, business_objective),
-            )
+        # ── Initial snapshot strategy ────────────────────────────────────────
+        # The pipeline can take 15-20s on a cold start. We don't block the WS
+        # coroutine waiting for it. Instead:
+        #   1. If the cache is already warm, send immediately.
+        #   2. If not, send a "loading" heartbeat so the frontend knows we're alive,
+        #      then poll the cache every 3s until it's populated (the HTTP endpoint
+        #      or a concurrent WS will trigger the pipeline).
+        # This avoids running the pipeline twice (HTTP fallback + WS) in parallel.
+
+        cached = _get_cached(store_id, business_objective)
+        if cached is not None:
+            # Cache warm — send immediately
             await websocket.send_json({
                 "type": "inventory_update",
-                "store_id": frontend_id,
+                "store_id": store_id,
                 "business_objective": business_objective,
-                **payload,
+                **cached,
             })
-            logger.info("Sent initial snapshot to WebSocket: %s", frontend_id)
-        except Exception as exc:
-            logger.error("ws_inventory: initial snapshot failed: %s", exc)
+            logger.info("Sent cached snapshot to WebSocket: %s (%d items)", store_id, len(cached.get("items", [])))
+        else:
+            # Cache cold — tell the frontend to use HTTP polling and wait
+            await websocket.send_json({
+                "type": "inventory_loading",
+                "store_id": store_id,
+                "message": "Pipeline running — use HTTP polling, will push when ready",
+            })
+            logger.info("Cache cold for %s — WS will push snapshot when pipeline completes", store_id)
 
-        # Keep connection alive — broadcasts happen via invalidate_store()
+            # Kick off the pipeline in background (non-blocking) so it populates the cache.
+            # The HTTP poller in the frontend will pick it up; we also push via WS when done.
+            async def _run_pipeline_and_push():
+                try:
+                    loop = asyncio.get_event_loop()
+                    payload = await loop.run_in_executor(
+                        None,
+                        lambda: analyze_store(
+                            store_id, business_objective,
+                            force_refresh=False, fast=False,
+                            page=1, page_size=0,
+                        ),
+                    )
+                    # Push to all connected clients for this store
+                    await _broadcast_to_store(store_id, {
+                        "type": "inventory_update",
+                        "store_id": store_id,
+                        "business_objective": business_objective,
+                        **payload,
+                    })
+                    logger.info(
+                        "Pipeline done for %s — pushed %d items via WS",
+                        store_id, len(payload.get("items", []))
+                    )
+                except Exception as exc:
+                    logger.error("Background pipeline failed for %s: %s", store_id, exc)
+
+            asyncio.create_task(_run_pipeline_and_push())
+
+        # ── Heartbeat loop ───────────────────────────────────────────────────
         while True:
             await asyncio.sleep(30)
             try:
                 await websocket.send_json({
                     "type":      "heartbeat",
-                    "store_id":  frontend_id,
+                    "store_id":  store_id,
                     "timestamp": time.time(),
                 })
             except Exception:
                 break
 
     except WebSocketDisconnect:
-        logger.info("Inventory WebSocket disconnected: %s", frontend_id)
+        logger.info("Inventory WebSocket disconnected: %s", store_id)
     except Exception as exc:
-        logger.error("Inventory WebSocket error (%s): %s", frontend_id, exc)
+        logger.error("Inventory WebSocket error (%s): %s", store_id, exc)
     finally:
-        # Unregister this connection
-        if canonical_id in _active_ws_connections:
-            _active_ws_connections[canonical_id] = [
-                (ws, obj) for ws, obj in _active_ws_connections[canonical_id]
+        if store_id in _active_ws_connections:
+            _active_ws_connections[store_id] = [
+                (ws, obj) for ws, obj in _active_ws_connections[store_id]
                 if ws != websocket
             ]
-            if not _active_ws_connections[canonical_id]:
-                del _active_ws_connections[canonical_id]
+            if not _active_ws_connections[store_id]:
+                del _active_ws_connections[store_id]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Business Objectives Management
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SetObjectiveRequest(BaseModel):
+    label: str = Field(..., description="Objective label (e.g., 'balanced', 'cost_savings', 'high_demand')")
+
+
+@router.get("/objectives")
+async def list_objectives() -> Dict[str, Any]:
+    """
+    List all business objectives with their active status.
+    Returns objectives ordered by priority.
+    """
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+        objectives = SyncInventoryRepo.list_objectives()
+        return {"objectives": objectives, "count": len(objectives)}
+    except Exception as exc:
+        logger.error("Failed to list objectives: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.put("/objectives/active")
+async def set_active_objective(req: SetObjectiveRequest) -> Dict[str, Any]:
+    """
+    Set the active business objective.
+    Invalidates all store caches so next analysis uses the new objective.
+    """
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+        success = SyncInventoryRepo.set_active_objective(req.label)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Objective '{req.label}' not found")
+        _store_cache.clear()
+        _DataCache.invalidate()
+        logger.info("Active objective changed to '%s' — cache cleared", req.label)
+        return {"active": req.label, "cache_cleared": True,
+                "message": f"Switched to {req.label} mode."}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to set active objective: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Alert Management
+# ══════════════════════════════════════════════════════════════════════════════
+
+class UpdateAlertRequest(BaseModel):
+    status: str = Field(
+        ...,
+        description="New status: 'acknowledged', 'resolved', or 'dismissed'"
+    )
+
+
+@router.get("/alerts/{store_id}")
+async def get_store_alerts(
+    store_id: str,
+    status: Optional[str] = Query(default="pending", description="Filter by status")
+) -> Dict[str, Any]:
+    """
+    Get alerts for a store from the database.
+    By default returns only pending alerts. Pass status=None to get all.
+    """
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+        alerts = SyncInventoryRepo.get_store_alerts(store_id)
+        for a in alerts:
+            for k in ("created_at", "updated_at"):
+                if a.get(k) and hasattr(a[k], "isoformat"):
+                    a[k] = a[k].isoformat()
+        return {"store_id": store_id, "alerts": alerts,
+                "count": len(alerts), "filter": status or "all"}
+    except Exception as exc:
+        logger.error("Failed to get alerts for %s: %s", store_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.patch("/alerts/{alert_id}")
+async def update_alert(alert_id: str, req: UpdateAlertRequest) -> Dict[str, Any]:
+    """
+    Update an alert's status.
+    Valid statuses: 'acknowledged', 'resolved', 'dismissed'
+    """
+    valid_statuses = {"acknowledged", "resolved", "dismissed"}
+    
+    if req.status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {valid_statuses}"
+        )
+    
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+        success = SyncInventoryRepo.update_alert_status(alert_id, req.status)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+        logger.info("Alert %s marked as %s", alert_id, req.status)
+        return {"alert_id": alert_id, "status": req.status, "updated": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to update alert %s: %s", alert_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# =====================================================================
+# Demo helpers  (safe to call before a demo to pre-populate DB alerts)
+# =====================================================================
+
+@router.post("/alerts/sync/{store_id}")
+def sync_alerts_to_db(store_id: str) -> Dict[str, Any]:
+    """
+    Force-write all current critical/high items from the cache into inv.alerts.
+    Call this once before the demo so every alert has a real UUID.
+    Returns how many were written vs already existed.
+    """
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    cached = _get_cached(store_id, "standard") or _get_cached(store_id, "balanced")
+    if not cached:
+        # Try any cached objective
+        for key, entry in _store_cache.items():
+            if key.startswith(f"{store_id}::"):
+                cached = entry["data"]
+                break
+    if not cached:
+        raise HTTPException(status_code=404, detail=f"No cached data for {store_id}. Load the inventory page first.")
+
+    written  = 0
+    existing = 0
+    for item in cached.get("items", []):
+        risk  = item.get("riskLevel", "ok")
+        stock = item.get("stock", 0)
+        sku   = item.get("sku", "")
+        name  = item.get("name", sku)
+        days  = item.get("daysOfStock", 0)
+        lt    = item.get("leadTimeDays", 7)
+
+        if risk == "critical" and stock < 10:
+            atype, severity = "rupture", "critical"
+            action = f"{name} has {stock} units ({days:.1f}d left). Order immediately.​"
+        elif risk == "high":
+            atype, severity = "redistribution", "high"
+            action = f"{name} has {days:.1f}d of stock vs {lt:.0f}d lead time. Place order soon."
+        else:
+            continue
+
+        db_id = SyncInventoryRepo.upsert_alert_and_return_id(
+            sku=sku, store_id=store_id, alert_type=atype,
+            severity=severity, recommended_action=action,
+        )
+        if db_id:
+            written += 1
+        else:
+            existing += 1
+
+    return {"written": written, "existing": existing, "total": written + existing,
+            "message": f"DB now has {written+existing} pending alerts for {store_id}"}
+
+
+@router.get("/debug/stock/{store_id}/{sku}")
+def debug_stock(store_id: str, sku: str) -> Dict[str, Any]:
+    """Quick check: what does DB say vs CSV for this SKU/store? Use before demo."""   
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    db_row = SyncInventoryRepo.get_stock_level(sku, store_id)
+    try:
+        stock_df = _DataCache.stock()
+        csv_rows = stock_df[(stock_df["store_id"] == store_id) & (stock_df["sku"].astype(str) == sku)]
+        csv_stock = int(csv_rows["stock_level"].iloc[-1]) if not csv_rows.empty else None
+    except Exception as exc:
+        csv_stock = f"error: {exc}"
+    return {"sku": sku, "store_id": store_id,
+            "db_stock_current":  db_row.get("stock_current") if db_row else None,
+            "db_row_found":      db_row is not None,
+            "csv_last_snapshot": csv_stock}

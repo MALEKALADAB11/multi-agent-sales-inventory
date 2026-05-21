@@ -138,13 +138,13 @@ class TimesFMForecaster:
             forecast_dates_temp = pd.date_range(
                 start=last_date_temp + pd.Timedelta(days=1),
                 periods=self.horizon,
-                freq="D"
+                freq="D" 
             )
 
             try:
-                from config.settings import RAW_DATA_DIR
+                from config.settings import PROCESSED_DATA_DIR
                 promos_df = pd.read_csv(
-                    RAW_DATA_DIR / "promotions.csv",
+                    PROCESSED_DATA_DIR / "promotions.csv",
                     parse_dates=["start_date", "end_date"]
                 )
                 sku_promos = promos_df[promos_df["sku"] == sku]

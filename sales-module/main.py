@@ -3,8 +3,13 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+<<<<<<< HEAD
 from data.postgres_provider import get_data_provider
 from core.config import get_settings
+=======
+
+from core.config import get_config
+>>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 from data.json_service import JsonDataService
 from data.realtime_simulator import RealtimeSimulator
 from mcp_servers.timefm.tools import TimesFMTools
@@ -13,7 +18,7 @@ from orchestration.trigger import CronTrigger
 from api.routers import stores, forecast, cycle as cycle_router
 logging.basicConfig(level=logging.INFO)
 logger   = logging.getLogger(__name__)
-settings = get_settings()
+settings = get_config()
 
 # ── Services globaux ──────────────────────────────────
 json_svc      = JsonDataService()

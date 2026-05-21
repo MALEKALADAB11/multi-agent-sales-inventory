@@ -1,5 +1,5 @@
 import os
-from typing import TypedDict, Annotated, Sequence, Dict, Any
+from typing import TypedDict, Annotated, Sequence, Dict, Any, Optional
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -8,10 +8,17 @@ import json
 import re
 import logging
 
+logger = logging.getLogger(__name__)
+
 from src.tools.internal.mcp_wrappers import batch_inventory_data
 from src.utils.llm_factory import get_llm
 
-logger = logging.getLogger(__name__)
+try:
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    _DB_AVAILABLE = True
+except Exception:
+    _DB_AVAILABLE = False
+    logger.warning("SyncInventoryRepo not importable — DB writes disabled.")
 
 # ---------------------------------------------------------------------------
 # Performance knobs
@@ -240,6 +247,115 @@ COMPUTED METRICS:
 
 
 # ---------------------------------------------------------------------------
+# Business objective — resolved from DB at runtime
+# ---------------------------------------------------------------------------
+
+def _resolve_active_objective() -> str:
+    """
+    Read inv.business_objectives for the active row and return its label.
+    Labels in the DB match what stock_tools._effective_service_level() accepts.
+
+    Fallback order:
+      1. Active row (is_active = TRUE, lowest priority number)
+      2. Any row — highest priority (lowest priority number)
+      3. 'standard' if DB is completely unavailable
+    """
+    if not _DB_AVAILABLE:
+        return "standard"
+
+    row = SyncInventoryRepo.get_active_objective()
+    if row is not None:
+        label    = row.get("label", "standard")
+        metadata = row.get("metadata") or {}
+        logger.info(
+            "Active objective from DB: '%s'  "
+            "(service_level=%.0f%%  safety_factor=%.1f)",
+            label,
+            float(metadata.get("service_level_target", 0)) * 100,
+            float(metadata.get("safety_stock_factor", 1.0)),
+        )
+        return label
+
+    # No active row — fall back to highest priority row
+    logger.warning("No active business objective in DB — using highest-priority row")
+    row = SyncInventoryRepo.get_any_objective()
+    if row is not None:
+        label = row.get("label", "standard")
+        logger.info("Fallback objective: '%s'", label)
+        return label
+
+    return "standard"
+
+
+def _persist_sku_result(
+    result: Dict[str, Any],
+    agent_run_id: Optional[str],
+) -> bool:
+    """
+    Called after analysis_agent.run() completes for one SKU.
+    Writes to:
+      - inv.stock_levels  (update stock_current + remaining_days_of_stock)
+      - inv.alerts        (insert if risk is CRITICAL or HIGH, with dedup)
+
+    Returns True if an alert was inserted (so the orchestrator can count them).
+    """
+    if not _DB_AVAILABLE:
+        return False
+
+    report  = result.get("analysis_report", {})
+    sku     = result.get("sku")
+    store   = result.get("store_id")
+
+    if not sku or not store or "error" in result:
+        return False
+
+    # ── Update inv.stock_levels ───────────────────────────────────────────
+    metrics = report.get("metrics", {})
+    stock   = report.get("stock_status", {})
+    current_stock   = int(stock.get("current_stock", 0))
+    days_remaining  = metrics.get("days_of_stock_remaining")
+
+    SyncInventoryRepo.upsert_stock_level_sync(
+        sku, store,
+        stock_current           = current_stock,
+        remaining_days_of_stock = days_remaining,
+    )
+
+    # ── Insert alert if CRITICAL or HIGH ──────────────────────────────────
+    risk_level = report.get("risk_assessment", {}).get("level", "")
+    alert_inserted = False
+
+    if risk_level in ("CRITICAL", "HIGH"):
+        alert_type = (
+            "stockout_critical" if risk_level == "CRITICAL" else "stockout_risk"
+        )
+        severity = risk_level.lower()
+        rationale = report.get("risk_assessment", {}).get("rationale", "")
+        lead_time = stock.get("lead_time_avg_days", 0)
+        days_str  = f"{days_remaining:.1f}" if days_remaining else "?"
+
+        action = (
+            f"Order immediately — {days_str}d of stock remaining "
+            f"(lead time {lead_time:.0f}d). {rationale}"
+            if risk_level == "CRITICAL"
+            else
+            f"Plan replenishment — {days_str}d stock within lead-time "
+            f"variability window ({lead_time:.0f}d avg). {rationale}"
+        )
+
+        alert_inserted = SyncInventoryRepo.insert_alert_if_new(
+            sku           = sku,
+            store_id      = store,
+            alert_type    = alert_type,
+            severity      = severity,
+            recommended_action = action,
+            agent_run_id  = agent_run_id,
+        )
+
+    return alert_inserted
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -406,15 +522,26 @@ class InventoryAnalysisAgent:
     def run(
         self,
         sku: str,
-        store_id: str = "STORE-001",
+        store_id: str = "I63",
         business_objective: str = "balanced",
+        agent_run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """
+        Run analysis for one SKU.
+
+        agent_run_id: passed in by the orchestrator so alert rows can be
+                      linked to the batch run. None is fine — the FK is
+                      nullable.
+        """
         try:
+            # Resolve active objective from DB; 'standard' if nothing active
+            effective_objective = _resolve_active_objective()
+
             result = self.graph.invoke({
                 "messages": [],
                 "sku": sku,
                 "store_id": store_id,
-                "business_objective": business_objective,
+                "business_objective": effective_objective,
                 "raw_data": {},
                 "structured": {},
             })
@@ -426,19 +553,26 @@ class InventoryAnalysisAgent:
             report.update({
                 "sku": sku,
                 "store_id": store_id,
-                "business_objective": business_objective,
+                "business_objective": effective_objective,
                 "report_type": "BASELINE",
             })
 
-            return {
+            final = {
                 "sku": sku,
                 "store_id": store_id,
-                "business_objective": business_objective,
+                "business_objective": effective_objective,
                 "analysis_report": report,
             }
 
+            # Persist stock level update + alert to DB
+            _persist_sku_result(final, agent_run_id)
+
+            return final
+
         except Exception as e:
-            logger.error("InventoryAnalysisAgent failed for SKU=%s: %s", sku, e, exc_info=True)
+            logger.error(
+                "InventoryAnalysisAgent failed for SKU=%s: %s", sku, e, exc_info=True
+            )
             return {
                 "sku": sku,
                 "store_id": store_id,
