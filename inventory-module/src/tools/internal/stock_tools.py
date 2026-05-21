@@ -38,6 +38,16 @@ from config.settings import (
     BUSINESS_OBJECTIVE_SETTINGS,
 )
 
+# DB access — sync wrapper so it's safe inside LangGraph's sync executor.
+# Import is lazy-safe: if psycopg2 isn't installed, SyncInventoryRepo falls
+# back gracefully and stock_tools continues using CSVs.
+try:
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    _DB_AVAILABLE = True
+except Exception:
+    _DB_AVAILABLE = False
+    logger.warning("SyncInventoryRepo not importable — DB reads disabled, using CSVs only.")
+
 
 # ---------------------------------------------------------------------------
 # Module-level cache — loaded once, reused forever
@@ -61,6 +71,10 @@ class _DataCache:
     def stock(cls) -> pd.DataFrame:
         if cls._stock_df is None:
             cls._stock_df = pd.read_csv(STOCK_HISTORY_PATH, parse_dates=["date"])
+            # FIX: cast sku/store_id to str so string lookups always match
+            cls._stock_df["sku"] = cls._stock_df["sku"].astype(str)
+            if "store_id" in cls._stock_df.columns:
+                cls._stock_df["store_id"] = cls._stock_df["store_id"].astype(str)
             logger.debug("Loaded stock_history CSV (%d rows)", len(cls._stock_df))
         return cls._stock_df
 
@@ -68,6 +82,8 @@ class _DataCache:
     def product(cls) -> pd.DataFrame:
         if cls._product_df is None:
             cls._product_df = pd.read_csv(PRODUCT_MASTER_PATH)
+            # FIX: cast sku to str so string lookups always match
+            cls._product_df["sku"] = cls._product_df["sku"].astype(str)
             logger.debug("Loaded product_master CSV (%d rows)", len(cls._product_df))
         return cls._product_df
 
@@ -75,6 +91,10 @@ class _DataCache:
     def sales(cls) -> pd.DataFrame:
         if cls._sales_df is None:
             cls._sales_df = pd.read_csv(SALES_HISTORY_PATH, parse_dates=["date"])
+            # FIX: cast sku/store_id to str so string lookups always match
+            cls._sales_df["sku"] = cls._sales_df["sku"].astype(str)
+            if "store_id" in cls._sales_df.columns:
+                cls._sales_df["store_id"] = cls._sales_df["store_id"].astype(str)
             logger.debug("Loaded sales_history CSV (%d rows)", len(cls._sales_df))
         return cls._sales_df
 
@@ -94,6 +114,9 @@ class _DataCache:
         Called by the inventory sale hook in main.py on every simulator tick.
         Thread-safe: GIL protects dict writes at this granularity.
         """
+        # FIX: normalise to str so the key always matches the CSV-loaded str skus
+        sku      = str(sku)
+        store_id = str(store_id)
         key = (sku, store_id)
         if key not in cls._stock_overrides:
             # Seed from the latest CSV row for this SKU so we start accurate
@@ -117,6 +140,9 @@ class _DataCache:
         Uses the in-memory override if sales have been recorded since startup,
         otherwise falls back to the last row of the stock_history CSV.
         """
+        # FIX: normalise to str so the key always matches
+        sku      = str(sku)
+        store_id = str(store_id)
         key = (sku, store_id)
         if key in cls._stock_overrides:
             return cls._stock_overrides[key]
@@ -186,10 +212,16 @@ def _effective_service_level(
         notes.append(f"lifecycle={lifecycle_stage} ({direction} by {abs(adj):.0%})")
 
     obj_settings = {
-        "cost":          {"min": 0.75,              "max": product_sl},
-        "balanced":      {"min": product_sl,         "max": product_sl},
+        # internal keys (kept for backward compat)
+        "cost":          {"min": 0.75,                  "max": product_sl},
+        "balanced":      {"min": product_sl,             "max": product_sl},
         "service_level": {"min": max(product_sl, 0.98), "max": 0.999},
         "competitive":   {"min": max(product_sl, 0.95), "max": 0.999},
+        # DB labels (seed_static_data.py) — same behaviour
+        "cost_savings":  {"min": 0.75,                  "max": product_sl},
+        "standard":      {"min": product_sl,             "max": product_sl},
+        "high_demand":   {"min": max(product_sl, 0.98), "max": 0.999},
+        "market_growth": {"min": max(product_sl, 0.95), "max": 0.999},
     }
     bounds = obj_settings.get(business_objective, {"min": product_sl, "max": product_sl})
     sl_clipped = max(bounds["min"], min(sl, bounds["max"]))
@@ -224,7 +256,7 @@ def _demand_std(
     try:
         rows = _DataCache.sales()
         rows = rows[
-            (rows["sku"] == sku) & (rows["store_id"] == store_id)
+            (rows["sku"] == str(sku)) & (rows["store_id"] == str(store_id))
         ].copy()
 
         if len(rows) < 14:
@@ -247,8 +279,53 @@ def get_stock_status(sku: str, store_id: str = DEFAULT_STORE) -> str:
     """
     Returns current stock level, lead time (avg ± std), MOQ,
     costs, lifecycle stage, and service level target for a given SKU.
-    Uses the cached DataFrames — no disk I/O on repeated calls.
+
+    Data priority:
+      1. inv.products + inv.stock_levels (DB) — live, updated by seeds/agents
+      2. product_master.csv + stock_history.csv (CSV) — fallback if DB empty
     """
+    sku      = str(sku)
+    store_id = str(store_id)
+
+    # ── Try DB first ──────────────────────────────────────────────────────────
+    if _DB_AVAILABLE:
+        db_product = SyncInventoryRepo.get_product(sku)
+        db_stock   = SyncInventoryRepo.get_stock_level(sku, store_id)
+
+        if db_product and db_stock:
+            current_stock = float(db_stock.get("stock_current", 0))
+            # If the in-memory override has a more recent sale, use that
+            override_key = (sku, store_id)
+            if override_key in _DataCache._stock_overrides:
+                current_stock = _DataCache._stock_overrides[override_key]
+
+            last_updated = db_stock.get("last_updated")
+            last_updated_str = (
+                last_updated.date().isoformat()
+                if hasattr(last_updated, "date")
+                else str(last_updated or "N/A")
+            )
+
+            return (
+                f"=== Stock Status: {sku} @ {store_id} ===\n"
+                f"  Product          : {db_product.get('product_name', 'N/A')}\n"
+                f"  Category         : {db_product.get('category', 'N/A')}\n"
+                f"  Lifecycle stage  : {db_product.get('lifecycle_stage', 'N/A')}\n"
+                f"  Stock level      : {int(current_stock)} units\n"
+                f"  Stockout flag    : {'YES' if current_stock == 0 else 'No'}\n"
+                f"  Lead time avg    : {float(db_product.get('lead_time_days', 7)):.0f} days\n"
+                f"  Lead time std    : {float(db_product.get('lead_time_std', 0) or 0):.1f} days\n"
+                f"  MOQ              : {int(db_product.get('moq', 1) or 1)} units\n"
+                f"  Unit cost        : {float(db_product.get('unit_cost', 0) or 0):.2f} DT\n"
+                f"  Unit price       : {float(db_product.get('unit_price', 0) or 0):.2f} DT\n"
+                f"  Holding cost pct : {float(db_product.get('holding_cost_pct', 0.25) or 0.25):.0%} / year\n"
+                f"  Order cost       : {float(db_product.get('order_cost', 0) or 0):.2f} DT / order\n"
+                f"  Service lvl tgt  : {float(db_product.get('service_level_target') or 0.95):.0%}\n"
+                f"  Last updated     : {last_updated_str}"
+            )
+        # DB had no data for this SKU — fall through to CSV
+
+    # ── CSV fallback ──────────────────────────────────────────────────────────
     stock_df   = _DataCache.stock()
     product_df = _DataCache.product()
 
@@ -290,12 +367,15 @@ def get_forecast_summary(sku: str, store_id: str = DEFAULT_STORE) -> str:
     Raw model output — no promotional adjustment applied.
     Uses the cached forecast DataFrame.
     """
+    sku      = str(sku)
+    store_id = str(store_id)
+
     df = _DataCache.forecast().copy()
 
     if "sku" in df.columns:
-        df = df[df["sku"] == sku]
+        df = df[df["sku"].astype(str) == sku]
     if "store_id" in df.columns:
-        df = df[df["store_id"] == store_id]
+        df = df[df["store_id"].astype(str) == store_id]
 
     if df.empty:
         return f"No forecast data found for SKU '{sku}' at store '{store_id}'."
@@ -309,9 +389,9 @@ def get_forecast_summary(sku: str, store_id: str = DEFAULT_STORE) -> str:
     end      = df["date"].max().date()
     days     = len(df)
 
-    half           = days // 2
-    df_sorted      = df.sort_values("date")
-    first_half_avg = df_sorted.head(half)["predicted_demand"].mean()
+    half            = days // 2
+    df_sorted       = df.sort_values("date")
+    first_half_avg  = df_sorted.head(half)["predicted_demand"].mean()
     second_half_avg = df_sorted.tail(half)["predicted_demand"].mean()
     if second_half_avg > first_half_avg * 1.05:
         trend = "up"
@@ -352,33 +432,54 @@ def compute_inventory_metrics(
     Computes full inventory replenishment metrics (APICS safety stock, EOQ,
     ROP, risk classification, service level).  Uses cached DataFrames.
     """
+    sku      = str(sku)
+    store_id = str(store_id)
+
     stock_df    = _DataCache.stock()
     product_df  = _DataCache.product()
     forecast_df = _DataCache.forecast().copy()
 
-    stock_rows = stock_df[
-        (stock_df["sku"] == sku) & (stock_df["store_id"] == store_id)
-    ]
-    if stock_rows.empty:
-        return f"No stock data for SKU '{sku}' at store '{store_id}'."
-    stock_row = stock_rows.sort_values("date").iloc[-1]
+    # ── Product data: DB first, CSV fallback ──────────────────────────────────
+    db_product = SyncInventoryRepo.get_product(sku) if _DB_AVAILABLE else None
+    db_stock   = SyncInventoryRepo.get_stock_level(sku, store_id) if _DB_AVAILABLE else None
 
-    prod_rows = product_df[product_df["sku"] == sku]
-    if prod_rows.empty:
-        return f"No product master data for SKU '{sku}'."
-    p = prod_rows.iloc[0]
+    if db_product:
+        # Build a thin object that looks like a CSV row so the rest of the
+        # function doesn't need two code paths.
+        class _P:
+            def __getitem__(self, k):  return db_product[k]
+            def get(self, k, d=None):  return db_product.get(k, d)
+        p = _P()
+    else:
+        prod_rows = product_df[product_df["sku"] == sku]
+        if prod_rows.empty:
+            return f"No product master data for SKU '{sku}'."
+        p = prod_rows.iloc[0]
+
+    # ── Stock level: DB first (reflects seeded/live data), then CSV override ──
+    if db_stock:
+        current_stock = float(db_stock.get("stock_current", 0))
+        # If the in-memory sale simulator has a more recent deduction, use that
+        override_key = (sku, store_id)
+        if override_key in _DataCache._stock_overrides:
+            current_stock = _DataCache._stock_overrides[override_key]
+    else:
+        stock_rows = stock_df[
+            (stock_df["sku"] == sku) & (stock_df["store_id"] == store_id)
+        ]
+        if stock_rows.empty:
+            return f"No stock data for SKU '{sku}' at store '{store_id}'."
+        current_stock = _DataCache.get_current_stock(sku, store_id)
 
     if "sku" in forecast_df.columns:
-        forecast_df = forecast_df[forecast_df["sku"] == sku]
+        forecast_df = forecast_df[forecast_df["sku"].astype(str) == sku]
     if "store_id" in forecast_df.columns:
-        forecast_df = forecast_df[forecast_df["store_id"] == store_id]
+        forecast_df = forecast_df[forecast_df["store_id"].astype(str) == store_id]
     if forecast_df.empty:
         return f"No forecast data for SKU '{sku}' at store '{store_id}'."
 
     # ── Product parameters ─────────────────────────────────────────────────
-    # current_stock comes from the live override (updated by sales events)
-    # rather than the static CSV, so risk metrics reflect real-time depletion.
-    current_stock    = _DataCache.get_current_stock(sku, store_id)
+    # current_stock is already resolved above (DB or CSV + override)
     lead_time_avg    = float(p["lead_time_days"])
     lead_time_std    = float(p.get("lead_time_std", 0))
     moq              = float(p["moq"])
