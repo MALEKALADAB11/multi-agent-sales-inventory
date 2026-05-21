@@ -10,7 +10,19 @@ import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, Callable, Awaitable, Any
 
+import logging
+import os
+import asyncio
+from pathlib import Path
+from datetime import datetime, date, timedelta
+from functools import lru_cache
+from typing import Optional
+from pathlib import Path
 import asyncpg
+from dotenv import load_dotenv
+# Load .env from project root
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +32,11 @@ DB_CONFIG = {
     "database": "ooredoo_sales",
     "user": "postgres",
     "password": "admin",
+    "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 FAMILLE_MAP = {

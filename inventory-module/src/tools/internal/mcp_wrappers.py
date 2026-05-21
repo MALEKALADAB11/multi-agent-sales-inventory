@@ -115,7 +115,7 @@ def get_stock_status_mcp(sku: str, store_id: str = DEFAULT_STORE) -> str:
 
     Args:
         sku: Product SKU code
-        store_id: Store identifier (default: STORE-001)
+        store_id: Store identifier (default: I63)
     """
     return _get_stock_status(sku, store_id)
 
@@ -127,7 +127,7 @@ def get_forecast_summary_mcp(sku: str, store_id: str = DEFAULT_STORE) -> str:
 
     Args:
         sku: Product SKU code
-        store_id: Store identifier (default: STORE-001)
+        store_id: Store identifier (default: I63)
     """
     return _get_forecast_summary(sku, store_id)
 
@@ -145,7 +145,7 @@ def compute_inventory_metrics_mcp(
 
     Args:
         sku: Product SKU code
-        store_id: Store identifier (default: STORE-001)
+        store_id: Store identifier (default: I63)
         promo_uplift_pct: 0.0 for baseline (Context Agent sets this later)
         business_objective: cost | balanced | service_level | competitive
     """

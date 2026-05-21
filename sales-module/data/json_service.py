@@ -2,23 +2,29 @@
 json_service.py — 100% PostgreSQL. Remplace tous les fichiers JSON mock.
 Interface identique à l'ancien JsonDataService.
 """
+import csv
+from pathlib import Path
+from collections import defaultdict
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime, date 
 from typing import Any, Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+# Load .env from project root
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 logger = logging.getLogger(__name__)
 
 # ── Config PostgreSQL ─────────────────────────────────────────────────────────
 _DB_CONFIG = {
-    "host":     "localhost",
-    "port":     5432,
-    "dbname":   "ooredoo_sales",
-    "user":     "postgres",
-    "password": "admin",
+    "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 # ── Mapping store_id → CD_DIST PostgreSQL ─────────────────────────────────────
@@ -67,6 +73,8 @@ _OBJECTIFS_DEFAUT = {
     "M03": 1057.0,
 }
 
+# Target uplift over historical average
+TARGET_UPLIFT = 1.10
 
 # ── Helpers SQL ───────────────────────────────────────────────────────────────
 
@@ -96,6 +104,126 @@ def _query_one(sql: str, params=None) -> dict:
 
 
 # ── Service Principal ─────────────────────────────────────────────────────────
+
+# ── Real data loaders ─────────────────────────────────────────────────────────
+
+def _find_transaction_csv() -> Path | None:
+    candidates = [
+        Path(__file__).parent / "transaction_vente_test_100500_fast.csv",
+        Path(__file__).parent.parent.parent / "shared_module" / "data" / "raw" / "transaction_vente.csv",
+        Path("shared_module") / "data" / "raw" / "transaction_vente.csv",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def _load_real_advisors(store_id: str) -> tuple[list[dict], list[dict]]:
+    """
+    Read the raw transaction CSV and return (advisors, targets) for store_id.
+
+    advisors: list of dicts compatible with mock advisors.json schema
+    targets:  list of dicts compatible with mock targets.json schema
+
+    Returns ([], []) if the CSV is unavailable.
+    """
+    path = _find_transaction_csv()
+    if not path:
+        return [], []
+
+    agent_revenue: dict[str, float] = defaultdict(float)
+    agent_names:   dict[str, tuple[str, str]] = {}   # id → (first, last)
+
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader  = csv.DictReader(f)
+            headers = reader.fieldnames or []
+
+            if "AGENT_ID" not in headers:
+                logger.warning("Transaction CSV has no AGENT_ID column — skipping")
+                return [], []
+
+            for row in reader:
+                if (row.get("CODE_CENTRE") or "").strip() != store_id:
+                    continue
+                aid = (row.get("AGENT_ID") or "").strip()
+                if not aid:
+                    continue
+                try:
+                    amt = float(row.get("LIG_TTC") or row.get("MONTANT_PAIE") or 0)
+                except ValueError:
+                    amt = 0.0
+                agent_revenue[aid] += amt
+                if aid not in agent_names:
+                    first = (row.get("AGENT_NAME")    or "").strip()
+                    last  = (row.get("AGENT_SURNAME") or "").strip()
+                    agent_names[aid] = (first, last)
+
+    except Exception as e:
+        logger.warning("Could not read real advisor data: %s", e)
+        return [], []
+
+    if not agent_revenue:
+        logger.warning("No transactions found for store %s in %s", store_id, path.name)
+        return [], []
+
+    logger.info(
+        "Loaded %d real advisors for %s from %s (total CA %.0f DT)",
+        len(agent_revenue), store_id, path.name, sum(agent_revenue.values())
+    )
+
+    # Assign display colours round-robin
+    COLOURS = ["#6C5CE7", "#00B894", "#F9A825", "#2D9CDB",
+               "#E74C3C", "#A29BFE", "#FDCB6E", "#74B9FF"]
+
+    # Sort by revenue descending
+    sorted_agents = sorted(agent_revenue.items(), key=lambda x: -x[1])
+
+    # Estimate daily average (CSV covers multiple days — divide by 30 as proxy)
+    # A proper date-range calculation can replace this once DATE_VENTE parsing is added.
+    DAYS_ESTIMATE = 30
+
+    advisors = []
+    targets  = []
+
+    for i, (aid, total_rev) in enumerate(sorted_agents):
+        first, last = agent_names.get(aid, ("", ""))
+        name     = f"{first} {last}".strip() or aid
+        initials = ((first[:1] + last[:1]) if first or last else aid[:2]).upper()
+        daily_avg  = total_rev / DAYS_ESTIMATE
+        ca_target  = round(daily_avg * TARGET_UPLIFT, 2)
+
+        advisors.append({
+            "id":           aid,
+            "advisor_code": aid,
+            "name":         name,
+            "initials":     initials,
+            "role":         _guess_role(i),
+            "avatar_color": COLOURS[i % len(COLOURS)],
+            "ca_target":    ca_target,
+            "coach_score":  round(0.5 + (0.4 * total_rev / (sorted_agents[0][1] or 1)), 2),
+        })
+        targets.append({
+            "advisor_id": aid,
+            "ca_target":  ca_target,
+        })
+
+    return advisors, targets
+
+
+def _guess_role(rank: int) -> str:
+    """Assign a plausible role label based on revenue rank."""
+    roles = [
+        "Forfaits & Services",
+        "Postpayé & Terminaux",
+        "Smartphones & Data",
+        "Recharge & Accessoires",
+    ]
+    return roles[rank % len(roles)]
+
+
+# ── Service ───────────────────────────────────────────────────────────────────
 
 class JsonDataService:
     """
@@ -500,6 +628,8 @@ class JsonDataService:
 
     def reset_day(self) -> None:
         pass
+
+    # ── Debug ─────────────────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
         ca_map = self.get_ca_by_advisor()

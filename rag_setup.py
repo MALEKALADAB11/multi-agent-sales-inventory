@@ -21,9 +21,13 @@ import sys
 import csv
 import time
 import logging
+from zipfile import Path
 import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+# Load .env from project root
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,9 +38,11 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host": "localhost", "port": 5432,
-    "dbname": "ooredoo_sales",
-    "user": "postgres", "password": "admin",
+    "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 MILVUS_URI  = "http://localhost:19530"
 COLLECTION  = "coaching_scripts"

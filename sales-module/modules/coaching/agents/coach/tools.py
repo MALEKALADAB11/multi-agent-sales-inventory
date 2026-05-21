@@ -8,6 +8,11 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from typing import Optional
+from pathlib import Path
+from dotenv import load_dotenv
+# Load .env from project root
+load_dotenv(Path(__file__).resolve().parent.parent.parent.parent.parent.parent / ".env")
+
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +22,11 @@ COLLECTION = "coaching_scripts"
 EMBED_DIM  = 768
 
 DB_CONFIG = {
-    "host": "localhost", "port": 5432,
-    "dbname": "ooredoo_sales",
-    "user": "postgres", "password": "admin",
+    "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 

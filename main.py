@@ -4,9 +4,20 @@ Unified API Server — Inventory + Sales + Agents IA
     uvicorn main:app --port 8000
 """
 
-import sys, os, asyncio, logging, json, random, time
+import sys
+import os
+import asyncio
+import logging
+from typing import Dict
+import json, random, time
 from datetime import datetime
 from dotenv import load_dotenv
+<<<<<<< HEAD
+=======
+from monitoring import router as monitoring_router
+
+# ── Auth (avant les imports du module sales pour éviter les conflits) ─────────
+>>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 from auth_router import router as auth_router, setup_auth_tables
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import sys, os, asyncio, logging, json, random, time
@@ -33,6 +44,8 @@ from fastapi.responses import JSONResponse
 
 from src.api.routes import router as inventory_router, invalidate_store
 from src.tools.internal.stock_tools import _DataCache as InventoryDataCache
+from db.repositories.inventory_repo import InventoryRepo
+from db.stock_simulator import StockSimulator
 
 from api.routers.cycle import router as cycle_router, set_orchestrator
 from api.routers.forecast import router as forecast_router, set_json_svc as set_forecast_json
@@ -162,18 +175,88 @@ async def startup_event():
     app.state.timefm = timefm
     logger.info("✅ TimesFM chargé")
 
+<<<<<<< HEAD
     # 3. Simulateur
     simulator = RealtimeSimulator(json_svc, interval_seconds=15)
+=======
+    # ── DB pool + StockSimulator ──────────────────────────────
+    try:
+        db_repo = InventoryRepo()
+        await db_repo.connect()
+        stock_sim = StockSimulator(db_repo)
+        app.state.db_repo   = db_repo
+        app.state.stock_sim = stock_sim
+        logger.info("✅ DB pool connected — StockSimulator ready")
+    except Exception as e:
+        logger.warning("⚠️  DB pool failed — stock updates will be in-memory only: %s", e)
+        stock_sim = None
+        app.state.db_repo   = None
+        app.state.stock_sim = None
+
+    simulator = RealtimeSimulator(json_svc, interval_seconds=15, store_id="I63")
+
+    # ✅ In-memory stock tracker (fast path for WebSocket broadcasts)
+    _live_stock: Dict[str, float] = {}
+
+    def _init_stock_from_cache():
+        """Load initial stock levels from stock_history CSV"""
+        try:
+            stock_df = InventoryDataCache.stock()
+            store_stock = stock_df[stock_df["store_id"] == "I63"]
+            if not store_stock.empty:
+                latest = store_stock.sort_values('date').groupby('sku').last()
+                for sku, row in latest.iterrows():
+                    _live_stock[str(sku)] = float(row.get('stock_level', 0))
+                logger.info(f"✅ Loaded {len(_live_stock)} SKU stock levels for I63")
+        except Exception as e:
+            logger.warning(f"Could not load initial stock: {e}")
+
+    _init_stock_from_cache()
+>>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:
-        InventoryDataCache.record_sale("STORE-001", sku, float(units))
-        new_stock = InventoryDataCache.get_current_stock(sku, "STORE-001")
-        invalidate_store("STORE-001", sku=sku, new_stock=new_stock)
+        """
+        Called by RealtimeSimulator every time a sale fires.
+        1. Updates in-memory _live_stock (fast — for WebSocket broadcast)
+        2. Updates _DataCache._stock_overrides (so pipeline sees live stock)
+        3. Persists to inv.stock_levels via StockSimulator (DB source of truth)
+        """
+        sku_str = str(sku)
 
+        # ── 1. In-memory fast path ────────────────────────────
+        current   = _live_stock.get(sku_str, 0)
+        new_stock = max(0, current - units)
+        _live_stock[sku_str] = new_stock
+
+        # ── 2. Keep analysis pipeline in sync ─────────────────
+        InventoryDataCache.record_sale(store_id, sku_str, units)
+
+        logger.info(f"📉 Sale: {sku_str} | {current} → {new_stock} units (-{units})")
+
+        # ── 3. Persist to DB ──────────────────────────────────
+        if stock_sim is not None:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(
+                    stock_sim.record_sale(sku_str, store_id, units)
+                )
+
+        # ── 4. Broadcast via WebSocket ────────────────────────
+        invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+
+    # ✅ Wire on_sale callback BEFORE starting
     simulator.on_sale = _on_sale
+<<<<<<< HEAD
     simulator.start()
     app.state.simulator = simulator
     logger.info("✅ Inventory ↔ Sales sync")
+=======
+
+    # ✅ Now start
+    simulator.start()
+    app.state.simulator = simulator
+    logger.info("✅ Inventory ↔ Sales sync wired")
+>>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 
     # 4. Orchestrateur
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)
@@ -203,11 +286,18 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    for attr in ("simulator", "trigger"):
-        obj = getattr(app.state, attr, None)
-        if obj:
-            obj.stop()
-    logger.info("Shutdown propre.")
+    simulator = getattr(app.state, "simulator", None)
+    if simulator: simulator.stop()
+    trigger = getattr(app.state, "trigger", None)
+    if trigger: trigger.stop()
+    db_repo = getattr(app.state, "db_repo", None)
+    if db_repo:
+        try:
+            await db_repo.close()
+            logger.info("✅ DB pool closed")
+        except Exception:
+            pass
+    logger.info("Shutting down cleanly.")
 
 
 def _fetch_weather_fallback() -> dict:
