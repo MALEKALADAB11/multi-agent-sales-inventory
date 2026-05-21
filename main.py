@@ -10,6 +10,7 @@ import os
 import asyncio
 import logging
 from dotenv import load_dotenv
+from monitoring import router as monitoring_router
 
 # ── Fix module paths ──────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -93,6 +94,7 @@ app.include_router(inventory_router, prefix="/api/inventory")
 app.include_router(cycle_router)
 app.include_router(forecast_router)
 app.include_router(stores_router)
+app.include_router(monitoring_router)
 
 # ══════════════════════════════════════════════════════════════
 # Startup / Shutdown
