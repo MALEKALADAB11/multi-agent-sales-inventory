@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-
+from data.postgres_provider import get_data_provider
 from core.config import get_settings
 from data.json_service import JsonDataService
 from data.realtime_simulator import RealtimeSimulator
@@ -11,7 +11,6 @@ from mcp_servers.timefm.tools import TimesFMTools
 from orchestration.graph import CycleOrchestrator
 from orchestration.trigger import CronTrigger
 from api.routers import stores, forecast, cycle as cycle_router
-from data.mock_provider import get_data_provider
 logging.basicConfig(level=logging.INFO)
 logger   = logging.getLogger(__name__)
 settings = get_settings()

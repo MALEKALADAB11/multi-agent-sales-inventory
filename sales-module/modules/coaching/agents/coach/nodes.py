@@ -1,20 +1,22 @@
 """
-Nodes LangGraph de l'Agent Coach Ooredoo.
-
+Nodes LangGraph — Agent Coach v2
+===================================
 Flow :
-  node_load_context         → enrichit le state avec le contexte live
-  node_rag_search           → cherche les scripts similaires dans Milvus
-  node_load_advisor_history → charge l'historique PostgreSQL du conseiller
-  node_generate_conseil     → génère le conseil via LLM + RAG + stratège
-  node_save_conseil         → sauvegarde dans PostgreSQL + log monitoring
+  node_load_context         → contexte live depuis state partagé
+  node_rag_search           → recherche Milvus adaptée au type de question
+  node_load_advisor_history → historique PostgreSQL conseiller
+  node_generate_conseil     → LLM + prompts spécialisés (7 types)
+  node_save_conseil         → sauvegarde PostgreSQL + logs monitoring
+
+Chaque node loggue dans agent_logs (PostgreSQL) via AgentLogger.
 """
 
 import logging
 import os
-import re
-import json
+import time
 from datetime import datetime
 
+from agent_logger import AgentLogger
 from core.state import SalesAgentState
 from .tools import (
     search_rag,
@@ -24,19 +26,41 @@ from .tools import (
     get_advisor_history,
     save_interaction,
     ensure_interactions_table,
-    detect_conseil_type,
     build_fallback_response,
-    embed_text,
 )
-from .prompts import COACH_SYSTEM_PROMPT, COACH_USER_PROMPT
+from .prompts import (
+    get_specialized_prompt,
+    get_opening_prompt,
+    detect_question_type,
+    TONE_BY_URGENCY,
+)
 
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL",    "qwen2.5:0.5b")
 
-# Créer la table au démarrage du module
 ensure_interactions_table()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _cycle_id(state: dict) -> str:
+    return (
+        (state.get("metrics") or {}).get("cycle_id", "")
+        or state.get("cycle_id", "unknown")
+    )
+
+
+def _store_id_from_ctx(ctx: dict) -> str:
+    return ctx.get("store_id", "I63")
+
+
+def _update_metrics(state: dict, key: str, value) -> dict:
+    metrics = dict(state.get("metrics") or {})
+    metrics[key] = value
+    metrics["nodes_executed"] = int(metrics.get("nodes_executed", 0)) + 1
+    return metrics
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -45,165 +69,219 @@ ensure_interactions_table()
 
 async def node_load_context(state: SalesAgentState) -> dict:
     """
-    Charge et enrichit le contexte pour l'Agent Coach.
-    Extrait les données depuis le state partagé (issu de l'Analyste + Stratège).
+    Extrait et enrichit le contexte depuis le state partagé.
+    Combine les sorties de l'Analyste + Stratège.
     """
+    cid    = _cycle_id(state)
+    log    = AgentLogger("coach", cid, "I63")
+    log_id = log.node_start("load_context", state)
+    t0     = time.time()
+
     logger.info("[COACH] Node 1 — load_context")
 
     now  = datetime.now()
     hour = now.hour
 
-    # ── Données POS ───────────────────────────────────────────────────────
-    pos_data = state.get("pos_data", {}) or {}
-    ca_today = float(pos_data.get("current_revenue", 0))
-    ca_target = float(pos_data.get("daily_target", 1007))
+    # ── POS ───────────────────────────────────────────────────────────────
+    pos_data  = state.get("pos_data") or {}
+    ca_today  = float(pos_data.get("current_revenue", 0))
+    ca_target = float(pos_data.get("daily_target",    1007))
     nb_ventes = int(pos_data.get("nb_transactions_today", 0))
 
     # ── Analyste ──────────────────────────────────────────────────────────
-    gap_pct     = float(state.get("gap_objectif", 0))
-    urgency     = state.get("urgency_level", "MEDIUM")
-    forecast    = float(state.get("forecast_eod", 0))
-    analyst_sum = state.get("analyst_summary", "")
+    gap_pct      = float(state.get("gap_objectif", 0))
+    gap_tnd      = max(0.0, ca_target - ca_today)
+    urgency      = state.get("urgency_level", "MEDIUM")
+    forecast_eod = float(state.get("forecast_eod", 0))
+    analyst_sum  = state.get("analyst_summary", "") or ""
 
     # ── Stratège ──────────────────────────────────────────────────────────
-    actions        = state.get("strategie_actions", []) or []
-    cause_racine   = state.get("cause_racine", "")
-    focus_produits = state.get("focus_produits", []) or []
+    actions      = state.get("strategie_actions", []) or []
+    cause_racine = state.get("cause_racine", "") or ""
+    focus        = state.get("focus_produits", [])   or []
 
     # ── Météo ─────────────────────────────────────────────────────────────
-    ext_ctx = state.get("external_context", {}) or {}
-    weather_sum = ext_ctx.get("summary", {}) or {}
+    ext_ctx     = state.get("external_context") or {}
+    weather_sum = ext_ctx.get("summary", {})    or {}
     weather_str = (
         f"{weather_sum.get('weather_icon','🌤️')} "
         f"{weather_sum.get('weather_label','Tunis')} "
         f"{weather_sum.get('temperature', 22)}°C"
     ).strip()
+    weather_effect = float(weather_sum.get("weather_effect", 0))
+    is_rainy       = weather_effect <= -0.10
 
-    # ── Message entrant (depuis le chat ou le cycle) ───────────────────────
-    # Le message peut être passé via pos_data["coach_message"] ou metrics
+    # ── Message + conseiller ───────────────────────────────────────────────
     message      = (
         pos_data.get("coach_message", "")
-        or state.get("metrics", {}).get("coach_message", "")
+        or (state.get("metrics") or {}).get("coach_message", "")
         or ""
     )
     advisor_name = (
         pos_data.get("advisor_name", "")
-        or state.get("metrics", {}).get("advisor_name", "Conseiller")
+        or (state.get("metrics") or {}).get("advisor_name", "Conseiller")
         or "Conseiller"
     )
 
-    hours_left = max(0, 20 - hour)
+    # ── Performance et score ──────────────────────────────────────────────
+    performance  = round((ca_today / ca_target) * 100, 1) if ca_target > 0 else 0
+    coach_score  = round(min(1.0, performance / 100 * 0.9 + 0.05), 2)
+    hours_left   = max(0, 20 - hour)
+
+    # ── Type de question ──────────────────────────────────────────────────
+    question_type = detect_question_type(message) if message else "opening"
 
     coach_context = {
-        # Identité
-        "advisor_name":  advisor_name,
-        "store_id":      pos_data.get("store_id", "I63"),
-        "current_hour":  hour,
-        "hours_left":    hours_left,
-        # POS
-        "ca_today":      ca_today,
-        "ca_target":     ca_target,
-        "nb_ventes":     nb_ventes,
-        # Analyse
-        "gap_pct":       gap_pct,
-        "urgency":       urgency,
-        "forecast_eod":  forecast,
+        "advisor_name":    advisor_name,
+        "store_id":        pos_data.get("store_id", "I63"),
+        "current_hour":    hour,
+        "hours_left":      hours_left,
+        "ca_today":        ca_today,
+        "ca_target":       ca_target,
+        "gap_pct":         gap_pct,
+        "gap_tnd":         gap_tnd,
+        "nb_ventes":       nb_ventes,
+        "urgency":         urgency,
+        "forecast_eod":    forecast_eod,
         "analyst_summary": analyst_sum,
-        # Stratège
-        "actions":       actions,
-        "cause_racine":  cause_racine,
-        "focus_produits": focus_produits,
-        # Météo
-        "weather":       weather_str,
-        "is_rainy":      weather_sum.get("is_rainy", False),
-        # Message à traiter
-        "message":       message,
+        "actions":         actions,
+        "cause_racine":    cause_racine,
+        "focus_produits":  focus,
+        "weather":         weather_str,
+        "weather_effect":  weather_effect,
+        "is_rainy":        is_rainy,
+        "performance":     performance,
+        "coach_score":     coach_score,
+        "message":         message,
+        "question_type":   question_type,
     }
 
     logger.info(
-        f"[COACH] Contexte chargé: {advisor_name} | "
-        f"CA={ca_today:.0f}/{ca_target:.0f} | "
-        f"gap={gap_pct:.0f}% | urgence={urgency}"
+        f"[COACH] Contexte: {advisor_name} | "
+        f"perf={performance:.0f}% | gap={gap_pct:.0f}% ({gap_tnd:.0f} TND) | "
+        f"type={question_type} | météo={weather_str}"
     )
 
-    return {**state, "coach_context": coach_context}
+    duration = (time.time() - t0) * 1000
+    output   = {**state, "coach_context": coach_context}
+    log.node_done(
+        "load_context", log_id, output, duration,
+        {"advisor": advisor_name, "performance": performance,
+         "question_type": question_type, "gap_pct": gap_pct}
+    )
+    metrics = _update_metrics(state, "coach_context_ms", round(duration))
+    return {**output, "metrics": metrics}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 2 — RAG Search
+# NODE 2 — RAG Search (adapté au type de question)
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_rag_search(state: SalesAgentState) -> dict:
     """
-    Recherche les scripts de vente les plus pertinents dans Milvus.
-    Construit la requête RAG depuis le contexte coach.
+    Recherche RAG Milvus adaptée au type de question détecté.
+    La requête est construite en combinant :
+      - La question du conseiller (priorité max)
+      - Le contexte gap/urgence
+      - Le type de question (objection/script/closing/météo...)
     """
+    cid    = _cycle_id(state)
+    ctx    = state.get("coach_context", {})
+    sid    = _store_id_from_ctx(ctx)
+    log    = AgentLogger("coach", cid, sid)
+    log_id = log.node_start("rag_search", state)
+    t0     = time.time()
+
     logger.info("[COACH] Node 2 — rag_search")
 
-    ctx      = state.get("coach_context", {})
-    message  = ctx.get("message", "")
-    gap_pct  = ctx.get("gap_pct", 0)
-    urgency  = ctx.get("urgency", "MEDIUM")
-    hour     = ctx.get("current_hour", datetime.now().hour)
-    is_rainy = ctx.get("is_rainy", False)
-    focus    = ctx.get("focus_produits", [])
-    store_id = ctx.get("store_id", "I63")
+    message       = ctx.get("message", "")
+    gap_pct       = ctx.get("gap_pct", 0)
+    urgency       = ctx.get("urgency", "MEDIUM")
+    hour          = ctx.get("current_hour", datetime.now().hour)
+    is_rainy      = ctx.get("is_rainy", False)
+    focus         = ctx.get("focus_produits", [])
+    question_type = ctx.get("question_type", "general")
 
-    # Construire la requête RAG
+    # ── Requête RAG selon le type de question ─────────────────────────────
     parts = []
 
-    # La question du conseiller est la priorité
+    # 1. Question du conseiller en priorité
     if message:
-        parts.append(message[:200])
+        parts.append(message[:150])
 
-    # Contexte gap
-    if gap_pct > 60:
-        parts.append("gap critique très éloigné objectif urgent action immédiate")
-    elif gap_pct > 40:
-        parts.append("gap critique objectif loin closing intensif")
-    elif gap_pct > 20:
-        parts.append("gap modéré performance améliorer upsell")
-    else:
-        parts.append("performance correcte optimiser panier moyen")
+    # 2. Type de question → mots clés spécifiques
+    type_queries = {
+        "script":    "script vente démonstration présentation argumentaire pitch",
+        "objection": "objection prix concurrent hésitation réfutation traitement",
+        "closing":   "closing signature décision finaliser client hésitant indécis",
+        "meteo":     "météo pluie couvert accessoires résistants eau protection",
+        "upsell":    "upsell accessoire complément bundle panier élevé après vente",
+        "forfait":   "conversion recharge forfait 5G data illimitée abonnement",
+        "objectif":  "rattraper gap objectif action urgente bundle fermeture",
+        "general":   "conseil vente coaching performance boutique",
+    }
+    parts.append(type_queries.get(question_type, "conseil vente coaching"))
 
-    # Heure
-    if 16 <= hour <= 18:
-        parts.append("pic trafic heure de pointe maximiser conversion")
-    elif hour >= 19:
-        parts.append("soirée closing rapide dernières heures fermeture")
-    elif hour <= 11:
-        parts.append("matin ouverture faible trafic proactif")
+    # 3. Contexte gap
+    if gap_pct > 40:   parts.append("gap critique urgent closing intensif bundle")
+    elif gap_pct > 20: parts.append("gap modéré améliorer performance upsell")
+    else:              parts.append("objectif proche optimiser panier moyen")
 
-    # Météo
+    # 4. Météo
     if is_rainy:
-        parts.append("météo pluie accessoires résistants eau protection")
+        parts.append("pluie météo défavorable accessoires résistants eau AirPods Watch")
 
-    # Focus produits du stratège
+    # 5. Heure
+    if 16 <= hour <= 18: parts.append("pic trafic heure pointe 16h maximiser")
+    elif hour >= 19:     parts.append("soirée closing rapide dernière chance fermeture")
+
+    # 6. Focus produits du stratège
     if focus:
         parts.extend(focus[:2])
 
     rag_query = " ".join(parts)
-    logger.info(f"[COACH RAG] Requête: '{rag_query[:100]}'")
+    logger.info(f"[COACH RAG] Type={question_type} | Requête: '{rag_query[:90]}'")
 
-    # Recherche Milvus
-    scripts = search_rag(rag_query, hour, top_k=3, store_id=store_id)
-
-    rag_txt = format_rag_for_prompt(scripts)
+    scripts  = search_rag(rag_query, hour, top_k=3, store_id=sid)
+    rag_txt  = format_rag_for_prompt(scripts)
     rag_used = len(scripts) > 0
 
-    logger.info(
-        f"[COACH RAG] {len(scripts)} scripts trouvés "
-        f"(top: {scripts[0]['categorie'] if scripts else 'N/A'})"
-    )
+    if rag_used:
+        logger.info(
+            f"[COACH RAG] {len(scripts)} scripts | "
+            f"top={scripts[0]['categorie']} | "
+            f"score={scripts[0]['score']:.3f}"
+        )
+        log.rag_log(
+            query       = rag_query,
+            scripts     = scripts,
+            action_used = scripts[0]["action"][:80] if scripts else "",
+            context     = {"type": question_type, "gap_pct": gap_pct,
+                          "hour": hour, "is_rainy": is_rainy},
+        )
+    else:
+        logger.info("[COACH RAG] Aucun script trouvé")
 
-    return {
+    duration = (time.time() - t0) * 1000
+    output   = {
         **state,
         "rag_context":    scripts,
         "rag_query":      rag_query,
         "rag_used":       rag_used,
         "nb_rag_scripts": len(scripts),
-        "coach_context":  {**ctx, "rag_txt": rag_txt, "rag_scripts": scripts},
+        "coach_context":  {
+            **ctx,
+            "rag_txt":     rag_txt,
+            "rag_scripts": scripts,
+        },
     }
+    log.node_done(
+        "rag_search", log_id, output, duration,
+        {"nb_scripts": len(scripts), "rag_used": rag_used,
+         "question_type": question_type}
+    )
+    metrics = _update_metrics(state, "coach_rag_ms", round(duration))
+    return {**output, "metrics": metrics}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -212,156 +290,236 @@ async def node_rag_search(state: SalesAgentState) -> dict:
 
 async def node_load_advisor_history(state: SalesAgentState) -> dict:
     """
-    Charge l'historique des interactions du conseiller depuis PostgreSQL.
-    Permet au coach de personnaliser ses réponses selon l'historique.
+    Charge l'historique des 5 dernières interactions du conseiller.
+    Permet de personnaliser le coaching selon le comportement passé.
     """
+    cid    = _cycle_id(state)
+    ctx    = state.get("coach_context", {})
+    sid    = _store_id_from_ctx(ctx)
+    log    = AgentLogger("coach", cid, sid)
+    log_id = log.node_start("load_advisor_history", state)
+    t0     = time.time()
+
     logger.info("[COACH] Node 3 — load_advisor_history")
 
-    ctx          = state.get("coach_context", {})
     advisor_name = ctx.get("advisor_name", "")
+    history      = get_advisor_history(advisor_name, limit=5)
+    history_txt  = format_history_for_prompt(history)
 
-    history     = get_advisor_history(advisor_name, limit=5)
-    history_txt = format_history_for_prompt(history)
+    # Analyser les types de conseils récents
+    recent_types = [h.get("conseil_type", "general") for h in history[:3]]
+    nb_today     = sum(
+        1 for h in history
+        if _is_today(h.get("created_at"))
+    )
 
     logger.info(
         f"[COACH] Historique {advisor_name}: "
-        f"{len(history)} interactions récentes"
+        f"{len(history)} interactions | {nb_today} aujourd'hui | "
+        f"types récents: {recent_types[:2]}"
     )
 
-    return {
+    duration = (time.time() - t0) * 1000
+    output   = {
         **state,
         "feedback_history": history,
         "coach_context": {
             **ctx,
-            "history":     history,
-            "history_txt": history_txt,
+            "history":      history,
+            "history_txt":  history_txt,
+            "nb_today":     nb_today,
+            "recent_types": recent_types,
         },
     }
+    log.node_done(
+        "load_advisor_history", log_id, output, duration,
+        {"advisor": advisor_name, "nb_history": len(history),
+         "nb_today": nb_today}
+    )
+    metrics = _update_metrics(state, "coach_history_ms", round(duration))
+    return {**output, "metrics": metrics}
+
+
+def _is_today(dt) -> bool:
+    if not dt:
+        return False
+    try:
+        if hasattr(dt, "date"):
+            return dt.date() == datetime.now().date()
+        return False
+    except Exception:
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 4 — Generate Conseil
+# NODE 4 — Generate Conseil (prompts spécialisés + LLM)
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_generate_conseil(state: SalesAgentState) -> dict:
     """
     Génère le conseil personnalisé via LLM Ollama.
-    Injecte le contexte RAG + stratège + historique dans le prompt.
+    Sélectionne automatiquement le prompt spécialisé selon le type de question.
+    Types gérés : opening / script / objection / closing / meteo / upsell / forfait / objectif
     """
+    cid    = _cycle_id(state)
+    ctx    = state.get("coach_context", {})
+    sid    = _store_id_from_ctx(ctx)
+    log    = AgentLogger("coach", cid, sid)
+    log_id = log.node_start("generate_conseil", state)
+    t0     = time.time()
+
     logger.info("[COACH] Node 4 — generate_conseil")
 
-    ctx          = state.get("coach_context", {})
-    message      = ctx.get("message", "")
-    advisor_name = ctx.get("advisor_name", "Conseiller")
-    prenom       = advisor_name.split()[-1].title() if advisor_name else "Conseiller"
-    gap_pct      = ctx.get("gap_pct", 0)
-    urgency      = ctx.get("urgency", "MEDIUM")
-    ca_today     = ctx.get("ca_today", 0)
-    ca_target    = ctx.get("ca_target", 1007)
-    nb_ventes    = ctx.get("nb_ventes", 0)
-    hour         = ctx.get("current_hour", datetime.now().hour)
-    hours_left   = ctx.get("hours_left", 1)
-    weather      = ctx.get("weather", "Tunis")
-    forecast     = ctx.get("forecast_eod", 0)
-    actions      = ctx.get("actions", [])
-    rag_txt      = ctx.get("rag_txt", "")
-    history_txt  = ctx.get("history_txt", "")
+    # ── Extraire le contexte ──────────────────────────────────────────────
+    message       = ctx.get("message", "")
+    advisor_name  = ctx.get("advisor_name", "Conseiller")
+    question_type = ctx.get("question_type", "general")
+    prenom        = advisor_name.split()[-1].title() if advisor_name else "Conseiller"
+    gap_pct       = ctx.get("gap_pct", 0)
+    gap_tnd       = ctx.get("gap_tnd", 0)
+    urgency       = ctx.get("urgency", "MEDIUM")
+    ca_today      = ctx.get("ca_today", 0)
+    ca_target     = ctx.get("ca_target", 1007)
+    nb_ventes     = ctx.get("nb_ventes", 0)
+    hour          = ctx.get("current_hour", datetime.now().hour)
+    hours_left    = ctx.get("hours_left", 1)
+    weather       = ctx.get("weather", "Tunis")
+    weather_effect = ctx.get("weather_effect", 0)
+    forecast_eod  = ctx.get("forecast_eod", 0)
+    performance   = ctx.get("performance", 0)
+    coach_score   = ctx.get("coach_score", 0)
+    actions       = ctx.get("actions", [])
+    rag_txt       = ctx.get("rag_txt", "")
+    history_txt   = ctx.get("history_txt", "")
 
-    # ── Préparer le prompt ────────────────────────────────────────────────
     actions_txt = format_actions_for_prompt(actions)
 
-    system_prompt = COACH_SYSTEM_PROMPT.format(
-        advisor_name = advisor_name,
-        ca_today     = ca_today,
-        ca_target    = ca_target,
-        gap_pct      = gap_pct,
-        urgency      = urgency,
-        nb_ventes    = nb_ventes,
-        current_hour = hour,
-        hours_left   = hours_left,
-        weather      = weather,
-        forecast_eod = forecast,
-        actions_txt  = actions_txt,
-        rag_txt      = rag_txt or "Aucun script RAG disponible.",
-        history_txt  = history_txt or "Première interaction de la journée.",
-    )
+    # ── Sélectionner le prompt selon le type ──────────────────────────────
+    if question_type == "opening" or not message:
+        user_prompt = get_opening_prompt(
+            advisor_name = advisor_name,
+            performance  = performance,
+            gap_pct      = gap_pct,
+            gap_tnd      = gap_tnd,
+            ca_today     = ca_today,
+            ca_target    = ca_target,
+            weather      = weather,
+            hours_left   = hours_left,
+            rag_context  = rag_txt,
+            actions_txt  = actions_txt,
+        )
+        tone   = TONE_BY_URGENCY.get(urgency, "")
+        system = (
+            f"You are the Coach Agent at Ooredoo Tunisia. "
+            f"Generate a personalized opening coaching message in French. "
+            f"Tone: {tone}"
+        )
+    else:
+        system, user_prompt = get_specialized_prompt(
+            question_type  = question_type,
+            message        = message,
+            advisor_name   = advisor_name,
+            gap_pct        = gap_pct,
+            gap_tnd        = gap_tnd,
+            urgency        = urgency,
+            weather        = weather,
+            weather_effect = weather_effect,
+            hours_left     = hours_left,
+            current_hour   = hour,
+            rag_context    = rag_txt,
+            actions_txt    = actions_txt,
+            performance    = performance,
+            ca_today       = ca_today,
+            ca_target      = ca_target,
+            nb_ventes      = nb_ventes,
+            forecast_eod   = forecast_eod,
+            coach_score    = coach_score,
+        )
 
-    # Message par défaut si vide (appel depuis le cycle)
-    user_message = message or (
-        f"Génère un message de coaching personnalisé pour moi "
-        f"(gap {gap_pct:.0f}%, urgence {urgency}, {hours_left}h restantes)"
+    logger.info(
+        f"[COACH] LLM — type={question_type} | urgence={urgency} | "
+        f"RAG={'✓' if rag_txt else '✗'} | perf={performance:.0f}%"
     )
 
     # ── Appel LLM ─────────────────────────────────────────────────────────
     reply      = ""
-    llm_source = "fallback"
+    llm_ok     = False
     confidence = 0.65
 
     try:
         from langchain_ollama import ChatOllama
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # Paramètres adaptés à l'urgence
+        num_predict = 150 if urgency == "HIGH" else 220
+        temperature = 0.2 if question_type in ("script", "objection") else 0.3
+
         llm = ChatOllama(
             model       = OLLAMA_MODEL,
             base_url    = OLLAMA_URL,
-            temperature = 0.25,
-            num_predict = 220,
-            num_ctx     = 2500,
+            temperature = temperature,
+            num_predict = num_predict,
+            num_ctx     = 2000,
         )
 
-        resp = await llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message),
+        resp  = await llm.ainvoke([
+            SystemMessage(content=system),
+            HumanMessage(content=user_prompt),
         ])
-
         reply = resp.content.strip()
 
-        # Nettoyer les préfixes indésirables
-        for prefix in ["Réponse:", "Coach:", "CoachAgent:", "IA:"]:
+        # Nettoyer les préfixes
+        for prefix in ["Réponse:", "Coach:", "CoachAgent:", "IA:", "Assistant:"]:
             if reply.startswith(prefix):
                 reply = reply[len(prefix):].strip()
 
-        llm_source = "llm+rag" if state.get("rag_used") else "llm"
-        confidence = 0.91 if state.get("rag_used") else 0.82
-        logger.info(f"[COACH] LLM OK ({len(reply)} chars) → {llm_source}")
+        llm_ok     = True
+        confidence = 0.93 if (rag_txt and question_type != "general") else \
+                     0.85 if rag_txt else 0.78
+        llm_source = "llm+rag" if rag_txt else "llm"
+        logger.info(
+            f"[COACH] LLM OK — {len(reply)} chars | "
+            f"conf={confidence:.2f} | src={llm_source}"
+        )
 
     except Exception as e:
         logger.warning(f"[COACH] LLM fallback: {str(e)[:60]}")
+        log.fallback("generate_conseil", log_id, str(e), (time.time()-t0)*1000)
         reply = build_fallback_response(
-            message  = user_message,
-            gap_pct  = gap_pct,
-            urgency  = urgency,
-            weather  = weather,
-            actions  = actions,
-            scripts  = state.get("rag_context", []),
-            prenom   = prenom,
+            message = message or f"Accueil {advisor_name}",
+            gap_pct = gap_pct,
+            urgency = urgency,
+            weather = weather,
+            actions = actions,
+            scripts = state.get("rag_context", []),
+            prenom  = prenom,
         )
-        llm_source = "fallback+rag" if state.get("rag_used") else "fallback"
+        llm_source = "fallback+rag" if rag_txt else "fallback"
         confidence = 0.65
 
-    # Détecter le type de conseil
-    conseil_type = detect_conseil_type(user_message)
-
-    # Stocker dans le state
     conseil_result = {
-        "reply":        reply,
-        "source":       llm_source,
-        "rag_used":     state.get("rag_used", False),
-        "confidence":   confidence,
-        "conseil_type": conseil_type,
-        "timestamp":    datetime.now().isoformat(),
+        "reply":         reply,
+        "source":        llm_source if llm_ok else "fallback",
+        "rag_used":      bool(rag_txt),
+        "confidence":    confidence,
+        "question_type": question_type,
+        "timestamp":     datetime.now().isoformat(),
     }
 
-    logger.info(
-        f"[COACH] Conseil généré: type={conseil_type} | "
-        f"source={llm_source} | confidence={confidence:.2f}"
-    )
-
-    return {
+    duration = (time.time() - t0) * 1000
+    output   = {
         **state,
         "conseil_final": reply,
         "coach_context": {**ctx, "conseil_result": conseil_result},
     }
+    log.node_done(
+        "generate_conseil", log_id, output, duration,
+        {"llm_ok": llm_ok, "confidence": confidence,
+         "reply_len": len(reply), "question_type": question_type,
+         "source": conseil_result["source"]}
+    )
+    metrics = _update_metrics(state, "coach_llm_ms", round(duration))
+    return {**output, "metrics": metrics}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -370,60 +528,79 @@ async def node_generate_conseil(state: SalesAgentState) -> dict:
 
 async def node_save_conseil(state: SalesAgentState) -> dict:
     """
-    Sauvegarde le conseil généré dans PostgreSQL.
-    Log dans agent_logs pour le monitoring.
+    Sauvegarde le conseil dans PostgreSQL (coach_interactions).
+    Log complet dans agent_logs pour le monitoring.
+    Calcule les métriques totales du Coach.
     """
+    cid    = _cycle_id(state)
+    ctx    = state.get("coach_context", {})
+    sid    = _store_id_from_ctx(ctx)
+    log    = AgentLogger("coach", cid, sid)
+    log_id = log.node_start("save_conseil", state)
+    t0     = time.time()
+
     logger.info("[COACH] Node 5 — save_conseil")
 
-    ctx    = state.get("coach_context", {})
-    result = ctx.get("conseil_result", {})
-
+    result         = ctx.get("conseil_result", {})
     advisor_name   = ctx.get("advisor_name", "")
-    store_id       = ctx.get("store_id", "I63")
     message        = ctx.get("message", "")
     reply          = state.get("conseil_final", "")
     gap_pct        = ctx.get("gap_pct", 0)
     urgency        = ctx.get("urgency", "MEDIUM")
     rag_used       = result.get("rag_used", False)
     nb_rag_scripts = state.get("nb_rag_scripts", 0)
-    conseil_type   = result.get("conseil_type", "general")
+    question_type  = result.get("question_type", "general")
     confidence     = result.get("confidence", 0.0)
 
-    # Sauvegarde PostgreSQL
-    if advisor_name and message:
+    # Sauvegarder dans coach_interactions
+    if advisor_name:
         save_interaction(
             advisor_name   = advisor_name,
-            store_id       = store_id,
-            message        = message,
+            store_id       = sid,
+            message        = message or f"[opening] {advisor_name}",
             response       = reply,
             gap_pct        = gap_pct,
             urgency        = urgency,
             rag_used       = rag_used,
             nb_rag_scripts = nb_rag_scripts,
-            conseil_type   = conseil_type,
+            conseil_type   = question_type,
             confidence     = confidence,
         )
-        logger.info(f"[COACH] Interaction sauvegardée → {advisor_name}")
-
-    # Log monitoring
-    try:
-        from agent_logger import log_node_complete
-        log_node_complete(
-            log_id      = -1,
-            output_state = {
-                "conseil_type":   conseil_type,
-                "rag_used":       rag_used,
-                "nb_rag_scripts": nb_rag_scripts,
-                "confidence":     confidence,
-                "reply_length":   len(reply),
-            },
-            duration_ms  = 0,
-            metadata     = {
-                "advisor": advisor_name,
-                "source":  result.get("source", "unknown"),
-            },
+        logger.info(
+            f"[COACH] ✓ Sauvegardé: {advisor_name} | "
+            f"type={question_type} | conf={confidence:.2f} | "
+            f"RAG={'✓' if rag_used else '✗'}({nb_rag_scripts})"
         )
-    except Exception:
-        pass
 
-    return {**state}
+    duration = (time.time() - t0) * 1000
+    log.node_done(
+        "save_conseil", log_id, state, duration,
+        {"advisor": advisor_name, "conseil_type": question_type,
+         "rag_used": rag_used, "confidence": confidence,
+         "reply_length": len(reply)}
+    )
+
+    # Métriques finales coach
+    metrics = dict(state.get("metrics") or {})
+    metrics["coach_save_ms"] = round(duration)
+    metrics["nodes_executed"] = int(metrics.get("nodes_executed", 0)) + 1
+    metrics["coach_total_ms"] = sum(
+        metrics.get(k, 0) for k in
+        ["coach_context_ms", "coach_rag_ms",
+         "coach_history_ms", "coach_llm_ms", "coach_save_ms"]
+    )
+    metrics["total_ms"] = (
+        metrics.get("analyste_total_ms", 0)
+        + metrics.get("stratege_total_ms", 0)
+        + metrics.get("coach_total_ms", 0)
+    )
+
+    logger.info(
+        f"[COACH] ✓ Cycle complet | "
+        f"total={metrics.get('total_ms',0):.0f}ms | "
+        f"analyste={metrics.get('analyste_total_ms',0):.0f}ms | "
+        f"stratege={metrics.get('stratege_total_ms',0):.0f}ms | "
+        f"coach={metrics.get('coach_total_ms',0):.0f}ms"
+    )
+
+    return {**state, "metrics": metrics}
