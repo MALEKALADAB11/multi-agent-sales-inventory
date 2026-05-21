@@ -1,180 +1,129 @@
-import asyncio
+"""
+monitoring.py — Agent Monitoring Endpoints
+FastAPI endpoints pour la page Monitoring (BI mode PRO)
+"""
+
+from fastapi import APIRouter, HTTPException
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
 import random
-from datetime import datetime
-from typing import List, Set, Dict, Any
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 
-# Imports de tes fichiers locaux
-from agent_registry import AGENT_DATA 
-from schemas import (
-    MonitoringData, AgentState, AgentStatus, 
-    MCPRequest, MCPAlert
-)
-from mcp_client import MCPClient
+router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
-app = FastAPI(title="Ooredoo Multi-Agent Monitor")
+# ══════════════════════════════════════════════════════════════
+# MOCK DATA SIMULATION (Replace with real LangGraph traces later)
+# ══════════════════════════════════════════════════════════════
 
-# Configuration CORS complète pour éviter les blocages Angular
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+AGENT_IDS = [
+    "APP08", "APP06", "APP02", "APP05", "APP07",
+    "APP03", "APP04", "APP09", "APP10", "APP11"
+]
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Set[WebSocket] = set()
+def _get_agent_executions(last_n_minutes: int = 60) -> List[Dict[str, Any]]:
+    """
+    Simule les exécutions d'agents sur les N dernières minutes.
+    Plus tard: lire depuis LangGraph checkpointer ou logs PostgreSQL.
+    """
+    executions = []
+    now = datetime.now()
     
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.add(websocket)
-    
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-manager = ConnectionManager()
-mcp = MCPClient()
-
-# --- 🛠 CORRECTIF DES ROUTES 404 (IMPORTANT) ---
-
-@app.get("/")
-async def root():
-    return {"status": "online", "message": "Ooredoo Backend API"}
-
-@app.get("/api/v1/stores/{store_id}/metrics")
-async def get_metrics(store_id: str):
-    return {
-        "store_id": store_id,
-        "revenue_daily": 4250.5,
-        "active_agents": len(AGENT_DATA),
-        "status": "online",
-        "performance_score": 98.2
-    }
-
-@app.get("/api/v1/stores/{store_id}/advisors")
-async def get_advisors(store_id: str):
-    return [
-        {"id": "APP04", "name": "Strategist", "type": "Strategy", "status": "active"},
-        {"id": "APP07", "name": "Coach Agent", "type": "Coaching", "status": "active"},
-        {"id": "APP05-RAG", "name": "Knowledge RAG", "type": "Support", "status": "active"}
-    ]
-
-@app.get("/api/v1/forecast/eod/{store_id}")
-async def get_eod_forecast(store_id: str):
-    return {"forecast_value": 5100, "confidence": 0.95, "unit": "TND"}
-
-@app.get("/api/v1/forecast/hourly/{store_id}")
-async def get_hourly_forecast(store_id: str):
-    return {
-        "store_id": store_id,
-        "data": [random.randint(50, 300) for _ in range(24)],
-        "labels": [f"{i}h" for i in range(24)]
-    }
-
-@app.post("/api/v1/stores/{store_id}/simulate")
-async def simulate_pos(store_id: str):
-    """Simule une vente POS pour tester le WebSocket"""
-    return {
-        "status": "success",
-        "message": "Transaction simulée",
-        "amount": random.randint(50, 500)
-    }
-
-# --- 🧠 LOGIQUE AGENTIQUE & WEBSOCKET ---
-
-class OoredooSupervisionAgent:
-    def __init__(self):
-        self.agents_config = AGENT_DATA
-    
-    async def generate_realtime_metrics(self) -> MonitoringData:
-        """Génère des métriques en temps réel pour le dashboard"""
-        agents_states = []
+    for i in range(50):  # 50 exécutions sur la dernière heure
+        agent_id = random.choice(AGENT_IDS)
+        timestamp = now - timedelta(minutes=random.randint(0, last_n_minutes))
         
-        for agent_id, info in self.agents_config.items():
-            # Ajoute du mouvement ici !
-            random_latency = f"{random.uniform(0.1, 0.9):.2f}s"
-            random_load = f"{random.randint(5, 60)}%"
-            
-            # ✅ FIXED: Added agent_type to match your schema
-            agents_states.append(AgentState(
-                id=agent_id,
-                name=info["name"],
-                agent_type=info.get("type", "Unknown"),  # Uses "type" from AGENT_DATA
-                status=AgentStatus.RUNNING,
-                last_activity=datetime.now(),
-                metrics={"latency": random_latency, "load": random_load},
-                health_score=random.randint(90, 100)
-            ))
+        # Simulate realistic metrics
+        success = random.random() > 0.05  # 95% success rate
+        latency = random.uniform(0.1, 3.5)
+        tokens = random.randint(500, 2000)
+        cost = tokens * 0.00002  # $0.02 per 1K tokens (GPT-4 pricing)
         
-        return MonitoringData(
-            timestamp=datetime.now(),
-            agents=agents_states,
-            system_health=random.uniform(0.85, 0.99),
-            alerts=[]
-        )
+        executions.append({
+            "agent_id": agent_id,
+            "timestamp": timestamp.isoformat(),
+            "status": "success" if success else "failed",
+            "latency": round(latency, 2),
+            "tokens_used": tokens,
+            "cost_usd": round(cost, 4),
+        })
+    
+    return executions
 
-monitor = OoredooSupervisionAgent()
 
-@app.websocket("/ws/store/{store_id}")
-async def websocket_endpoint(websocket: WebSocket, store_id: str):
-    await manager.connect(websocket)
-    try:
-        while True:
-            # Envoie des métriques au format attendu par Angular
-            metrics_update = {
-                "type": "metrics_update",
-                "ca_today": random.randint(3000, 5000),
-                "ca_target": 8500,
-                "attainment": random.randint(70, 95),
-                "visitors_h": random.randint(15, 45),
-                "niveau_urgence": random.choice(["HIGH", "MEDIUM", "LOW"]),
-                "ecart_objectif": round(random.uniform(-100, 100), 1),
-                "forecast_eod": random.randint(5000, 7000),
-                "forecast_ci_low": random.randint(4500, 6000),
-                "forecast_mape": round(random.uniform(5, 15), 2),
-                "last_cycle_id": f"CYCLE-{random.randint(1000, 9999)}",
-                "advisors": [
-                    {
-                        "id": "ADV001",
-                        "name": "Ali Ben Salah",
-                        "performance": random.randint(70, 100),
-                        "status": "active"
-                    },
-                    {
-                        "id": "ADV002",
-                        "name": "Fatma Chakroun",
-                        "performance": random.randint(70, 100),
-                        "status": "active"
-                    }
-                ]
+# ══════════════════════════════════════════════════════════════
+# STEP 1: KPI BAR ENDPOINT
+# ══════════════════════════════════════════════════════════════
+
+@router.get("/kpis")
+async def get_monitoring_kpis():
+    """
+    Retourne les KPIs globaux pour la barre supérieure.
+    
+    KPIs calculés:
+    - HEALTHY: agents avec success_rate > 95% ET latency < 5s
+    - RUNNING: agents actuellement en exécution
+    - FAILED: nombre d'échecs dans la dernière heure
+    - AVG_LATENCY: latence moyenne tous agents confondus
+    - COST_TODAY: coût total API depuis minuit (USD)
+    """
+    
+    executions = _get_agent_executions(last_n_minutes=60)
+    
+    # 1. Calculate per-agent metrics
+    agent_stats: Dict[str, Dict] = {}
+    for exec in executions:
+        aid = exec["agent_id"]
+        if aid not in agent_stats:
+            agent_stats[aid] = {
+                "total": 0,
+                "success": 0,
+                "latencies": [],
+                "last_status": None,
             }
-            
-            await websocket.send_json(metrics_update)
-            await asyncio.sleep(2)  # Update every 2 seconds
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-@app.websocket("/ws/advisor/{advisor_id}")
-async def advisor_websocket(websocket: WebSocket, advisor_id: str):
-    await manager.connect(websocket)
-    try:
-        while True:
-            coach_update = {
-                "type": "coach_update",
-                "advisor_id": advisor_id,
-                "coaching_message": f"Performance update for {advisor_id}",
-                "score": random.randint(70, 100),
-                "timestamp": datetime.now().isoformat()
-            }
-            await websocket.send_json(coach_update)
-            await asyncio.sleep(5)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        
+        agent_stats[aid]["total"] += 1
+        if exec["status"] == "success":
+            agent_stats[aid]["success"] += 1
+        agent_stats[aid]["latencies"].append(exec["latency"])
+        agent_stats[aid]["last_status"] = exec["status"]
+    
+    # 2. HEALTHY count (success_rate > 95% AND avg_latency < 5s)
+    healthy_count = 0
+    for aid, stats in agent_stats.items():
+        success_rate = stats["success"] / stats["total"]
+        avg_latency = sum(stats["latencies"]) / len(stats["latencies"])
+        
+        if success_rate > 0.95 and avg_latency < 5.0:
+            healthy_count += 1
+    
+    # 3. RUNNING count (agents with status = "running" in last 2 min)
+    recent_executions = [e for e in executions 
+                         if (datetime.now() - datetime.fromisoformat(e["timestamp"])).seconds < 120]
+    running_count = len(set(e["agent_id"] for e in recent_executions 
+                            if e["status"] == "running"))
+    
+    # Simulate some running agents if none found
+    if running_count == 0:
+        running_count = random.randint(1, 3)
+    
+    # 4. FAILED count (last hour)
+    failed_count = sum(1 for e in executions if e["status"] == "failed")
+    
+    # 5. AVG LATENCY (all agents)
+    all_latencies = [e["latency"] for e in executions]
+    avg_latency = round(sum(all_latencies) / len(all_latencies), 1) if all_latencies else 0.0
+    
+    # 6. COST TODAY (since midnight)
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_executions = [e for e in executions 
+                        if datetime.fromisoformat(e["timestamp"]) >= today_start]
+    cost_today = sum(e["cost_usd"] for e in today_executions)
+    
+    return {
+        "healthy": healthy_count,
+        "running": running_count,
+        "failed": failed_count,
+        "avg_latency": avg_latency,
+        "cost_today_usd": round(cost_today, 2),
+        "cost_today_tnd": round(cost_today * 3.1, 2),  # USD to TND conversion
+        "timestamp": datetime.now().isoformat(),
+    }
