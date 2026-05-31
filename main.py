@@ -197,29 +197,67 @@ async def startup_event():
         1. Updates in-memory _live_stock (fast — for WebSocket broadcast)
         2. Updates _DataCache._stock_overrides (so pipeline sees live stock)
         3. Persists to inv.stock_levels via StockSimulator (DB source of truth)
+
+        Guards:
+          - Skips if (sku, store_id) has no stock_levels row in DB.
+            get_stock_level is a single query that implicitly validates both
+            the sku FK (inv.products) and store FK (inv.stores): if either is
+            missing the row won't exist.
+          - This prevents FK violations that would occur if StockSimulator
+            tried to INSERT a new row for an unseeded (sku, store_id) pair.
         """
         sku_str = str(sku)
 
-        # ── 1. In-memory fast path ────────────────────────────
-        current   = _live_stock.get(sku_str, 0)
+        # ── Guard: validate (sku, store_id) exists in inv.stock_levels ────────
+        # One query covers both FK checks (products + stores).
+        # If there's no row, StockSimulator would have to INSERT — which causes
+        # FK violations. Skip the sale instead and log it.
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo
+            db_row = SyncInventoryRepo.get_stock_level(sku_str, store_id)
+            if db_row is None:
+                logger.debug(
+                    "Skipping sale for %s@%s — no stock_levels row. "
+                    "Run init_stock_levels.py to seed this pair.",
+                    sku_str, store_id,
+                )
+                return
+        except Exception:
+            # DB unavailable — allow through so in-memory path still works
+            db_row = None
+
+        # ── 1. In-memory fast path ─────────────────────────────────────────────
+        # Seed _live_stock from DB on first sight so the broadcast delta
+        # reflects real stock rather than defaulting to 0.
+        if sku_str not in _live_stock:
+            if db_row is not None:
+                _live_stock[sku_str] = float(db_row["stock_current"])
+            else:
+                # DB unavailable — try mem override, else 0
+                override = InventoryDataCache._stock_overrides.get((sku_str, store_id))
+                _live_stock[sku_str] = float(override) if override is not None else 0.0
+
+        current   = _live_stock[sku_str]
         new_stock = max(0, current - units)
         _live_stock[sku_str] = new_stock
 
-        # ── 2. Keep analysis pipeline in sync ─────────────────
-        InventoryDataCache.record_sale(store_id, sku_str, units)
+        # ── 2. Keep analysis pipeline in sync ─────────────────────────────────
+        InventoryDataCache.record_sale(sku_str, store_id, units)
 
-        logger.info(f"📉 Sale: {sku_str} | {current} → {new_stock} units (-{units})")
+        logger.info("📉 Sale: %s | %.0f → %.0f units (-%d)", sku_str, current, new_stock, units)
 
-        # ── 3. Persist to DB ──────────────────────────────────
+        # ── 3 & 4. Persist to DB then broadcast (in order) ────────────────────
+        # DB write must complete before broadcast triggers pipeline re-run,
+        # otherwise the pipeline reads stale stock from DB.
+        async def _sale_and_broadcast():
+            if stock_sim is not None:
+                await stock_sim.record_sale(sku_str, store_id, units)
+            invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+
         if stock_sim is not None:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.create_task(
-                    stock_sim.record_sale(sku_str, store_id, units)
-                )
-
-        # ── 4. Broadcast via WebSocket ────────────────────────
-        invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+                asyncio.create_task(_sale_and_broadcast())
 
     # ✅ Wire on_sale callback BEFORE starting
     simulator.on_sale = _on_sale
@@ -241,6 +279,34 @@ async def startup_event():
     app.state.orchestrator = orchestrator
 
     logger.info("✅ Orchestration démarrée")
+
+    # ── Pre-warm inventory cache at startup ───────────────────────────────────
+    # The two-phase pipeline (fast all SKUs + LLM on critical/high only) takes
+    # ~5-30s depending on how many SKUs are flagged.  Running it at startup
+    # means the first page load hits a warm cache and responds instantly.
+    async def _prewarm_inventory():
+        await asyncio.sleep(3)   # brief delay so all services finish initialising
+        try:
+            logger.info("🔥 Pre-warming inventory cache for I63 (balanced)...")
+            loop = asyncio.get_event_loop()
+            # Import here to avoid circular import at module load time
+            from src.api.routes import analyze_store as _analyze_store
+            await loop.run_in_executor(
+                None,
+                lambda: _analyze_store(
+                    "I63",
+                    business_objective="balanced",
+                    force_refresh=False,   # skip if already warm (e.g. hot-reload)
+                    fast=False,
+                    page=1,
+                    page_size=0,
+                ),
+            )
+            logger.info("✅ Inventory cache pre-warmed for I63")
+        except Exception as exc:
+            logger.warning("⚠️  Inventory pre-warm failed (non-fatal): %s", exc)
+
+    asyncio.create_task(_prewarm_inventory())
     logger.info("🚀 All systems started — v3.0.0")
 
 

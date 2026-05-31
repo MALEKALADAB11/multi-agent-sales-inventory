@@ -34,7 +34,7 @@ _orchestrator_fast = None
 # Result cache
 # ---------------------------------------------------------------------------
 
-CACHE_TTL = 1200  # 20 min
+CACHE_TTL = 3600  # 1 hour — keeps data through a full work session without forcing a reload
 _store_cache: Dict[str, Dict[str, Any]] = {}
 
 # ── Demo / quality settings ──────────────────────────────────────────────────
@@ -42,7 +42,7 @@ _store_cache: Dict[str, Dict[str, Any]] = {}
 #   - pipeline duration (fewer SKUs = faster)
 #   - alert count (fewer ghost products = fewer phantom criticals)
 # Set to 0 to disable the cap (process all SKUs).
-DEMO_SKU_CAP = 50
+DEMO_SKU_CAP = 0
 
 # Per-store pipeline lock — only one pipeline run per store at a time.
 # Concurrent callers (WS + HTTP poll) block here and share the result.
@@ -271,8 +271,11 @@ def _filter_quality_skus(skus: List[str], store_id: str) -> List[str]:
                 if name_val.empty:
                     continue
                 name = str(name_val.iloc[0]).strip().lower()
-                if name in bad_names or name == s.lower():
+                if name in bad_names:
                     continue
+                # Log SKU-as-name products instead of silently dropping them
+                if name == s.lower():
+                    logger.debug("Quality filter: SKU %s has sku-as-name — kept but flagged", s)
             good.append(s)
 
         removed = len(skus) - len(good)
@@ -439,6 +442,12 @@ def _list_store_ids() -> List[str]:
 # ---------------------------------------------------------------------------
 
 def _quick_risk(store_id: str, sku: str, current_stock: float):
+    """
+    Fast risk approximation for WebSocket stock_delta broadcasts.
+    This is NOT the authoritative risk level — the analysis agent's
+    risk_assessment (with LLM validation) is the source of truth.
+    Only used when agent output is unavailable (e.g., during a sale event).
+    """
     try:
         sku_str = str(sku)
 
@@ -511,7 +520,7 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
 def get_orchestrator():
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = create_orchestrator()
+        _orchestrator = create_orchestrator(use_llm=True)  # Force LLM enabled
     return _orchestrator
 
 
@@ -583,12 +592,16 @@ RISK_SCORE_MAP = {
 }
 
 
-def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
+def _to_inventory_item(
+    result: Dict[str, Any],
+    preloaded_stock: Dict[str, int] = None,
+    product_lookup: Dict[str, Any] = None,
+) -> Dict[str, Any]:
     if "error" in result:
         return {"sku": result.get("sku", ""), "error": result["error"]}
 
     report   = result.get("analysis_report", {})
-    stock    = report.get("stock_status", {})
+    stock    = report.get("stock", {})
     forecast = report.get("forecast", {})
     metrics  = report.get("metrics", {})
     risk     = report.get("risk_assessment", {})
@@ -598,52 +611,62 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
     sku      = result["sku"]
     store_id = result.get("store_id", "I63")
 
-    # ── Current stock: try DB directly, then in-memory override, then report ──
-    # report_stock comes from stock_tools which may have read stale CSV data.
-    # DB inv.stock_levels is the source of truth for live stock.
+    # ── Current stock: preloaded batch dict → mem override → DB → report ──
+    # Batch dict is populated by analyze_store before the loop (1 query total).
+    # Individual DB call only fires for single-SKU analyze_single path.
     report_stock = stock.get("current_stock", 0)
-    db_stock = None
-    try:
-        from db.repositories.inventory_repo import SyncInventoryRepo
-        db_row = SyncInventoryRepo.get_stock_level(sku, store_id)
-        if db_row and db_row.get("stock_current") is not None:
-            db_stock = int(db_row["stock_current"])
-    except Exception:
-        pass
+    db_stock     = None
 
     mem_override = _DataCache._stock_overrides.get((sku, store_id))
     if mem_override is not None:
-        current_stock = mem_override   # sale happened after last analysis
-    elif db_stock is not None:
-        current_stock = db_stock       # DB is source of truth
+        current_stock = mem_override          # live sale override takes priority
+    elif preloaded_stock is not None:
+        current_stock = float(preloaded_stock.get(sku, report_stock))
     else:
-        current_stock = report_stock   # last resort: CSV-based value
+        # Single-SKU path: hit DB directly
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo
+            db_row = SyncInventoryRepo.get_stock_level(sku, store_id)
+            if db_row and db_row.get("stock_current") is not None:
+                db_stock = int(db_row["stock_current"])
+        except Exception:
+            pass
+        current_stock = db_stock if db_stock is not None else report_stock
 
     avg_daily  = forecast.get("avg_daily_demand", 1) or 1
-    lead_time  = stock.get("lead_time_avg_days", 7)
+
+    # ── Lead time: preloaded product_lookup dict → CSV filter fallback ────
+    # product_lookup is built once before the loop from the cached CSV.
+    # Without it, each call was filtering the full DataFrame — 110 times.
+    lead_time     = 7.0
+    lead_time_std = 0.0
+    if product_lookup:
+        prod_row = product_lookup.get(str(sku))
+        if prod_row:
+            lead_time     = float(prod_row.get("lead_time_days", 7) or 7)
+            lead_time_std = float(prod_row.get("lead_time_std", 0) or 0)
+    else:
+        try:
+            prod_rows = _DataCache.product()
+            prod_rows = prod_rows[prod_rows["sku"] == sku]
+            if not prod_rows.empty:
+                lead_time     = float(prod_rows.iloc[0].get("lead_time_days", 7))
+                lead_time_std = float(prod_rows.iloc[0].get("lead_time_std", 0))
+        except Exception:
+            pass
 
     days_remain = current_stock / avg_daily if avg_daily > 0 else 0
 
-    lead_time_std = 0.0
-    try:
-        prod_rows = _DataCache.product()
-        prod_rows = prod_rows[prod_rows["sku"] == sku]
-        if not prod_rows.empty:
-            lead_time_std = float(prod_rows.iloc[0].get("lead_time_std", 0))
-    except Exception:
-        pass
-
-    lt_var = lead_time_std * 2
-    if days_remain < lead_time:
-        risk_level_raw = "CRITICAL"
-    elif days_remain < lead_time + lt_var:
-        risk_level_raw = "HIGH"
-    elif days_remain < lead_time * 2.5:
-        risk_level_raw = "MEDIUM"
+    # Use the agent's computed and LLM-validated risk level as the single source of truth
+    # Fallback to _quick_risk only when agent risk_assessment is missing
+    if risk and risk.get("level"):
+        agent_risk_raw = risk["level"]
     else:
-        risk_level_raw = "LOW"
+        # No agent risk available — fast fallback (should be rare: CSV-only mode)
+        agent_risk_raw, _, _, _ = _quick_risk(store_id, sku, current_stock)
+        agent_risk_raw = agent_risk_raw.upper()
 
-    risk_level = RISK_MAP.get(risk_level_raw, "medium")
+    risk_level = RISK_MAP.get(agent_risk_raw, "medium")
     risk_score = RISK_SCORE_MAP.get(risk_level, 0.5)
 
     coverage_ratio = round(days_remain / lead_time, 2) if lead_time else 0
@@ -654,22 +677,23 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
         "down" if "down" in trend_raw or "decreas" in trend_raw else
         "stable"
     )
-
+    raw_cat = str(pi.get("category") or "").strip()
     return {
         "id":               f"inv-{sku}",
         "sku":              sku,
         "name":             str(pi.get("name", "") or sku).strip() or str(sku),
-        "category":         pi.get("category", "Unknown"),
+        
+        "category":         raw_cat if raw_cat and raw_cat.lower() not in {"unknown", "nan", "none", ""} else "General",
         "stock":            round(current_stock),
-        "stockMin":         stock.get("reorder_point", 0),
-        "stockMax":         stock.get("reorder_point", 0) * 2,
+        "stockMin":         stock.get("stock_min") or metrics.get("reorder_point", 0),
+        "stockMax":         stock.get("stock_max") or (metrics.get("reorder_point", 0) * 2),
         "demandForecast24h": round(avg_daily),
         "coverageRatio":    coverage_ratio,
         "riskLevel":        risk_level,
         "riskScore":        risk_score,
         "riskRationale":    risk.get("rationale", ""),
         "trend":            trend,
-        "confidence":       0.85,
+        "confidence":       0.85 if report.get("reasoning_source") == "llm" else 0.60,
         "lastUpdated":      result.get("timestamp", ""),
         "daysOfStock":      round(days_remain, 1),
         "leadTimeDays":     lead_time,
@@ -690,7 +714,10 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
         "analystNote":      " | ".join(filter(None, [
                                 report.get("objective_note", ""),
                                 risk.get("rationale", ""),
+                                report.get("analyst_flag", ""),
                             ])),
+        "riskOverride":     risk.get("risk_override"),
+        "objectiveConflict": report.get("objective_conflict", False),
         "unitCost":         pi.get("unit_cost", 0),
         "moq":              pi.get("moq", 0),
         "recommendation":   None,
@@ -703,11 +730,22 @@ def _to_inventory_item(result: Dict[str, Any]) -> Dict[str, Any]:
 def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dict[str, Any]]:
     """
     Build alert list from analyzed items.
-    If store_id is provided, each alert is upserted to inv.alerts and the
-    real DB UUID is returned as the alert id — so the frontend PATCH call works.
-    Falls back to a fake id (alert-<type>-<sku>) if DB is unavailable.
+
+    alert_type values written to DB must satisfy the alerts_alert_type_check
+    constraint.  The DB check constraint uses: 'stockout_risk', 'below_minimum',
+    'overstock'.  The frontend receives these mapped back to its own vocabulary
+    ('rupture', 'redistribution', 'overstock') by get_store_alerts().
+
+    If store_id is provided, all alerts are upserted to inv.alerts in a single
+    batched DB call (one connection, one transaction) so the frontend PATCH call
+    gets real UUIDs.  Falls back to fake ids if the DB is unavailable.
+
+    Alerts whose DB row is already in a terminal status (validated/rejected/
+    dismissed/resolved) within the 24-hour cooldown are suppressed from the
+    returned list so they don't reappear as ghost alerts after being actioned.
     """
-    alerts = []
+    # ── Classify every actionable item ───────────────────────────────────────
+    candidates: List[Dict[str, Any]] = []
     for item in items:
         if item.get("error"):
             continue
@@ -724,8 +762,8 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
         title      = None
         message    = None
 
-        if risk == "critical" and stock < 10:
-            alert_type = "rupture"
+        if risk == "critical":
+            alert_type = "stockout_risk"   # DB constraint value
             urgency    = "critical"
             title      = f"Stockout imminent: {name}"
             message    = (
@@ -733,46 +771,104 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
                 f"{days:.1f} days of stock remaining"
             )
         elif risk == "high":
-            alert_type = "redistribution"
+            alert_type = "below_minimum"   # DB constraint value
             urgency    = "high"
             title      = f"Low stock: {name}"
             message    = (
                 f"{name} — {days:.1f}d of stock within lead-time "
                 f"variability window ({lt:.0f}d avg)"
             )
+        elif item.get("overstockFlag"):
+            alert_type = "overstock"       # DB constraint value
+            urgency    = "medium"
+            title      = f"Overstock: {name}"
+            message    = (
+                f"{name} — {stock:.0f} units on hand exceeds normal range. "
+                f"{days:.1f}d of stock, consider redistribution or promotion."
+            )
 
         if not alert_type:
             continue
 
-        # Attempt to get-or-create a real DB row so PATCH calls work
-        alert_id = f"alert-{alert_type}-{sku}"  # fallback fake id
-        from_db  = False
-        if store_id:
-            try:
-                from db.repositories.inventory_repo import SyncInventoryRepo
-                db_id = SyncInventoryRepo.upsert_alert_and_return_id(
-                    sku=sku,
-                    store_id=store_id,
-                    alert_type=alert_type,
-                    severity=urgency,
-                    recommended_action=message,
-                )
-                if db_id:
-                    alert_id = db_id
-                    from_db  = True
-            except Exception as exc:
-                logger.warning("Could not persist alert to DB for %s@%s: %s", sku, store_id, exc)
+        candidates.append({
+            "sku":                sku,
+            "store_id":           store_id,
+            "alert_type":         alert_type,
+            "severity":           urgency,
+            "recommended_action": message,
+            # carry display fields through
+            "_title":  title,
+            "_time":   item["lastUpdated"],
+            "_days":   days,   # used for sort: highs ordered by least runway first
+        })
 
+    if not candidates:
+        return []
+
+    # ── Cap alerts to the most actionable ones ────────────────────────────────
+    # Keep ALL criticals (stockout_risk) — those always need attention.
+    # Fill remaining slots with high-risk (below_minimum) ordered by days-of-stock
+    # ascending (least runway first).  Overstock alerts come last and are capped
+    # only if total would exceed MAX_ALERTS.
+    MAX_ALERTS = 50
+    criticals  = [c for c in candidates if c["alert_type"] == "stockout_risk"]
+    highs      = sorted(
+        [c for c in candidates if c["alert_type"] == "below_minimum"],
+        key=lambda c: c.get("_days", 999),
+    )
+    overstocks = [c for c in candidates if c["alert_type"] == "overstock"]
+
+    remaining  = max(0, MAX_ALERTS - len(criticals))
+    candidates = criticals + highs[:remaining]
+    # Add overstock only if still have room
+    remaining  = max(0, MAX_ALERTS - len(candidates))
+    candidates = candidates + overstocks[:remaining]
+
+    if not candidates:
+        return []
+
+    # ── Single batched upsert — one connection for all alerts ─────────────────
+    id_map:       Dict[str, str] = {}
+    actioned_ids: set            = set()
+    if store_id:
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo
+            id_map = SyncInventoryRepo.upsert_alerts_batch(candidates)
+            # Find which returned UUIDs are already in a terminal state so we
+            # can suppress them — operator actioned them, no need to show again.
+            if id_map:
+                actioned_ids = SyncInventoryRepo.get_non_pending_alert_ids(
+                    set(id_map.values())
+                )
+        except Exception as exc:
+            logger.warning("_build_alerts: batch upsert failed for %s: %s", store_id, exc)
+
+    # ── Assemble final alert list — skip already-actioned ones ────────────────
+    alerts = []
+    for c in candidates:
+        key    = f"{c['sku']}:{store_id}:{c['alert_type']}"
+        db_id  = id_map.get(key)
+
+        # Suppress alerts the operator already handled within the 24-hour window
+        if db_id and db_id in actioned_ids:
+            logger.debug(
+                "_build_alerts: suppressing actioned alert %s (%s @ %s)",
+                db_id, c["sku"], c["alert_type"],
+            )
+            continue
+
+        # Fake id uses the DB alert_type value so it's clearly synthetic
+        fake_id = f"alert-{c['alert_type']}-{c['sku']}"
         alerts.append({
-            "id":      alert_id,
-            "sku":     sku,
-            "type":    alert_type,
-            "urgency": urgency,
-            "title":   title,
-            "message": message,
+            "id":      db_id or fake_id,
+            "sku":     c["sku"],
+            "type":    c["alert_type"],
+            "urgency": c["severity"],
+            "title":   c["_title"],
+            "message": c["recommended_action"],
             "action":  None,
-            "time":    item["lastUpdated"],
-            "fromDb":  from_db,  # frontend uses this to decide whether to call PATCH
+            "time":    c["_time"],
+            "fromDb":  bool(db_id),
         })
     return alerts
 
@@ -871,7 +967,7 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
     [result] = _enrich_with_product_master([result])
     return {
         "raw":  result,
-        "item": _to_inventory_item(result),
+        "item": _to_inventory_item(result, preloaded_stock=None, product_lookup=None),
     }
 
 
@@ -917,7 +1013,7 @@ def analyze_store(
             logger.info("Cache populated by concurrent run for %s — reusing", store_id)
             return _paginate(cached, page, page_size)
 
-        skus = _resolve_skus_for_store(store_id)   # raises 404 if nothing found
+        skus = _resolve_skus_for_store(store_id)
 
         orchestrator = get_orchestrator_fast() if fast else get_orchestrator()
         logger.info(
@@ -927,7 +1023,36 @@ def analyze_store(
         results = orchestrator.analyze_batch(skus, store_id, business_objective)
         results = _enrich_with_product_master(results)
 
-        items   = [_to_inventory_item(r) for r in results]
+        # ── Pre-fetch stock for all SKUs in ONE DB query ──────────────────
+        # _to_inventory_item() was calling SyncInventoryRepo.get_stock_level()
+        # per SKU — 110 DB connections opened/closed per pipeline run.
+        # We fetch all stock levels here in a single query and pass a lookup
+        # dict into _to_inventory_item so it never touches the DB.
+        preloaded_stock: Dict[str, int] = {}
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo as _Repo
+            batch = _Repo.get_stock_levels_batch(skus, store_id)
+            if batch:
+                preloaded_stock = batch
+                logger.info("Pre-fetched stock for %d/%d SKUs", len(batch), len(skus))
+        except Exception as exc:
+            logger.warning("Stock batch pre-fetch failed (%s) — falling back to per-SKU DB reads", exc)
+
+        # ── Pre-build product lookup dict from cached CSV ─────────────────
+        # _to_inventory_item() was filtering _DataCache.product() per SKU
+        # inside a loop — 110 DataFrame filter operations.
+        # Build the dict once here from the already-loaded CSV (instant).
+        try:
+            _pm = _DataCache.product().copy()
+            _pm["sku"] = _pm["sku"].astype(str)
+            product_lookup: Dict[str, Any] = {
+                row["sku"]: row.to_dict()
+                for _, row in _pm.iterrows()
+            }
+        except Exception:
+            product_lookup = {}
+
+        items = [_to_inventory_item(r, preloaded_stock=preloaded_stock, product_lookup=product_lookup) for r in results]
         alerts  = _build_alerts(items, store_id=store_id)
         payload = {
             "store_id":           store_id,
@@ -1145,28 +1270,62 @@ async def set_active_objective(req: SetObjectiveRequest) -> Dict[str, Any]:
 class UpdateAlertRequest(BaseModel):
     status: str = Field(
         ...,
-        description="New status: 'acknowledged', 'resolved', or 'dismissed'"
+        description=(
+            "New status. Allowed values: "
+            "'acknowledged' — operator has seen it; "
+            "'validated'    — operator confirmed and will act; "
+            "'rejected'     — operator dismissed as false-positive; "
+            "'resolved'     — issue is fixed; "
+            "'dismissed'    — noise, no action needed."
+        )
     )
 
 
 @router.get("/alerts/{store_id}")
 async def get_store_alerts(
     store_id: str,
-    status: Optional[str] = Query(default="pending", description="Filter by status")
+    status: Optional[str] = Query(
+        default="pending",
+        description="Filter by status: 'pending', 'acknowledged', 'validated', "
+                    "'resolved', 'dismissed', 'rejected'. Pass 'all' or omit to get all."
+    )
 ) -> Dict[str, Any]:
     """
     Get alerts for a store from the database.
-    By default returns only pending alerts. Pass status=None to get all.
+
+    By default returns only pending alerts.
+    Pass ?status=all to get every alert regardless of status.
+    The returned `id` field is the real DB UUID — use it with PATCH /alerts/{alert_id}.
     """
     try:
         from db.repositories.inventory_repo import SyncInventoryRepo
-        alerts = SyncInventoryRepo.get_store_alerts(store_id)
+        # Treat 'all' / empty string as "no filter"
+        effective_status = None if status in ("all", "", None) else status
+        alerts = SyncInventoryRepo.get_store_alerts(store_id, status=effective_status)
+        # Datetime fields are already serialised to ISO strings by the repo,
+        # but guard here in case the column type changes.
         for a in alerts:
-            for k in ("created_at", "updated_at"):
-                if a.get(k) and hasattr(a[k], "isoformat"):
-                    a[k] = a[k].isoformat()
-        return {"store_id": store_id, "alerts": alerts,
-                "count": len(alerts), "filter": status or "all"}
+            for col in ("triggered_at", "created_at", "resolved_at", "decided_at"):
+                if a.get(col) and hasattr(a[col], "isoformat"):
+                    a[col] = a[col].isoformat()
+            # Normalize: frontend expects 'name', repo returns 'product_name'
+            a['name'] = a.get('product_name') or a.get('sku', '')
+            # Map DB alert_type to frontend type vocab
+            a['type'] = {
+                # current DB values (alerts_alert_type_check constraint)
+                'stockout_risk':  'rupture',
+                'below_minimum':  'redistribution',
+                'overstock':      'overstock',
+                # legacy values kept for any pre-existing rows in the DB
+                'rupture':        'rupture',
+                'redistribution': 'redistribution',
+            }.get(a.get('alert_type', ''), a.get('alert_type', ''))
+        return {
+            "store_id": store_id,
+            "alerts":   alerts,
+            "count":    len(alerts),
+            "filter":   effective_status or "all",
+        }
     except Exception as exc:
         logger.error("Failed to get alerts for %s: %s", store_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1176,23 +1335,63 @@ async def get_store_alerts(
 async def update_alert(alert_id: str, req: UpdateAlertRequest) -> Dict[str, Any]:
     """
     Update an alert's status.
-    Valid statuses: 'acknowledged', 'resolved', 'dismissed'
+
+    IMPORTANT: {alert_id} must be the UUID returned by GET /alerts/{store_id}
+    in the 'id' field.  Fake IDs (alert-rupture-SKU123) will return 404.
+
+    Valid statuses:
+        acknowledged — operator has seen it (alert stays visible)
+        validated    — operator confirmed and will act  → stamps resolved_at
+        rejected     — false-positive, no action        → stamps resolved_at
+        resolved     — issue is fixed                   → stamps resolved_at
+        dismissed    — noise, no action needed          → stamps resolved_at
     """
-    valid_statuses = {"acknowledged", "resolved", "dismissed"}
-    
-    if req.status not in valid_statuses:
+    VALID_STATUSES = {"acknowledged", "validated", "rejected", "resolved", "dismissed"}
+
+    if req.status not in VALID_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail=f"status must be one of {valid_statuses}"
+            detail=f"Invalid status '{req.status}'. Must be one of: {sorted(VALID_STATUSES)}"
         )
-    
+
     try:
         from db.repositories.inventory_repo import SyncInventoryRepo
-        success = SyncInventoryRepo.update_alert_status(alert_id, req.status)
+
+        # Look up which store owns this alert so we can drop its cache entry.
+        store_id_for_alert = SyncInventoryRepo.get_alert_store_id(alert_id)
+
+        success = SyncInventoryRepo.update_alert_status(
+            alert_id=alert_id,
+            status=req.status,
+        )
         if not success:
-            raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
-        logger.info("Alert %s marked as %s", alert_id, req.status)
-        return {"alert_id": alert_id, "status": req.status, "updated": True}
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Alert '{alert_id}' not found. "
+                    "Make sure you are using the UUID from GET /alerts/{store_id}, "
+                    "not a client-generated fake id."
+                )
+            )
+        logger.info("Alert %s -> %s", alert_id, req.status)
+
+        # Drop the store cache so the next GET /store/{id} or WS push does not
+        # serve stale alerts that still show the old status.
+        if store_id_for_alert:
+            keys_to_drop = [k for k in _store_cache if k.startswith(f"{store_id_for_alert}::")]
+            for k in keys_to_drop:
+                del _store_cache[k]
+            if keys_to_drop:
+                logger.info(
+                    "Alert %s actioned → dropped %d cache entries for store %s",
+                    alert_id, len(keys_to_drop), store_id_for_alert,
+                )
+
+        return {
+            "alert_id": alert_id,
+            "status":   req.status,
+            "updated":  True,
+        }
     except HTTPException:
         raise
     except Exception as exc:
@@ -1212,13 +1411,12 @@ def sync_alerts_to_db(store_id: str) -> Dict[str, Any]:
     Returns how many were written vs already existed.
     """
     from db.repositories.inventory_repo import SyncInventoryRepo
-    cached = _get_cached(store_id, "standard") or _get_cached(store_id, "balanced")
-    if not cached:
-        # Try any cached objective
-        for key, entry in _store_cache.items():
-            if key.startswith(f"{store_id}::"):
-                cached = entry["data"]
-                break
+    # Try all cached objectives for this store — take the first hit
+    cached = None
+    for key, entry in _store_cache.items():
+        if key.startswith(f"{store_id}::"):
+            cached = entry["data"]
+            break
     if not cached:
         raise HTTPException(status_code=404, detail=f"No cached data for {store_id}. Load the inventory page first.")
 
@@ -1232,11 +1430,12 @@ def sync_alerts_to_db(store_id: str) -> Dict[str, Any]:
         days  = item.get("daysOfStock", 0)
         lt    = item.get("leadTimeDays", 7)
 
-        if risk == "critical" and stock < 10:
-            atype, severity = "rupture", "critical"
-            action = f"{name} has {stock} units ({days:.1f}d left). Order immediately.​"
+        # Use DB constraint values (stockout_risk / below_minimum), NOT frontend vocab
+        if risk == "critical":
+            atype, severity = "stockout_risk", "critical"
+            action = f"{name} has {stock} units ({days:.1f}d left). Order immediately."
         elif risk == "high":
-            atype, severity = "redistribution", "high"
+            atype, severity = "below_minimum", "high"
             action = f"{name} has {days:.1f}d of stock vs {lt:.0f}d lead time. Place order soon."
         else:
             continue
