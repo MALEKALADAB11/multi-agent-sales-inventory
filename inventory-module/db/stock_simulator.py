@@ -21,6 +21,12 @@ Usage from an agent:
     await sim.record_sale(sku="SKU001", store_id="S01", quantity=2)
     await sim.record_reorder_approved(sku="SKU001", store_id="S01", quantity=50)
     await sim.record_reception(sku="SKU001", store_id="S01", quantity=50)
+
+Design note on record_sale / record_adjustment:
+    These methods ONLY update existing rows. They never INSERT new rows.
+    Seeding inv.stock_levels is the job of init_stock_levels.py.
+    Attempting to INSERT here would trigger FK violations on inv.stores
+    for any store_id not present in that table.
 """
 import logging
 from datetime import date, timedelta
@@ -80,14 +86,19 @@ class StockSimulator:
         Called when a sale is recorded for an inventory-tracked product.
         Decreases stock_current, recalculates remaining_days_of_stock.
         Returns the updated stock level dict.
+
+        If no stock_levels row exists for (sku, store_id), logs a warning
+        and returns {} without attempting an INSERT — seeding is the init
+        script's job and an INSERT here would cause FK violations on inv.stores.
         """
         current = await self.repo.get_stock_level(sku, store_id)
         if current is None:
             logger.warning(
-                f"[Simulator] No stock_level row for {sku}@{store_id}, creating one"
+                "[Simulator] No stock_levels row for %s@%s — skipping sale. "
+                "Run init_stock_levels.py to seed this (sku, store_id) pair.",
+                sku, store_id,
             )
-            await self.repo.upsert_stock_level(sku, store_id, stock_current=0)
-            current = await self.repo.get_stock_level(sku, store_id)
+            return {}
 
         new_stock  = max(0, current["stock_current"] - quantity)
         avg_demand = await self._get_avg_daily_demand(sku, store_id)
@@ -103,9 +114,8 @@ class StockSimulator:
         )
 
         logger.info(
-            f"[Simulator] Sale: {sku}@{store_id} "
-            f"{current['stock_current']} → {new_stock} "
-            f"(qty={quantity}, days_left={remaining})"
+            "[Simulator] Sale: %s@%s %d → %d units (qty=%d, days_left=%s)",
+            sku, store_id, current["stock_current"], new_stock, quantity, remaining,
         )
         return await self.repo.get_stock_level(sku, store_id)
 
@@ -121,7 +131,7 @@ class StockSimulator:
         """
         current = await self.repo.get_stock_level(sku, store_id)
         if current is None:
-            logger.warning(f"[Simulator] No stock_level row for {sku}@{store_id}")
+            logger.warning("[Simulator] No stock_levels row for %s@%s", sku, store_id)
             return {}
 
         new_in_transit = (current.get("stock_in_transit") or 0) + quantity
@@ -136,8 +146,8 @@ class StockSimulator:
         )
 
         logger.info(
-            f"[Simulator] Reorder approved: {sku}@{store_id} "
-            f"in_transit={new_in_transit} (added {quantity})"
+            "[Simulator] Reorder approved: %s@%s in_transit=%d (added %d)",
+            sku, store_id, new_in_transit, quantity,
         )
         return await self.repo.get_stock_level(sku, store_id)
 
@@ -153,7 +163,7 @@ class StockSimulator:
         """
         current = await self.repo.get_stock_level(sku, store_id)
         if current is None:
-            logger.warning(f"[Simulator] No stock_level row for {sku}@{store_id}")
+            logger.warning("[Simulator] No stock_levels row for %s@%s", sku, store_id)
             return {}
 
         in_transit  = current.get("stock_in_transit") or 0
@@ -173,9 +183,8 @@ class StockSimulator:
         )
 
         logger.info(
-            f"[Simulator] Reception: {sku}@{store_id} "
-            f"stock {current['stock_current']} → {new_stock} "
-            f"transit {in_transit} → {new_transit}"
+            "[Simulator] Reception: %s@%s stock %d → %d | transit %d → %d",
+            sku, store_id, current["stock_current"], new_stock, in_transit, new_transit,
         )
         return await self.repo.get_stock_level(sku, store_id)
 
@@ -189,23 +198,31 @@ class StockSimulator:
         """
         Direct stock correction (inventory count, loss, damage, etc.).
         Sets stock_current to an absolute value.
+
+        If no stock_levels row exists for (sku, store_id), logs a warning
+        and returns {} — same policy as record_sale: no INSERT from here.
         """
         current = await self.repo.get_stock_level(sku, store_id)
         if current is None:
-            await self.repo.upsert_stock_level(sku, store_id, stock_current=new_stock)
-        else:
-            avg_demand = await self._get_avg_daily_demand(sku, store_id)
-            remaining  = round(new_stock / avg_demand, 1) if avg_demand > 0 else None
-            await self.repo.upsert_stock_level(
-                sku, store_id,
-                stock_current           = new_stock,
-                stock_in_transit        = current.get("stock_in_transit", 0),
-                stock_min               = current.get("stock_min"),
-                stock_max               = current.get("stock_max"),
-                remaining_days_of_stock = remaining,
+            logger.warning(
+                "[Simulator] No stock_levels row for %s@%s — skipping adjustment (%s). "
+                "Run init_stock_levels.py to seed this pair.",
+                sku, store_id, reason,
             )
+            return {}
 
-        logger.info(f"[Simulator] Adjustment: {sku}@{store_id} → {new_stock} ({reason})")
+        avg_demand = await self._get_avg_daily_demand(sku, store_id)
+        remaining  = round(new_stock / avg_demand, 1) if avg_demand > 0 else None
+        await self.repo.upsert_stock_level(
+            sku, store_id,
+            stock_current           = new_stock,
+            stock_in_transit        = current.get("stock_in_transit", 0),
+            stock_min               = current.get("stock_min"),
+            stock_max               = current.get("stock_max"),
+            remaining_days_of_stock = remaining,
+        )
+
+        logger.info("[Simulator] Adjustment: %s@%s → %d (%s)", sku, store_id, new_stock, reason)
         return await self.repo.get_stock_level(sku, store_id)
 
     # ── Dev tool: replay sales history to drive stock down ───────────────────
@@ -257,8 +274,8 @@ class StockSimulator:
             applied += 1
 
         logger.info(
-            f"[Simulator] Replayed {days_back}d of sales for {store_id}: "
-            f"{applied} SKUs updated"
+            "[Simulator] Replayed %dd of sales for %s: %d SKUs updated",
+            days_back, store_id, applied,
         )
         return applied
 

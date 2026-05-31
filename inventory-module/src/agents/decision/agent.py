@@ -1,0 +1,353 @@
+"""
+Inventory Decision Agent
+=========================
+Folder: src/agents/decision/
+Node:   decide
+
+Receives the outputs of BOTH the analysis agent and context agent — which
+run in parallel in the orchestrator — and produces a concrete recommendation:
+  reorder / (no action for hold/monitor)
+
+If one agent's output is missing or errored, the decision agent degrades
+gracefully using whatever it has. A missing context report means uplift=0.
+A missing analysis report means the agent cannot run and returns an error.
+
+Writes to:
+  inv.recommendations  — one row per actionable decision (reorder only)
+  inv.agent_runs       — own row opened/closed around the graph run
+"""
+
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Annotated, Any, Dict, Optional, Sequence, TypedDict
+import operator
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph import END, StateGraph
+
+logger = logging.getLogger(__name__)
+
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[4]))
+
+from src.agents.decision.nodes import create_decide_node
+from src.agents.decision.tools import (
+    action_to_recommendation_type,
+    confidence_to_float,
+)
+from src.utils.llm_factory import get_llm
+
+try:
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    _DB_AVAILABLE = True
+except Exception:
+    _DB_AVAILABLE = False
+    logger.warning("SyncInventoryRepo not importable — DB writes disabled.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agent State
+# ═══════════════════════════════════════════════════════════════════════════
+
+class DecisionAgentState(TypedDict):
+    messages:           Annotated[Sequence[BaseMessage], operator.add]
+    sku:                str
+    store_id:           str
+    business_objective: str
+    baseline_report:    Dict[str, Any]   # analysis_report from analysis agent
+    context_report:     Dict[str, Any]   # context_report from context agent (may be empty)
+    adjusted_metrics:   Dict[str, Any]   # re-computed with uplift applied
+    decision:           Dict[str, Any]   # populated by decide node
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agent Class
+# ═══════════════════════════════════════════════════════════════════════════
+
+class InventoryDecisionAgent:
+    """
+    Decision agent — combines analysis + context outputs into a recommendation.
+
+    Single-node graph (decide). Adjusted metrics are computed before the
+    graph runs so the node receives fully-prepared data and stays pure.
+
+    Graceful degradation:
+      - context_report missing / errored → demand_uplift_pct = 0 (baseline used)
+      - analysis_report missing → cannot run, returns error dict
+    """
+
+    def __init__(
+        self,
+        provider: str  = None,
+        api_key:  str  = None,
+        use_llm:  bool = True,
+    ):
+        self.use_llm = use_llm
+        self.llm     = get_llm(provider=provider, api_key=api_key) if use_llm else None
+
+        llm_class = self.llm.__class__.__name__ if self.llm else "None"
+        logger.info(
+            "[DecisionAgent] provider=%s | llm_class=%s | use_llm=%s",
+            provider or "default", llm_class, use_llm,
+        )
+
+        workflow = StateGraph(DecisionAgentState)
+        workflow.add_node("decide", create_decide_node(self.llm, use_llm))
+        workflow.set_entry_point("decide")
+        workflow.add_edge("decide", END)
+        self.graph = workflow.compile()
+
+    def run(
+        self,
+        sku:                str,
+        store_id:           str,
+        business_objective: str,
+        analysis_report:    Dict[str, Any],
+        context_report:     Dict[str, Any],
+        agent_run_id:       Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Produce a recommendation for one SKU.
+
+        Args:
+            analysis_report:  full dict from InventoryAnalysisAgent.run()["analysis_report"]
+                              Required — returns error if absent.
+            context_report:   dict from InventoryContextAgent.run()["context_report"]
+                              Optional — missing means uplift=0, not an error.
+            agent_run_id:     orchestrator's batch run UUID (for FK linkage)
+
+        Returns:
+            {
+                "sku", "store_id", "business_objective",
+                "decision": {
+                    "action":             "ORDER"|"HOLD"|"MONITOR"|"EXPEDITE",
+                    "order_qty":          int | None,
+                    "order_qty_rationale": str,
+                    "urgency":            "immediate"|"this_week"|"this_month"|"none",
+                    "decision_rationale": str,
+                    "confidence":         "high"|"medium"|"low",
+                    "trade_offs":         str,
+                    "escalate_to_human":  bool,
+                    "escalation_reason":  str | None,
+                    "reasoning_source":   "llm"|"rule_based_fallback",
+                },
+                "adjusted_metrics": { metrics, risk_assessment, ... },
+                "recommendation_id": str | None,  # inv.recommendations UUID if written
+            }
+        """
+        if not analysis_report:
+            return {
+                "sku": sku, "store_id": store_id,
+                "business_objective": business_objective,
+                "error": "analysis_report is required but was empty",
+            }
+
+        # ── Open own agent_run row ────────────────────────────────────────
+        own_run_id: Optional[str] = None
+        if _DB_AVAILABLE:
+            try:
+                own_run_id = SyncInventoryRepo.start_agent_run(
+                    agent_name="decision_agent",
+                    store_id=store_id,
+                )
+            except Exception as e:
+                logger.warning("[DecisionAgent] could not open agent_run: %s", e)
+
+        try:
+            # Normalise context_report — empty or errored → uplift=0
+            ctx = context_report if (context_report and "error" not in context_report) else {}
+
+            adjusted_metrics = self._compute_adjusted_metrics(analysis_report, ctx)
+
+            result = self.graph.invoke({
+                "messages":           [],
+                "sku":                sku,
+                "store_id":           store_id,
+                "business_objective": business_objective,
+                "baseline_report":    analysis_report,
+                "context_report":     ctx,
+                "adjusted_metrics":   adjusted_metrics,
+                "decision":           {},
+            })
+
+            decision = result["decision"]
+
+            # Persist to inv.recommendations (reorder actions only)
+            recommendation_id = self._persist_recommendation(
+                sku=sku,
+                store_id=store_id,
+                decision=decision,
+                agent_run_id=agent_run_id or own_run_id,
+            )
+
+            final = {
+                "sku":               sku,
+                "store_id":          store_id,
+                "business_objective": business_objective,
+                "decision":          decision,
+                "adjusted_metrics":  adjusted_metrics,
+                "recommendation_id": recommendation_id,
+            }
+
+            # ── Close agent_run — success ─────────────────────────────────
+            if _DB_AVAILABLE and own_run_id:
+                recs_generated = 1 if recommendation_id else 0
+                try:
+                    SyncInventoryRepo.complete_agent_run(
+                        run_id=own_run_id,
+                        status="completed",
+                        items_processed=1,
+                        alerts_generated=0,
+                        recommendations_generated=recs_generated,
+                        error_message=None,
+                    )
+                except Exception as e:
+                    logger.warning("[DecisionAgent] could not close agent_run: %s", e)
+
+            return final
+
+        except Exception as e:
+            logger.error("DecisionAgent failed for SKU=%s: %s", sku, e, exc_info=True)
+
+            if _DB_AVAILABLE and own_run_id:
+                try:
+                    SyncInventoryRepo.complete_agent_run(
+                        run_id=own_run_id,
+                        status="failed",
+                        items_processed=0,
+                        alerts_generated=0,
+                        error_message=str(e),
+                    )
+                except Exception:
+                    pass
+
+            return {
+                "sku": sku, "store_id": store_id,
+                "business_objective": business_objective,
+                "error": str(e),
+            }
+
+    # ── Adjusted metrics ──────────────────────────────────────────────────────
+
+    def _compute_adjusted_metrics(
+        self,
+        analysis_report: Dict[str, Any],
+        context_report:  Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Re-run compute_inventory_metrics() with demand_uplift_pct from
+        the context agent applied to avg_daily_demand.
+
+        Falls back to baseline metrics unchanged if import fails.
+        """
+        try:
+            from src.agents.analysis.tools import compute_inventory_metrics
+
+            stock   = analysis_report.get("stock", {})
+            forecast= analysis_report.get("forecast", {})
+            cons    = analysis_report.get("constraints", {})
+            obj     = analysis_report.get("business_objective", "balanced")
+
+            demand_uplift_pct = float(context_report.get("demand_uplift_pct", 0.0))
+
+            return compute_inventory_metrics(
+                stock_current         = float(stock.get("current_stock", 0)),
+                stock_in_transit      = float(stock.get("stock_in_transit", 0)),
+                stock_min             = stock.get("stock_min"),
+                stock_max             = stock.get("stock_max"),
+                lead_time_avg         = float(stock.get("lead_time_avg_days", 14)),
+                lead_time_std         = float(stock.get("lead_time_std_days", 3)),
+                moq                   = float(cons.get("moq", 1)),
+                unit_cost             = float(stock.get("unit_cost", 1)),
+                holding_cost_pct      = float(stock.get("holding_cost_pct", 0.25)),
+                order_cost            = float(stock.get("order_cost", 50)),
+                lifecycle_stage       = str(stock.get("lifecycle_stage", "mature")),
+                service_level_target  = float(stock.get("service_level_target", 0.95)),
+                avg_daily_demand      = float(forecast.get("avg_daily_demand", 0)),
+                demand_std            = float(forecast.get("demand_std_dev", 0)),
+                total_30d_demand      = float(forecast.get("total_30d_demand", 0)),
+                trend_direction       = str(forecast.get("trend_direction", "stable")),
+                business_objective    = obj,
+                promo_uplift_pct      = demand_uplift_pct,
+            )
+        except Exception as e:
+            logger.warning(
+                "[DecisionAgent] _compute_adjusted_metrics failed (%s) — using baseline", e
+            )
+            return {
+                "stock":           analysis_report.get("stock", {}),
+                "forecast":        analysis_report.get("forecast", {}),
+                "metrics":         analysis_report.get("metrics", {}),
+                "risk_assessment": analysis_report.get("risk_assessment", {}),
+                "constraints":     analysis_report.get("constraints", {}),
+            }
+
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    def _persist_recommendation(
+        self,
+        sku:          str,
+        store_id:     str,
+        decision:     Dict[str, Any],
+        agent_run_id: Optional[str],
+    ) -> Optional[str]:
+        """
+        Write to inv.recommendations if the action is actionable (ORDER/EXPEDITE).
+        HOLD and MONITOR produce no DB row — they are not recommendations.
+
+        recommendation_text comes directly from the decision dict — it was written
+        by the LLM or constructed by the rule-based fallback in nodes.py.
+        Both paths produce situation-specific text.
+
+        Returns the UUID string of the inserted row, or None.
+        """
+        if not _DB_AVAILABLE:
+            return None
+
+        action    = decision.get("action", "HOLD")
+        reco_type = action_to_recommendation_type(action)
+
+        if reco_type is None:
+            logger.debug(
+                "[DecisionAgent] action=%s — no recommendation written for %s@%s",
+                action, sku, store_id,
+            )
+            return None
+
+        try:
+            rec_id = SyncInventoryRepo.save_recommendation(
+                sku=sku,
+                store_id=store_id,
+                agent_run_id=agent_run_id,
+                recommendation_type=reco_type,
+                recommendation_text=decision.get("recommendation_text", ""),
+                suggested_quantity=decision.get("order_qty"),
+                confidence=confidence_to_float(decision.get("confidence", "low")),
+            )
+
+            if rec_id:
+                logger.info(
+                    "[DecisionAgent] recommendation saved: %s@%s action=%s qty=%s id=%s",
+                    sku, store_id, action, decision.get("order_qty"), rec_id,
+                )
+            return rec_id
+
+        except Exception as e:
+            logger.warning(
+                "[DecisionAgent] _persist_recommendation failed for %s@%s: %s",
+                sku, store_id, e,
+            )
+            return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Factory
+# ═══════════════════════════════════════════════════════════════════════════
+
+def create_decision_agent(
+    provider: str  = None,
+    api_key:  str  = None,
+    use_llm:  bool = True,
+) -> InventoryDecisionAgent:
+    return InventoryDecisionAgent(provider=provider, api_key=api_key, use_llm=use_llm)
