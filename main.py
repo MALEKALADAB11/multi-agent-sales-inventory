@@ -12,6 +12,7 @@ from typing import Dict
 import json, random, time
 from datetime import datetime
 from dotenv import load_dotenv
+from monitoring import router as monitoring_router
 
 # ── Auth (avant les imports du module sales pour éviter les conflits) ─────────
 from auth_router import router as auth_router, setup_auth_tables
