@@ -6,7 +6,7 @@ async def test():
     try:
         conn = await asyncpg.connect(
             host="localhost",
-            port=5433,
+            port=5432,
             user="asc_user",
             password="asc_password",
             database="asc_db",

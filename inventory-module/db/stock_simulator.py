@@ -1,6 +1,6 @@
 """
 stock_simulator.py
-Keeps inv.stock_levels up to date as things happen in the system.
+Keeps inventory.stock_levels up to date as things happen in the system.
 
 This is NOT a random simulator — it's a thin layer that your agents
 call when real events occur (a sale is recorded, a reorder is approved,

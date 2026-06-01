@@ -11,7 +11,9 @@ from datetime import datetime
 
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
-
+from shared_module import AgentLogger
+# ou
+from shared_module.agent_logger import AgentLogger
 from agent_logger import AgentLogger
 from core.config import get_config
 from core.state import SalesAgentState

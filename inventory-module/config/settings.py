@@ -96,11 +96,11 @@ class Settings:
     mcp_server_url: Optional[str] = None
 
     # Database - READ FROM ENVIRONMENT
-    db_host: str = os.getenv("DOCKER_DB_HOST", "localhost")
-    db_port: int = int(os.getenv("DOCKER_DB_PORT", "5433"))
-    db_name: str = os.getenv("DOCKER_DB_NAME", "asc_db")
-    db_user: str = os.getenv("DOCKER_DB_USER", "asc_user")
-    db_password: str = os.getenv("DOCKER_DB_PASSWORD", "asc_password")
+    db_host: str = os.getenv("DB_HOST", "localhost")
+    db_port: int = int(os.getenv("DB_PORT", "5432"))
+    db_name: str = os.getenv("DB_NAME", "ooredoo_sales")
+    db_user: str = os.getenv("DB_USER", "postgres")
+    db_password: str = os.getenv("DB_PASSWORD", "admin")
 
     # App
     environment: str = os.getenv("ENVIRONMENT", "development")
