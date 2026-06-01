@@ -20,6 +20,8 @@ import os
 import json
 from pathlib import Path
 
+from src.agents.analysis.agent import create_analysis_agent
+
 # Make sure imports resolve from inventory-module/
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -223,7 +225,7 @@ else:
 print("\n── 6. Full analysis_agent.run() ─────────────────────────────────")
 info("Running analysis_agent for one SKU — this may take a few seconds...")
 try:
-    from src.agents.analysis_agent import create_analysis_agent
+
     agent = create_analysis_agent()
     result = agent.run(
         sku=TEST_SKU,
