@@ -61,7 +61,7 @@ class CycleTracer:
         )
         print(f"{DIM}{_line()}{RESET}")
 
-    def cycle_end(self, state: dict):
+    def cycle_end(self, cycle_id=None, total_ms=None, nodes=None, urgency=None, gap=None, eod=None, state: dict = None, **kwargs):
         elapsed = (time.time() - self._t_cycle) * 1000
         urgence = state.get("niveau_urgence", "?")
         gap     = state.get("ecart_objectif", 0)

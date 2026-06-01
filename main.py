@@ -12,14 +12,6 @@ from typing import Dict
 import json, random, time
 from datetime import datetime
 from dotenv import load_dotenv
-from monitoring import router as monitoring_router
-
-# ── Auth (avant les imports du module sales pour éviter les conflits) ─────────
-from auth_router import router as auth_router, setup_auth_tables
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-import sys, os, asyncio, logging, json, random, time
-from datetime import datetime
-from dotenv import load_dotenv
 
 # ── Chemins AVANT tous les imports sales-module ──────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -73,7 +65,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _active_stores: set[str] = set()
-_live_stock: Dict[str, int] = {}  # stock live en mémoire
 _live_stock: Dict[str, int] = {}  # stock live en mémoire
 
 STORE_MAP = {
