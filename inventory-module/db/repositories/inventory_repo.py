@@ -14,7 +14,6 @@ import logging
 from datetime import date, datetime
 from typing import Optional
 from pathlib import Path
-
 import asyncpg
 from dotenv import load_dotenv
 
@@ -65,7 +64,7 @@ class InventoryRepo:
             )
             return dict(row) if row else None
 
-    async def set_active_objective(self, label: str) -> bool:
+    async def set_active_objective(self, objective_type: str) -> bool:
         """Set a business objective as active (deactivates all others)"""
         async with self.pool.acquire() as conn:
             async with conn.transaction():
@@ -73,8 +72,8 @@ class InventoryRepo:
                     "UPDATE inv.business_objectives SET is_active = FALSE"
                 )
                 result = await conn.execute(
-                    "UPDATE inv.business_objectives SET is_active = TRUE WHERE label = $1",
-                    label
+                    "UPDATE inv.business_objectives SET is_active = TRUE WHERE objective_type = $1",
+                    objective_type
                 )
                 # Check if any row was updated
                 return result.split()[-1] != '0'
@@ -87,21 +86,20 @@ class InventoryRepo:
         store_id:    str,
         alert_type:  str,
         severity:    str,
-        message:     str,
-        metadata:    Optional[dict] = None,
+        recommended_action: str,
+        estimated_stockout_date: Optional[date] = None,
     ) -> str:
         """Create a new alert and return its ID"""
-        import json
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 INSERT INTO inv.alerts
-                    (sku, store_id, alert_type, severity, message, metadata, 
-                     status, created_at, updated_at)
+                    (sku, store_id, alert_type, severity, recommended_action, 
+                     estimated_stockout_date, status, triggered_at, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW(), NOW())
                 RETURNING id
             """,
-                sku, store_id, alert_type, severity, message,
-                json.dumps(metadata or {})
+                sku, store_id, alert_type, severity, recommended_action,
+                estimated_stockout_date
             )
             return str(row['id'])
 
@@ -118,7 +116,7 @@ class InventoryRepo:
                     FROM inv.alerts a
                     LEFT JOIN inv.products p ON p.sku = a.sku
                     WHERE a.store_id = $1 AND a.status = $2
-                    ORDER BY a.severity DESC, a.created_at DESC
+                    ORDER BY a.severity DESC, a.triggered_at DESC
                     LIMIT 100
                 """, store_id, status)
             else:
@@ -127,19 +125,34 @@ class InventoryRepo:
                     FROM inv.alerts a
                     LEFT JOIN inv.products p ON p.sku = a.sku
                     WHERE a.store_id = $1
-                    ORDER BY a.severity DESC, a.created_at DESC
+                    ORDER BY a.severity DESC, a.triggered_at DESC
                     LIMIT 100
                 """, store_id)
             return [dict(r) for r in rows]
 
-    async def update_alert_status(self, alert_id: str, status: str) -> bool:
-        """Update an alert's status (acknowledged, resolved, dismissed)"""
+    async def update_alert_status(
+        self,
+        alert_id: str,
+        status: str,
+    ) -> bool:
+        """
+        Update an alert's status.
+
+        Terminal statuses (validated, resolved, dismissed, rejected) stamp resolved_at.
+        Returns True if a row was updated.
+        """
+        _TERMINAL = ["validated", "resolved", "dismissed", "rejected"]
         async with self.pool.acquire() as conn:
             result = await conn.execute("""
-                UPDATE inv.alerts 
-                SET status = $1, updated_at = NOW() 
-                WHERE id = $2
-            """, status, alert_id)
+                UPDATE inv.alerts
+                SET
+                    status      = $1,
+                    resolved_at = CASE
+                        WHEN $1 = ANY($2::text[]) THEN NOW()
+                        ELSE resolved_at
+                    END
+                WHERE id = $3
+            """, status, _TERMINAL, alert_id)
             return result.split()[-1] != '0'
 
     async def get_pending_alerts_count(self, store_id: str) -> int:
@@ -477,13 +490,6 @@ class InventoryRepo:
                 WHERE id = $1
             """, alert_id, was_accurate)
 
-    async def update_alert_status(self, alert_id: str, status: str) -> None:
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE inv.alerts SET status = $2 WHERE id = $1",
-                alert_id, status
-            )
-
     # ── Recommendations ───────────────────────────────────────────────────────
 
     async def insert_recommendation(self, rec: dict) -> str:
@@ -656,7 +662,121 @@ class SyncInventoryRepo:
             return None
 
     # ── Reads ─────────────────────────────────────────────────────────────────
+    @staticmethod
+    def save_context_adjustment(
+        sku: str,
+        store_id: str,
+        valid_from: date,
+        valid_to: date,
+        demand_uplift_pct: float,
+        dominant_signal: str,
+        confidence: float,
+        interpretation: str,
+        agent_run_id: str = None,
+    ) -> bool:
+        """
+        Upsert context adjustment row for a SKU/store/date window.
 
+        Conflict key:
+            (sku, store_id, valid_from)
+
+        Returns True on success, False otherwise.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return False
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO inv.context_adjustments (
+                        sku,
+                        store_id,
+                        valid_from,
+                        valid_to,
+                        demand_uplift_pct,
+                        dominant_signal,
+                        confidence,
+                        interpretation,
+                        agent_run_id
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+
+                    ON CONFLICT (sku, store_id, valid_from)
+                    DO UPDATE SET
+                        valid_to           = EXCLUDED.valid_to,
+                        demand_uplift_pct  = EXCLUDED.demand_uplift_pct,
+                        dominant_signal    = EXCLUDED.dominant_signal,
+                        confidence         = EXCLUDED.confidence,
+                        interpretation     = EXCLUDED.interpretation,
+                        agent_run_id       = EXCLUDED.agent_run_id
+                """, (
+                    sku,
+                    store_id,
+                    valid_from,
+                    valid_to,
+                    demand_uplift_pct,
+                    dominant_signal,
+                    confidence,
+                    interpretation,
+                    agent_run_id,
+                ))
+
+                conn.commit()
+                return True
+
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.save_context_adjustment(%s, %s): %s",
+                sku, store_id, exc,
+            )
+            return False
+
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_context_adjustment(
+        sku: str,
+        store_id: str,
+    ) -> Optional[dict]:
+        """
+        Get latest currently-valid context adjustment for a SKU/store.
+
+        Returns:
+            dict or None
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return None
+
+        try:
+            with conn.cursor(
+                cursor_factory=psycopg2.extras.RealDictCursor
+            ) as cur:
+
+                cur.execute("""
+                    SELECT *
+                    FROM inv.context_adjustments
+                    WHERE sku = %s
+                      AND store_id = %s
+                      AND CURRENT_DATE BETWEEN valid_from AND valid_to
+                    ORDER BY valid_from DESC
+                    LIMIT 1
+                """, (sku, store_id))
+
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.get_context_adjustment(%s, %s): %s",
+                sku, store_id, exc,
+            )
+            return None
+
+        finally:
+            conn.close()
     @staticmethod
     def get_product(sku: str) -> Optional[dict]:
         """
@@ -696,6 +816,88 @@ class SyncInventoryRepo:
                 "SyncInventoryRepo.get_stock_level(%s, %s): %s", sku, store_id, exc
             )
             return None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_stock_levels_batch(skus: list, store_id: str) -> dict:
+        """
+        Fetch stock_current for multiple SKUs in a single query.
+
+        Returns {sku: stock_current} for every SKU found in inv.stock_levels.
+        SKUs not present in the table are simply absent from the dict — callers
+        should fall back to report/CSV values for those.
+
+        This replaces the N individual get_stock_level() calls that happen
+        inside _to_inventory_item() during a batch pipeline run, cutting
+        N DB round-trips down to 1.
+        """
+        if not skus:
+            return {}
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return {}
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT sku, stock_current
+                    FROM inv.stock_levels
+                    WHERE store_id = %s
+                      AND sku = ANY(%s)
+                    """,
+                    (store_id, list(skus)),
+                )
+                return {
+                    str(row[0]): int(row[1])
+                    for row in cur.fetchall()
+                    if row[1] is not None
+                }
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.get_stock_levels_batch(%s, %d skus): %s",
+                store_id, len(skus), exc,
+            )
+            return {}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_products_batch(skus: list) -> dict:
+        """
+        Fetch product master rows for multiple SKUs in a single query.
+
+        Returns {sku: product_dict} for every SKU found in inv.products.
+        SKUs not in the table are absent from the dict — callers fall back
+        to CSV for those (same logic as the single-SKU get_product path).
+
+        Replaces 110 individual get_product() calls in a batch pipeline run.
+        """
+        if not skus:
+            return {}
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return {}
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT sku, product_name, category, unit_cost, moq,
+                           lead_time_days, lead_time_std, lifecycle_stage,
+                           service_level_target
+                    FROM inv.products
+                    WHERE sku = ANY(%s)
+                    """,
+                    (list(skus),),
+                )
+                cols = [d[0] for d in cur.description]
+                return {
+                    str(row[0]): dict(zip(cols, row))
+                    for row in cur.fetchall()
+                }
+        except Exception as exc:
+            logger.warning("SyncInventoryRepo.get_products_batch(%d skus): %s", len(skus), exc)
+            return {}
         finally:
             conn.close()
 
@@ -835,21 +1037,32 @@ class SyncInventoryRepo:
             return False
         try:
             with conn.cursor() as cur:
-                # Dedup check
+                # FIX: use = ANY(%s) with a plain Python list — psycopg2 adapts
+                # lists to Postgres arrays automatically. The old %s::text[] cast
+                # caused silent failures so the dedup check never matched.
+                # Cooldown extended from 4h to 24h.
                 cur.execute("""
                     SELECT 1 FROM inv.alerts
                     WHERE sku = %s AND store_id = %s
-                      AND alert_type = %s AND status = 'pending'
+                      AND alert_type = %s
+                      AND (
+                            status = 'pending'
+                            OR (
+                                status = ANY(%s)
+                                AND resolved_at > NOW() - INTERVAL '24 hours'
+                            )
+                          )
                     LIMIT 1
-                """, (sku, store_id, alert_type))
+                """, (sku, store_id, alert_type,
+                      ['validated', 'rejected', 'resolved', 'dismissed']))
                 if cur.fetchone():
                     return False
 
                 cur.execute("""
                     INSERT INTO inv.alerts
-                        (sku, store_id, alert_type, severity, recommended_action)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (sku, store_id, alert_type, severity, recommended_action))
+                        (sku, store_id, alert_type, severity, recommended_action, agent_run_id)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (sku, store_id, alert_type, severity, recommended_action, agent_run_id))
                 conn.commit()
                 return True
         except Exception as exc:
@@ -868,6 +1081,7 @@ class SyncInventoryRepo:
         alert_type: str,
         severity: str,
         recommended_action: str,
+        agent_run_id: str = None,
     ) -> Optional[str]:
         """
         Get the UUID of an existing pending alert for (sku, store_id, alert_type),
@@ -883,13 +1097,27 @@ class SyncInventoryRepo:
             return None
         try:
             with conn.cursor() as cur:
-                # Check for existing pending alert
+                # FIX: use = ANY(%s) with a plain Python list — psycopg2 adapts
+                # lists to Postgres arrays automatically. The old %s::text[] cast
+                # caused silent failures so the dedup check never matched.
+                # Cooldown extended from 4h to 24h.
                 cur.execute("""
                     SELECT id FROM inv.alerts
                     WHERE sku = %s AND store_id = %s
-                      AND alert_type = %s AND status = 'pending'
+                      AND alert_type = %s
+                      AND (
+                            status = 'pending'
+                            OR (
+                                status = ANY(%s)
+                                AND resolved_at > NOW() - INTERVAL '24 hours'
+                            )
+                          )
+                    ORDER BY
+                        CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+                        triggered_at DESC
                     LIMIT 1
-                """, (sku, store_id, alert_type))
+                """, (sku, store_id, alert_type,
+                      ['validated', 'rejected', 'resolved', 'dismissed']))
                 row = cur.fetchone()
                 if row:
                     return str(row[0])
@@ -897,10 +1125,10 @@ class SyncInventoryRepo:
                 # None found — insert new
                 cur.execute("""
                     INSERT INTO inv.alerts
-                        (sku, store_id, alert_type, severity, recommended_action)
-                    VALUES (%s, %s, %s, %s, %s)
+                        (sku, store_id, alert_type, severity, recommended_action, agent_run_id)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
-                """, (sku, store_id, alert_type, severity, recommended_action))
+                """, (sku, store_id, alert_type, severity, recommended_action, agent_run_id))
                 conn.commit()
                 return str(cur.fetchone()[0])
         except Exception as exc:
@@ -911,6 +1139,114 @@ class SyncInventoryRepo:
             return None
         finally:
             conn.close()
+
+    @staticmethod
+    def upsert_alerts_batch(
+        alerts: list[dict],
+    ) -> dict[str, str]:
+        """
+        Upsert multiple alerts in a single connection + transaction.
+
+        Each dict in `alerts` must contain:
+            sku, store_id, alert_type, severity, recommended_action
+        Optional:
+            agent_run_id
+
+        Returns a mapping of  "{sku}:{store_id}:{alert_type}" → uuid_str
+        for every alert that was successfully inserted or already existed.
+        Alerts that fail the DB check constraint (e.g. invalid alert_type)
+        are skipped and logged — they will not appear in the returned map,
+        so _build_alerts() will fall back to a fake id for them.
+
+        FIX 1 — savepoint per item: the original conn.rollback() on any item
+        error wiped the entire transaction. Now each item is wrapped in its own
+        SAVEPOINT so a single failure only rolls back that item.
+        FIX 2 — ANY(%s) with a plain list instead of %s::text[]: psycopg2
+        adapts Python lists to Postgres arrays automatically with ANY(%s). The
+        old explicit cast caused the dedup check to silently never match.
+        FIX 3 — cooldown extended from 4h to 24h.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return {}
+        result: dict[str, str] = {}
+        try:
+            conn.autocommit = False
+            with conn.cursor() as cur:
+                for a in alerts:
+                    sku        = a["sku"]
+                    store_id   = a["store_id"]
+                    alert_type = a["alert_type"]
+                    key        = f"{sku}:{store_id}:{alert_type}"
+
+                    cur.execute("SAVEPOINT sp_alert")
+                    try:
+                        cur.execute("""
+                            SELECT id FROM inv.alerts
+                            WHERE sku = %s AND store_id = %s
+                              AND alert_type = %s
+                              AND (
+                                    status = 'pending'
+                                    OR (
+                                        status = ANY(%s)
+                                        AND resolved_at > NOW() - INTERVAL '24 hours'
+                                    )
+                                  )
+                            ORDER BY
+                                CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+                                triggered_at DESC
+                            LIMIT 1
+                        """, (sku, store_id, alert_type,
+                              ['validated', 'rejected', 'resolved', 'dismissed']))
+
+                        row = cur.fetchone()
+                        if row:
+                            result[key] = str(row[0])
+                            cur.execute("RELEASE SAVEPOINT sp_alert")
+                            continue
+
+                        # None found — insert new
+                        cur.execute("""
+                            INSERT INTO inv.alerts
+                                (sku, store_id, alert_type, severity,
+                                 recommended_action, agent_run_id)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            RETURNING id
+                        """, (
+                            sku, store_id, alert_type,
+                            a["severity"], a["recommended_action"],
+                            a.get("agent_run_id"),
+                        ))
+                        row = cur.fetchone()
+                        if row:
+                            result[key] = str(row[0])
+
+                        cur.execute("RELEASE SAVEPOINT sp_alert")
+
+                    except Exception as item_exc:
+                        # Roll back ONLY this savepoint — all other items are safe
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_alert")
+                        cur.execute("RELEASE SAVEPOINT sp_alert")
+                        logger.warning(
+                            "upsert_alerts_batch: skipped %s@%s (%s): %s",
+                            sku, store_id, alert_type, item_exc,
+                        )
+                        continue
+
+            conn.commit()
+        except Exception as exc:
+            logger.warning("upsert_alerts_batch: outer failure: %s", exc)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.autocommit = True
+            except Exception:
+                pass
+            conn.close()
+        return result
 
     @staticmethod
     def get_any_objective() -> Optional[dict]:
@@ -956,8 +1292,11 @@ class SyncInventoryRepo:
             conn.close()
 
     @staticmethod
-    def set_active_objective(label: str) -> bool:
-        """Set a business objective as active (deactivates all others)"""
+    def set_active_objective(objective_type: str) -> bool:
+        """
+        Set a business objective as active (deactivates all others).
+        Note: objective_type parameter is actually the label value (e.g., 'standard', 'cost_savings').
+        """
         conn = SyncInventoryRepo._conn()
         if conn is None:
             return False
@@ -966,33 +1305,75 @@ class SyncInventoryRepo:
                 cur.execute("UPDATE inv.business_objectives SET is_active = FALSE")
                 cur.execute(
                     "UPDATE inv.business_objectives SET is_active = TRUE WHERE label = %s",
-                    (label,)
+                    (objective_type,)
                 )
                 conn.commit()
                 return cur.rowcount > 0
         except Exception as exc:
-            logger.warning("SyncInventoryRepo.set_active_objective(%s): %s", label, exc)
+            logger.warning("SyncInventoryRepo.set_active_objective(%s): %s", objective_type, exc)
             return False
         finally:
             conn.close()
 
     @staticmethod
-    def get_store_alerts(store_id: str) -> list[dict]:
-        """Get pending alerts from DB for a store"""
+    def get_store_alerts(store_id: str, status: Optional[str] = "pending") -> list[dict]:
+        """
+        Get alerts from DB for a store.
+        Pass status=None to return all alerts regardless of status.
+        Pass status='pending' (default) for only unresolved alerts.
+        """
         conn = SyncInventoryRepo._conn()
         if conn is None:
             return []
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT a.*, p.product_name
-                    FROM inv.alerts a
-                    LEFT JOIN inv.products p ON p.sku = a.sku
-                    WHERE a.store_id = %s AND a.status = 'pending'
-                    ORDER BY a.severity DESC, a.created_at DESC
-                    LIMIT 50
-                """, (store_id,))
-                return [dict(r) for r in cur.fetchall()]
+                if status:
+                    cur.execute("""
+                        SELECT a.*, p.product_name
+                        FROM inv.alerts a
+                        LEFT JOIN inv.products p ON p.sku = a.sku
+                        WHERE a.store_id = %s AND a.status = %s
+                        ORDER BY
+                            CASE a.severity
+                                WHEN 'critical' THEN 1
+                                WHEN 'high'     THEN 2
+                                WHEN 'medium'   THEN 3
+                                ELSE 4
+                            END,
+                            a.triggered_at DESC
+                        LIMIT 200
+                    """, (store_id, status))
+                else:
+                    # All statuses — used by frontend "show all" views
+                    cur.execute("""
+                        SELECT a.*, p.product_name
+                        FROM inv.alerts a
+                        LEFT JOIN inv.products p ON p.sku = a.sku
+                        WHERE a.store_id = %s
+                        ORDER BY
+                            CASE a.status
+                                WHEN 'pending' THEN 0
+                                ELSE 1
+                            END,
+                            CASE a.severity
+                                WHEN 'critical' THEN 1
+                                WHEN 'high'     THEN 2
+                                WHEN 'medium'   THEN 3
+                                ELSE 4
+                            END,
+                            a.triggered_at DESC
+                        LIMIT 200
+                    """, (store_id,))
+                rows = cur.fetchall()
+                result = []
+                for r in rows:
+                    d = dict(r)
+                    # Serialize datetime fields for JSON serialisation downstream
+                    for col in ("triggered_at", "created_at", "resolved_at", "decided_at"):
+                        if d.get(col) and hasattr(d[col], "isoformat"):
+                            d[col] = d[col].isoformat()
+                    result.append(d)
+                return result
         except Exception as exc:
             logger.warning("SyncInventoryRepo.get_store_alerts(%s): %s", store_id, exc)
             return []
@@ -1000,21 +1381,101 @@ class SyncInventoryRepo:
             conn.close()
 
     @staticmethod
-    def update_alert_status(alert_id: str, status: str) -> bool:
-        """Update an alert's status"""
+    def update_alert_status(
+        alert_id: str,
+        status: str,
+    ) -> bool:
+        """
+        Update an alert's status.
+
+        Terminal statuses (validated, resolved, dismissed, rejected) also stamp
+        resolved_at = NOW().  Returns True if a row was updated.
+
+        FIX: the CASE WHEN %s = ANY(%s) pattern inside SQL is unreliable with
+        psycopg2 — the list adapter does not fire inside CASE expressions the
+        same way it does in WHERE clauses.  We now check terminality in Python
+        and run one of two simple, unambiguous SQL statements instead.
+        """
+        _TERMINAL = {'validated', 'resolved', 'dismissed', 'rejected'}
         conn = SyncInventoryRepo._conn()
         if conn is None:
             return False
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE inv.alerts SET status = %s, updated_at = NOW() WHERE id = %s",
-                    (status, alert_id)
-                )
+                if status in _TERMINAL:
+                    cur.execute("""
+                        UPDATE inv.alerts
+                        SET status      = %s,
+                            resolved_at = NOW()
+                        WHERE id = %s::uuid
+                    """, (status, alert_id))
+                else:
+                    cur.execute("""
+                        UPDATE inv.alerts
+                        SET status = %s
+                        WHERE id = %s::uuid
+                    """, (status, alert_id))
                 conn.commit()
                 return cur.rowcount > 0
         except Exception as exc:
             logger.warning("SyncInventoryRepo.update_alert_status(%s): %s", alert_id, exc)
             return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_non_pending_alert_ids(uuids: set) -> set:
+        """
+        Given a set of alert UUIDs, return the subset whose current status is
+        NOT 'pending' (i.e. already actioned: validated / rejected / dismissed /
+        resolved).
+
+        Used by _build_alerts to suppress actioned alerts from the pipeline's
+        returned list so they don't reappear as ghost alerts on the frontend.
+        Returns an empty set if DB is unavailable or uuids is empty.
+        """
+        if not uuids:
+            return set()
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return set()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id::text
+                    FROM inv.alerts
+                    WHERE id = ANY(%s)
+                      AND status != 'pending'
+                """, (list(uuids),))
+                return {str(row[0]) for row in cur.fetchall()}
+        except Exception as exc:
+            logger.warning("SyncInventoryRepo.get_non_pending_alert_ids(): %s", exc)
+            return set()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_alert_store_id(alert_id: str) -> Optional[str]:
+        """
+        Return the store_id of a given alert UUID, or None if not found / DB
+        unavailable.
+
+        Used by update_alert in routes.py to know which store cache to
+        invalidate after the operator validates / rejects / dismisses an alert.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return None
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT store_id FROM inv.alerts WHERE id = %s::uuid",
+                    (alert_id,),
+                )
+                row = cur.fetchone()
+                return str(row[0]) if row else None
+        except Exception as exc:
+            logger.warning("SyncInventoryRepo.get_alert_store_id(%s): %s", alert_id, exc)
+            return None
         finally:
             conn.close()

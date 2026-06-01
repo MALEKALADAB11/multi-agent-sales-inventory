@@ -12,12 +12,9 @@ from typing import Dict
 import json, random, time
 from datetime import datetime
 from dotenv import load_dotenv
-<<<<<<< HEAD
-=======
 from monitoring import router as monitoring_router
 
 # ── Auth (avant les imports du module sales pour éviter les conflits) ─────────
->>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 from auth_router import router as auth_router, setup_auth_tables
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import sys, os, asyncio, logging, json, random, time
@@ -175,44 +172,8 @@ async def startup_event():
     app.state.timefm = timefm
     logger.info("✅ TimesFM chargé")
 
-<<<<<<< HEAD
     # 3. Simulateur
     simulator = RealtimeSimulator(json_svc, interval_seconds=15)
-=======
-    # ── DB pool + StockSimulator ──────────────────────────────
-    try:
-        db_repo = InventoryRepo()
-        await db_repo.connect()
-        stock_sim = StockSimulator(db_repo)
-        app.state.db_repo   = db_repo
-        app.state.stock_sim = stock_sim
-        logger.info("✅ DB pool connected — StockSimulator ready")
-    except Exception as e:
-        logger.warning("⚠️  DB pool failed — stock updates will be in-memory only: %s", e)
-        stock_sim = None
-        app.state.db_repo   = None
-        app.state.stock_sim = None
-
-    simulator = RealtimeSimulator(json_svc, interval_seconds=15, store_id="I63")
-
-    # ✅ In-memory stock tracker (fast path for WebSocket broadcasts)
-    _live_stock: Dict[str, float] = {}
-
-    def _init_stock_from_cache():
-        """Load initial stock levels from stock_history CSV"""
-        try:
-            stock_df = InventoryDataCache.stock()
-            store_stock = stock_df[stock_df["store_id"] == "I63"]
-            if not store_stock.empty:
-                latest = store_stock.sort_values('date').groupby('sku').last()
-                for sku, row in latest.iterrows():
-                    _live_stock[str(sku)] = float(row.get('stock_level', 0))
-                logger.info(f"✅ Loaded {len(_live_stock)} SKU stock levels for I63")
-        except Exception as e:
-            logger.warning(f"Could not load initial stock: {e}")
-
-    _init_stock_from_cache()
->>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:
         """
@@ -220,43 +181,73 @@ async def startup_event():
         1. Updates in-memory _live_stock (fast — for WebSocket broadcast)
         2. Updates _DataCache._stock_overrides (so pipeline sees live stock)
         3. Persists to inv.stock_levels via StockSimulator (DB source of truth)
+
+        Guards:
+          - Skips if (sku, store_id) has no stock_levels row in DB.
+            get_stock_level is a single query that implicitly validates both
+            the sku FK (inv.products) and store FK (inv.stores): if either is
+            missing the row won't exist.
+          - This prevents FK violations that would occur if StockSimulator
+            tried to INSERT a new row for an unseeded (sku, store_id) pair.
         """
         sku_str = str(sku)
 
-        # ── 1. In-memory fast path ────────────────────────────
-        current   = _live_stock.get(sku_str, 0)
+        # ── Guard: validate (sku, store_id) exists in inv.stock_levels ────────
+        # One query covers both FK checks (products + stores).
+        # If there's no row, StockSimulator would have to INSERT — which causes
+        # FK violations. Skip the sale instead and log it.
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo
+            db_row = SyncInventoryRepo.get_stock_level(sku_str, store_id)
+            if db_row is None:
+                logger.debug(
+                    "Skipping sale for %s@%s — no stock_levels row. "
+                    "Run init_stock_levels.py to seed this pair.",
+                    sku_str, store_id,
+                )
+                return
+        except Exception:
+            # DB unavailable — allow through so in-memory path still works
+            db_row = None
+
+        # ── 1. In-memory fast path ─────────────────────────────────────────────
+        # Seed _live_stock from DB on first sight so the broadcast delta
+        # reflects real stock rather than defaulting to 0.
+        if sku_str not in _live_stock:
+            if db_row is not None:
+                _live_stock[sku_str] = float(db_row["stock_current"])
+            else:
+                # DB unavailable — try mem override, else 0
+                override = InventoryDataCache._stock_overrides.get((sku_str, store_id))
+                _live_stock[sku_str] = float(override) if override is not None else 0.0
+
+        current   = _live_stock[sku_str]
         new_stock = max(0, current - units)
         _live_stock[sku_str] = new_stock
 
-        # ── 2. Keep analysis pipeline in sync ─────────────────
-        InventoryDataCache.record_sale(store_id, sku_str, units)
+        # ── 2. Keep analysis pipeline in sync ─────────────────────────────────
+        InventoryDataCache.record_sale(sku_str, store_id, units)
 
-        logger.info(f"📉 Sale: {sku_str} | {current} → {new_stock} units (-{units})")
+        logger.info("📉 Sale: %s | %.0f → %.0f units (-%d)", sku_str, current, new_stock, units)
 
-        # ── 3. Persist to DB ──────────────────────────────────
+        # ── 3 & 4. Persist to DB then broadcast (in order) ────────────────────
+        # DB write must complete before broadcast triggers pipeline re-run,
+        # otherwise the pipeline reads stale stock from DB.
+        async def _sale_and_broadcast():
+            if stock_sim is not None:
+                await stock_sim.record_sale(sku_str, store_id, units)
+            invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+
         if stock_sim is not None:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.create_task(
-                    stock_sim.record_sale(sku_str, store_id, units)
-                )
-
-        # ── 4. Broadcast via WebSocket ────────────────────────
-        invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+                asyncio.create_task(_sale_and_broadcast())
 
     # ✅ Wire on_sale callback BEFORE starting
     simulator.on_sale = _on_sale
-<<<<<<< HEAD
     simulator.start()
     app.state.simulator = simulator
     logger.info("✅ Inventory ↔ Sales sync")
-=======
-
-    # ✅ Now start
-    simulator.start()
-    app.state.simulator = simulator
-    logger.info("✅ Inventory ↔ Sales sync wired")
->>>>>>> ff55f5bd3860ff2c2677f14edf1b4cbb95a2003c
 
     # 4. Orchestrateur
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)

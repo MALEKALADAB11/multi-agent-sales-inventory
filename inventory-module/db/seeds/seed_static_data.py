@@ -138,57 +138,57 @@ OBJECTIVES = [
 # estimated_uplift_pct: expected demand increase as a percentage (30 = +30%)
 # affected_categories:  must match category values in product_master.csv
 
-EVENTS_2025 = [
+EVENTS_2026 = [
     {
-        "event_name":           "Ramadan 2025",
+        "event_name":           "Ramadan 2026",
         "event_type":           "religious",
-        "start_date":           date(2025, 3, 1),
-        "end_date":             date(2025, 3, 30),
+        "start_date":           date(2026, 2, 19),
+        "end_date":             date(2026, 3, 19),
         "affected_categories":  ["Recharge", "SIM / Ligne", "Forfait Mobile"],
         "estimated_uplift_pct": 25.0,
         "scope":                "national",
     },
     {
-        "event_name":           "Aid El Fitr 2025",
+        "event_name":           "Aid El Fitr 2026",
         "event_type":           "religious",
-        "start_date":           date(2025, 3, 30),
-        "end_date":             date(2025, 4, 3),
+        "start_date":           date(2026, 3, 20),
+        "end_date":             date(2026, 3, 22),
         "affected_categories":  ["Terminal", "Accessoire", "Recharge"],
         "estimated_uplift_pct": 40.0,
         "scope":                "national",
     },
     {
-        "event_name":           "Aid El Adha 2025",
+        "event_name":           "Aid El Adha 2026",
         "event_type":           "religious",
-        "start_date":           date(2025, 6, 6),
-        "end_date":             date(2025, 6, 10),
+        "start_date":           date(2026, 5, 27),
+        "end_date":             date(2026, 5, 29),
         "affected_categories":  ["Terminal", "Accessoire", "Recharge"],
         "estimated_uplift_pct": 35.0,
         "scope":                "national",
     },
     {
-        "event_name":           "Rentrée Scolaire 2025",
+        "event_name":           "Rentrée Scolaire 2026",
         "event_type":           "seasonal",
-        "start_date":           date(2025, 9, 1),
-        "end_date":             date(2025, 9, 20),
+        "start_date":           date(2026, 9, 1),
+        "end_date":             date(2026, 9, 20),
         "affected_categories":  ["Terminal", "Forfait Data", "Accessoire"],
         "estimated_uplift_pct": 30.0,
         "scope":                "national",
     },
     {
-        "event_name":           "Black Friday / Promotions Fin Novembre 2025",
+        "event_name":           "Black Friday / Promotions Fin Novembre 2026",
         "event_type":           "commercial",
-        "start_date":           date(2025, 11, 24),
-        "end_date":             date(2025, 12, 2),
+        "start_date":           date(2026, 11, 24),
+        "end_date":             date(2026, 12, 2),
         "affected_categories":  ["Terminal", "Accessoire", "Box / Fibre"],
         "estimated_uplift_pct": 50.0,
         "scope":                "national",
     },
     {
-        "event_name":           "Fêtes de Fin d'Année 2025",
+        "event_name":           "Fêtes de Fin d'Année 2026",
         "event_type":           "seasonal",
-        "start_date":           date(2025, 12, 20),
-        "end_date":             date(2026, 1, 5),
+        "start_date":           date(2026, 12, 20),
+        "end_date":             date(2027, 1, 5),
         "affected_categories":  ["Terminal", "Accessoire", "Recharge"],
         "estimated_uplift_pct": 20.0,
         "scope":                "national",
@@ -240,7 +240,7 @@ async def seed_objectives(conn: asyncpg.Connection) -> None:
 
 
 async def seed_events(conn: asyncpg.Connection) -> None:
-    for evt in EVENTS_2025:
+    for evt in EVENTS_2026:
         await conn.execute(
             """
             INSERT INTO inv.events
@@ -256,7 +256,7 @@ async def seed_events(conn: asyncpg.Connection) -> None:
             evt.get("estimated_uplift_pct"),
             evt.get("scope", "national"),
         )
-    logger.info(f"  Events: {len(EVENTS_2025)} rows")
+    logger.info(f"  Events: {len(EVENTS_2026)} rows")
 
 
 async def main():
