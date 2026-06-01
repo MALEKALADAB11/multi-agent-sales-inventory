@@ -31,11 +31,11 @@ class InventoryRepo:
         if self.pool is not None:
             return
         self.pool = await asyncpg.create_pool(
-            host     = os.getenv("DOCKER_DB_HOST"),
-            port     = int(os.getenv("DOCKER_DB_PORT", "5433")),
-            database = os.getenv("DOCKER_DB_NAME"),
-            user     = os.getenv("DOCKER_DB_USER"),
-            password = os.getenv("DOCKER_DB_PASSWORD"),
+            host     = os.getenv("DB_HOST"),
+            port     = int(os.getenv("DB_PORT", "5432")),
+            database = os.getenv("DB_NAME"),
+            user     = os.getenv("DB_USER"),
+            password = os.getenv("DB_PASSWORD"),
             min_size = 2,
             max_size = 10,
         )
@@ -52,7 +52,7 @@ class InventoryRepo:
         """Get all business objectives ordered by priority"""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT * FROM inv.business_objectives ORDER BY priority ASC"
+                "SELECT * FROM inventory.business_objectives ORDER BY priority ASC"
             )
             return [dict(r) for r in rows]
 
@@ -60,7 +60,7 @@ class InventoryRepo:
         """Get the currently active business objective"""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM inv.business_objectives WHERE is_active = TRUE LIMIT 1"
+                "SELECT * FROM inventory.business_objectives WHERE is_active = TRUE LIMIT 1"
             )
             return dict(row) if row else None
 
@@ -69,7 +69,7 @@ class InventoryRepo:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "UPDATE inv.business_objectives SET is_active = FALSE"
+                    "UPDATE inventory.business_objectives SET is_active = FALSE"
                 )
                 result = await conn.execute(
                     "UPDATE inv.business_objectives SET is_active = TRUE WHERE objective_type = $1",
@@ -113,8 +113,8 @@ class InventoryRepo:
             if status:
                 rows = await conn.fetch("""
                     SELECT a.*, p.product_name
-                    FROM inv.alerts a
-                    LEFT JOIN inv.products p ON p.sku = a.sku
+                    FROM inventory.alerts a
+                    LEFT JOIN inventory.products p ON p.sku = a.sku
                     WHERE a.store_id = $1 AND a.status = $2
                     ORDER BY a.severity DESC, a.triggered_at DESC
                     LIMIT 100
@@ -122,8 +122,8 @@ class InventoryRepo:
             else:
                 rows = await conn.fetch("""
                     SELECT a.*, p.product_name
-                    FROM inv.alerts a
-                    LEFT JOIN inv.products p ON p.sku = a.sku
+                    FROM inventory.alerts a
+                    LEFT JOIN inventory.products p ON p.sku = a.sku
                     WHERE a.store_id = $1
                     ORDER BY a.severity DESC, a.triggered_at DESC
                     LIMIT 100
@@ -160,7 +160,7 @@ class InventoryRepo:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT COUNT(*) as count
-                FROM inv.alerts
+                FROM inventory.alerts
                 WHERE store_id = $1 AND status = 'pending'
             """, store_id)
             return row['count'] if row else 0
@@ -169,20 +169,20 @@ class InventoryRepo:
 
     async def get_all_products(self) -> list[dict]:
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM inv.products ORDER BY sku")
+            rows = await conn.fetch("SELECT * FROM inventory.products ORDER BY sku")
             return [dict(r) for r in rows]
 
     async def get_product(self, sku: str) -> Optional[dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM inv.products WHERE sku = $1", sku
+                "SELECT * FROM inventory.products WHERE sku = $1", sku
             )
             return dict(row) if row else None
 
     async def get_products_by_category(self, category: str) -> list[dict]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT * FROM inv.products WHERE category = $1 ORDER BY sku",
+                "SELECT * FROM inventory.products WHERE category = $1 ORDER BY sku",
                 category
             )
             return [dict(r) for r in rows]
@@ -190,7 +190,7 @@ class InventoryRepo:
     async def upsert_product(self, product: dict) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO inv.products
+                INSERT INTO inventory.products
                     (sku, product_name, category, unit_cost, unit_price,
                      lead_time_days, lead_time_std, moq, holding_cost_pct,
                      order_cost, lifecycle_stage)
@@ -221,14 +221,14 @@ class InventoryRepo:
     async def get_all_stores(self) -> list[dict]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT * FROM inv.stores WHERE active = TRUE ORDER BY store_id"
+                "SELECT * FROM inventory.stores WHERE active = TRUE ORDER BY store_id"
             )
             return [dict(r) for r in rows]
 
     async def get_store(self, store_id: str) -> Optional[dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM inv.stores WHERE store_id = $1", store_id
+                "SELECT * FROM inventory.stores WHERE store_id = $1", store_id
             )
             return dict(row) if row else None
 
@@ -239,7 +239,7 @@ class InventoryRepo:
     ) -> Optional[dict]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM inv.stock_levels "
+                "SELECT * FROM inventory.stock_levels "
                 "WHERE sku = $1 AND store_id = $2",
                 sku, store_id
             )
@@ -255,8 +255,8 @@ class InventoryRepo:
                     p.category,
                     p.lead_time_days,
                     p.moq
-                FROM inv.stock_levels sl
-                JOIN inv.products p ON p.sku = sl.sku
+                FROM inventory.stock_levels sl
+                JOIN inventory.products p ON p.sku = sl.sku
                 WHERE sl.store_id = $1
                 ORDER BY sl.remaining_days_of_stock ASC NULLS LAST
             """, store_id)
@@ -270,8 +270,8 @@ class InventoryRepo:
             if store_id:
                 rows = await conn.fetch("""
                     SELECT sl.*, p.product_name, p.lead_time_days, p.moq
-                    FROM inv.stock_levels sl
-                    JOIN inv.products p ON p.sku = sl.sku
+                    FROM inventory.stock_levels sl
+                    JOIN inventory.products p ON p.sku = sl.sku
                     WHERE sl.store_id = $1
                       AND sl.stock_min IS NOT NULL
                       AND sl.stock_current <= sl.stock_min
@@ -280,8 +280,8 @@ class InventoryRepo:
             else:
                 rows = await conn.fetch("""
                     SELECT sl.*, p.product_name, p.lead_time_days, p.moq
-                    FROM inv.stock_levels sl
-                    JOIN inv.products p ON p.sku = sl.sku
+                    FROM inventory.stock_levels sl
+                    JOIN inventory.products p ON p.sku = sl.sku
                     WHERE sl.stock_min IS NOT NULL
                       AND sl.stock_current <= sl.stock_min
                     ORDER BY sl.store_id, sl.stock_current ASC
@@ -293,7 +293,7 @@ class InventoryRepo:
     ) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO inv.stock_levels
+                INSERT INTO inventory.stock_levels
                     (sku, store_id, stock_current, stock_in_transit,
                      stock_min, stock_max, remaining_days_of_stock,
                      last_updated)
@@ -303,11 +303,11 @@ class InventoryRepo:
                     stock_in_transit        = EXCLUDED.stock_in_transit,
                     stock_min               = COALESCE(
                         EXCLUDED.stock_min,
-                        inv.stock_levels.stock_min
+                        inventory.stock_levels.stock_min
                     ),
                     stock_max               = COALESCE(
                         EXCLUDED.stock_max,
-                        inv.stock_levels.stock_max
+                        inventory.stock_levels.stock_max
                     ),
                     remaining_days_of_stock = EXCLUDED.remaining_days_of_stock,
                     last_updated            = NOW()
@@ -364,7 +364,7 @@ class InventoryRepo:
                 rows = await conn.fetch("""
                     SELECT df.*, p.product_name, p.lead_time_days
                     FROM inv.demand_forecast df
-                    JOIN inv.products p ON p.sku = df.sku
+                    JOIN inventory.products p ON p.sku = df.sku
                     WHERE df.forecast_date = $1 AND df.store_id = $2
                     ORDER BY df.demand_24h DESC
                 """, forecast_date, store_id)
@@ -372,7 +372,7 @@ class InventoryRepo:
                 rows = await conn.fetch("""
                     SELECT df.*, p.product_name
                     FROM inv.demand_forecast df
-                    JOIN inv.products p ON p.sku = df.sku
+                    JOIN inventory.products p ON p.sku = df.sku
                     WHERE df.forecast_date = $1
                     ORDER BY df.store_id, df.demand_24h DESC
                 """, forecast_date)
@@ -385,7 +385,7 @@ class InventoryRepo:
     ) -> str:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
-                INSERT INTO inv.agent_runs (agent_name, store_id, status)
+                INSERT INTO inventory.agent_runs (agent_name, store_id, status)
                 VALUES ($1, $2, 'running')
                 RETURNING id
             """, agent_name, store_id)
@@ -394,7 +394,7 @@ class InventoryRepo:
     async def complete_agent_run(self, run_id: str, **kwargs) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                UPDATE inv.agent_runs SET
+                UPDATE inventory.agent_runs SET
                     status                    = $2,
                     completed_at              = NOW(),
                     error_message             = $3,
@@ -417,13 +417,13 @@ class InventoryRepo:
         async with self.pool.acquire() as conn:
             if agent_name:
                 rows = await conn.fetch("""
-                    SELECT * FROM inv.agent_runs
+                    SELECT * FROM inventory.agent_runs
                     WHERE agent_name = $1
                     ORDER BY started_at DESC LIMIT $2
                 """, agent_name, limit)
             else:
                 rows = await conn.fetch("""
-                    SELECT * FROM inv.agent_runs
+                    SELECT * FROM inventory.agent_runs
                     ORDER BY started_at DESC LIMIT $1
                 """, limit)
             return [dict(r) for r in rows]
@@ -433,7 +433,7 @@ class InventoryRepo:
     async def insert_alert(self, alert: dict) -> str:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
-                INSERT INTO inv.alerts
+                INSERT INTO inventory.alerts
                     (sku, store_id, alert_type, severity,
                      recommended_action, estimated_stockout_date)
                 VALUES ($1,$2,$3,$4,$5,$6)
@@ -463,16 +463,16 @@ class InventoryRepo:
             if store_id:
                 rows = await conn.fetch(f"""
                     SELECT a.*, p.product_name
-                    FROM inv.alerts a
-                    JOIN inv.products p ON p.sku = a.sku
+                    FROM inventory.alerts a
+                    JOIN inventory.products p ON p.sku = a.sku
                     WHERE a.status = 'pending' AND a.store_id = $1
                     ORDER BY {severity_order}, a.triggered_at ASC
                 """, store_id)
             else:
                 rows = await conn.fetch(f"""
                     SELECT a.*, p.product_name
-                    FROM inv.alerts a
-                    JOIN inv.products p ON p.sku = a.sku
+                    FROM inventory.alerts a
+                    JOIN inventory.products p ON p.sku = a.sku
                     WHERE a.status = 'pending'
                     ORDER BY {severity_order}, a.triggered_at ASC
                 """)
@@ -483,7 +483,7 @@ class InventoryRepo:
     ) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                UPDATE inv.alerts
+                UPDATE inventory.alerts
                 SET status = 'resolved',
                     resolved_at = NOW(),
                     was_accurate = $2
@@ -519,7 +519,7 @@ class InventoryRepo:
                 rows = await conn.fetch("""
                     SELECT r.*, p.product_name, p.moq, p.lead_time_days
                     FROM inv.recommendations r
-                    JOIN inv.products p ON p.sku = r.sku
+                    JOIN inventory.products p ON p.sku = r.sku
                     WHERE r.status = 'pending' AND r.store_id = $1
                     ORDER BY r.confidence DESC NULLS LAST
                 """, store_id)
@@ -527,7 +527,7 @@ class InventoryRepo:
                 rows = await conn.fetch("""
                     SELECT r.*, p.product_name, p.moq, p.lead_time_days
                     FROM inv.recommendations r
-                    JOIN inv.products p ON p.sku = r.sku
+                    JOIN inventory.products p ON p.sku = r.sku
                     WHERE r.status = 'pending'
                     ORDER BY r.store_id, r.confidence DESC NULLS LAST
                 """)
@@ -608,7 +608,7 @@ class InventoryRepo:
     async def get_active_objectives(self) -> list[dict]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT * FROM inv.business_objectives
+                SELECT * FROM inventory.business_objectives
                 WHERE is_active = TRUE
                 ORDER BY priority ASC
             """)
@@ -651,11 +651,11 @@ class SyncInventoryRepo:
             return None
         try:
             return psycopg2.connect(
-                host     = os.getenv("DOCKER_DB_HOST"),
-                port     = int(os.getenv("DOCKER_DB_PORT", "5433")),
-                dbname   = os.getenv("DOCKER_DB_NAME"),
-                user     = os.getenv("DOCKER_DB_USER"),
-                password = os.getenv("DOCKER_DB_PASSWORD"),
+                host     = os.getenv("DB_HOST"),
+                port     = int(os.getenv("DB_PORT", "5432")),
+                dbname   = os.getenv("DB_NAME"),
+                user     = os.getenv("DB_USER"),
+                password = os.getenv("DB_PASSWORD"),
             )
         except Exception as exc:
             logger.warning("SyncInventoryRepo: DB connection failed: %s", exc)
@@ -780,7 +780,7 @@ class SyncInventoryRepo:
     @staticmethod
     def get_product(sku: str) -> Optional[dict]:
         """
-        One row from inv.products, or None if not found / DB unavailable.
+        One row from inventory.products, or None if not found / DB unavailable.
         Column names match product_master.csv so stock_tools needs no changes.
         """
         conn = SyncInventoryRepo._conn()
@@ -788,7 +788,7 @@ class SyncInventoryRepo:
             return None
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("SELECT * FROM inv.products WHERE sku = %s", (sku,))
+                cur.execute("SELECT * FROM inventory.products WHERE sku = %s", (sku,))
                 row = cur.fetchone()
                 return dict(row) if row else None
         except Exception as exc:
@@ -799,14 +799,14 @@ class SyncInventoryRepo:
 
     @staticmethod
     def get_stock_level(sku: str, store_id: str) -> Optional[dict]:
-        """One row from inv.stock_levels, or None."""
+        """One row from inventory.stock_levels, or None."""
         conn = SyncInventoryRepo._conn()
         if conn is None:
             return None
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    "SELECT * FROM inv.stock_levels WHERE sku = %s AND store_id = %s",
+                    "SELECT * FROM inventory.stock_levels WHERE sku = %s AND store_id = %s",
                     (sku, store_id),
                 )
                 row = cur.fetchone()
@@ -904,7 +904,7 @@ class SyncInventoryRepo:
     @staticmethod
     def get_active_objective() -> Optional[dict]:
         """
-        The currently active row from inv.business_objectives.
+        The currently active row from inventory.business_objectives.
         Returns full row including label and metadata (JSONB → plain dict).
         None if DB unavailable or no active row.
         """
@@ -915,7 +915,7 @@ class SyncInventoryRepo:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
                     SELECT *
-                    FROM inv.business_objectives
+                    FROM inventory.business_objectives
                     WHERE is_active = TRUE
                     ORDER BY priority ASC
                     LIMIT 1
@@ -933,7 +933,7 @@ class SyncInventoryRepo:
     @staticmethod
     def start_agent_run(agent_name: str, store_id: str) -> Optional[str]:
         """
-        Insert a new row in inv.agent_runs with status='running'.
+        Insert a new row in inventory.agent_runs with status='running'.
         Returns the UUID as a string, or None if DB unavailable.
         """
         conn = SyncInventoryRepo._conn()
@@ -942,7 +942,7 @@ class SyncInventoryRepo:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO inv.agent_runs (agent_name, store_id, status)
+                    INSERT INTO inventory.agent_runs (agent_name, store_id, status)
                     VALUES (%s, %s, 'running')
                     RETURNING id
                 """, (agent_name, store_id))
@@ -962,7 +962,7 @@ class SyncInventoryRepo:
         alerts_generated: int = 0,
         error_message: str = None,
     ) -> None:
-        """Update inv.agent_runs row with final status and counts."""
+        """Update inventory.agent_runs row with final status and counts."""
         if run_id is None:
             return
         conn = SyncInventoryRepo._conn()
@@ -971,7 +971,7 @@ class SyncInventoryRepo:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE inv.agent_runs SET
+                    UPDATE inventory.agent_runs SET
                         status           = %s,
                         completed_at     = NOW(),
                         items_processed  = %s,
@@ -993,7 +993,7 @@ class SyncInventoryRepo:
         remaining_days_of_stock: float = None,
     ) -> None:
         """
-        Update inv.stock_levels with the latest computed values.
+        Update inventory.stock_levels with the latest computed values.
         Only touches stock_current and remaining_days_of_stock —
         stock_min / stock_max were set by init_stock_levels.py and stay.
         """
@@ -1003,7 +1003,7 @@ class SyncInventoryRepo:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE inv.stock_levels SET
+                    UPDATE inventory.stock_levels SET
                         stock_current           = %s,
                         remaining_days_of_stock = %s,
                         last_updated            = NOW()
@@ -1028,7 +1028,7 @@ class SyncInventoryRepo:
         agent_run_id: str = None,
     ) -> bool:
         """
-        Insert a row into inv.alerts only if no pending alert of the same
+        Insert a row into inventory.alerts only if no pending alert of the same
         type already exists for this (sku, store_id).
         Returns True if inserted, False if skipped (dedup).
         """
@@ -1042,7 +1042,7 @@ class SyncInventoryRepo:
                 # caused silent failures so the dedup check never matched.
                 # Cooldown extended from 4h to 24h.
                 cur.execute("""
-                    SELECT 1 FROM inv.alerts
+                    SELECT 1 FROM inventory.alerts
                     WHERE sku = %s AND store_id = %s
                       AND alert_type = %s
                       AND (
@@ -1102,7 +1102,7 @@ class SyncInventoryRepo:
                 # caused silent failures so the dedup check never matched.
                 # Cooldown extended from 4h to 24h.
                 cur.execute("""
-                    SELECT id FROM inv.alerts
+                    SELECT id FROM inventory.alerts
                     WHERE sku = %s AND store_id = %s
                       AND alert_type = %s
                       AND (
@@ -1251,7 +1251,7 @@ class SyncInventoryRepo:
     @staticmethod
     def get_any_objective() -> Optional[dict]:
         """
-        Fallback: fetch the highest-priority row from inv.business_objectives
+        Fallback: fetch the highest-priority row from inventory.business_objectives
         regardless of is_active. Used when no row is active.
         """
         conn = SyncInventoryRepo._conn()
@@ -1261,7 +1261,7 @@ class SyncInventoryRepo:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
                     SELECT *
-                    FROM inv.business_objectives
+                    FROM inventory.business_objectives
                     ORDER BY priority ASC
                     LIMIT 1
                 """)
@@ -1282,7 +1282,7 @@ class SyncInventoryRepo:
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    "SELECT * FROM inv.business_objectives ORDER BY priority ASC"
+                    "SELECT * FROM inventory.business_objectives ORDER BY priority ASC"
                 )
                 return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
@@ -1302,7 +1302,7 @@ class SyncInventoryRepo:
             return False
         try:
             with conn.cursor() as cur:
-                cur.execute("UPDATE inv.business_objectives SET is_active = FALSE")
+                cur.execute("UPDATE inventory.business_objectives SET is_active = FALSE")
                 cur.execute(
                     "UPDATE inv.business_objectives SET is_active = TRUE WHERE label = %s",
                     (objective_type,)

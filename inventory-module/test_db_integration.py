@@ -47,7 +47,7 @@ try:
     import psycopg2
     conn = psycopg2.connect(
         host    = os.getenv("DOCKER_DB_HOST"),
-        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5432")),
         dbname  = os.getenv("DOCKER_DB_NAME"),
         user    = os.getenv("DOCKER_DB_USER"),
         password= os.getenv("DOCKER_DB_PASSWORD"),
@@ -70,7 +70,7 @@ from db.repositories.inventory_repo import SyncInventoryRepo
 import psycopg2, psycopg2.extras, os
 conn = psycopg2.connect(
         host    = os.getenv("DOCKER_DB_HOST"),
-        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5432")),
         dbname  = os.getenv("DOCKER_DB_NAME"),
         user    = os.getenv("DOCKER_DB_USER"),
         password= os.getenv("DOCKER_DB_PASSWORD"),
@@ -132,7 +132,7 @@ if run_id:
 # Verify in DB
 conn = psycopg2.connect(
         host    = os.getenv("DOCKER_DB_HOST"),
-        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5432")),
         dbname  = os.getenv("DOCKER_DB_NAME"),
         user    = os.getenv("DOCKER_DB_USER"),
         password= os.getenv("DOCKER_DB_PASSWORD"),
@@ -182,7 +182,7 @@ print("\n── 5. alert insert + dedup ─────────────�
 # Clean up any leftover test alert first
 conn = psycopg2.connect(
         host    = os.getenv("DOCKER_DB_HOST"),
-        port    = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        port    = int(os.getenv("DOCKER_DB_PORT", "5432")),
         dbname  = os.getenv("DOCKER_DB_NAME"),
         user    = os.getenv("DOCKER_DB_USER"),
         password= os.getenv("DOCKER_DB_PASSWORD"),

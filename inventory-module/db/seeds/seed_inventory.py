@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 async def get_pool() -> asyncpg.Pool:
     return await asyncpg.create_pool(
         host     = os.getenv("DOCKER_DB_HOST",     "localhost"),
-        port     = int(os.getenv("DOCKER_DB_PORT", "5433")),
+        port     = int(os.getenv("DOCKER_DB_PORT", "5432")),
         database = os.getenv("DOCKER_DB_NAME",     "asc_db"),
         user     = os.getenv("DOCKER_DB_USER",     "asc_user"),
         password = os.getenv("DOCKER_DB_PASSWORD", "asc_password"),

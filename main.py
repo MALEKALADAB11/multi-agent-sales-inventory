@@ -27,8 +27,11 @@ sys.path.insert(0, os.path.join(BASE_DIR, "inventory-module"))
 sys.path.insert(0, os.path.join(BASE_DIR, "sales-module"))
 
 # ── .env ─────────────────────────────────────────────────────────────────────
+# Charger d'abord les sous-modules SANS override (ne pas écraser)
 for env_dir in ("inventory-module", "sales-module"):
-    load_dotenv(os.path.join(BASE_DIR, env_dir, ".env"), override=True)
+    load_dotenv(os.path.join(BASE_DIR, env_dir, ".env"), override=False)
+# Charger le .env racine EN DERNIER avec override (source de vérité)
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # ── Auth après sys.path ──────────────────────────────────────────────────────
 from auth_router import router as auth_router, setup_auth_tables
@@ -70,6 +73,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _active_stores: set[str] = set()
+_live_stock: Dict[str, int] = {}  # stock live en mémoire
+_live_stock: Dict[str, int] = {}  # stock live en mémoire
 
 STORE_MAP = {
     "store-lac2": "I63",
@@ -173,6 +178,7 @@ async def startup_event():
     logger.info("✅ TimesFM chargé")
 
     # 3. Simulateur
+    stock_sim = None  # initialisé après le simulateur
     simulator = RealtimeSimulator(json_svc, interval_seconds=15)
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:

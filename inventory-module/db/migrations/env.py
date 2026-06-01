@@ -18,7 +18,7 @@ db_url = (
     f"postgresql://{os.getenv('DOCKER_DB_USER')}"
     f":{os.getenv('DOCKER_DB_PASSWORD')}"
     f"@{os.getenv('DOCKER_DB_HOST')}"
-    f":{os.getenv('DOCKER_DB_PORT', '5433')}"
+    f":{os.getenv('DOCKER_DB_PORT', '5432')}"
     f"/{os.getenv('DOCKER_DB_NAME')}"
 )
 config.set_main_option("sqlalchemy.url", db_url)

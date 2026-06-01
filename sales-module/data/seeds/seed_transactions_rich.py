@@ -24,7 +24,7 @@ ADVISORS = [
 
 async def seed():
     conn = await asyncpg.connect(
-        "postgresql://asc_user:asc_password@localhost:5433/asc_db"
+        "postgresql://asc_user:asc_password@localhost:5432/asc_db"
     )
 
     today = date.today()

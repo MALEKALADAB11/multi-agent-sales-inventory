@@ -10,7 +10,9 @@ Flow :
 
 Chaque node loggue dans agent_logs (PostgreSQL) via AgentLogger.
 """
-
+from shared_module import AgentLogger
+# ou
+from shared_module.agent_logger import AgentLogger
 import logging
 import os
 import time
