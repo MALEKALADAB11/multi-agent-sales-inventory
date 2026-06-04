@@ -79,11 +79,44 @@ class InventoryOrchestrator:
         business_objective: str = "balanced",
         agent_run_id:       Optional[str] = None,
     ) -> Dict[str, Any]:
+        # DB is the sole source of truth for the active objective.
+        # The caller's business_objective is only a fallback when DB is unavailable.
+        resolved_objective   = business_objective
+        service_level_target = 0.95
+        if _DB_AVAILABLE:
+            try:
+                obj = SyncInventoryRepo.get_active_objective()
+                if obj:
+                    resolved_objective = (
+                        obj.get("objective_type")
+                        or obj.get("label")
+                        or business_objective
+                    )
+                    meta = obj.get("metadata") or {}
+                    if isinstance(meta, str):
+                        import json
+                        try:
+                            meta = json.loads(meta)
+                        except Exception:
+                            meta = {}
+                    service_level_target = float(
+                        meta.get("service_level_target")
+                        or obj.get("target_value")
+                        or 0.95
+                    )
+                    logger.info(
+                        "[Orchestrator] Single-SKU objective from DB: %s | SL target: %.2f",
+                        resolved_objective, service_level_target,
+                    )
+            except Exception as exc:
+                logger.warning("[Orchestrator] get_active_objective failed: %s", exc)
+
         return self._run_pipeline(
-            sku, store_id, business_objective, agent_run_id,
+            sku, store_id, resolved_objective, agent_run_id,
             analysis_agent=self._analysis_agent,
             context_agent=self._context_agent,
             decision_agent=self._decision_agent,
+            service_level_target=service_level_target,
         )
 
     # ── Batch ─────────────────────────────────────────────────────────────────
@@ -119,13 +152,35 @@ class InventoryOrchestrator:
         # Previously fetch_node called get_active_objective + get_stock_level
         # + get_product for every SKU. Pre-fetch all three here once.
 
-        resolved_objective = business_objective
+        resolved_objective    = business_objective
+        service_level_target  = 0.95   # default — overridden from DB objective below
         if _DB_AVAILABLE:
             try:
                 obj = SyncInventoryRepo.get_active_objective()
                 if obj:
-                    resolved_objective = obj.get("label") or obj.get("objective_type") or business_objective
-                    logger.info("[Orchestrator] Active objective: %s", resolved_objective)
+                    resolved_objective = (
+                        obj.get("objective_type")
+                        or obj.get("label")
+                        or business_objective
+                    )
+                    # service_level_target lives in the metadata JSONB column,
+                    # with target_value as a fallback (both columns populated by seeds).
+                    meta = obj.get("metadata") or {}
+                    if isinstance(meta, str):
+                        import json
+                        try:
+                            meta = json.loads(meta)
+                        except Exception:
+                            meta = {}
+                    service_level_target = float(
+                        meta.get("service_level_target")
+                        or obj.get("target_value")
+                        or 0.95
+                    )
+                    logger.info(
+                        "[Orchestrator] Active objective from DB: %s | SL target: %.2f",
+                        resolved_objective, service_level_target,
+                    )
             except Exception as exc:
                 logger.warning("[Orchestrator] get_active_objective failed: %s", exc)
 
@@ -144,8 +199,17 @@ class InventoryOrchestrator:
             try:
                 prod_batch = SyncInventoryRepo.get_products_batch(skus)
                 if prod_batch:
+                    # Inject service_level_target from the active objective into every
+                    # product dict. The column was removed from inv.products (it belongs
+                    # on the objective, not the product). The analysis agent's compute_node
+                    # reads product.get("service_level_target", 0.95) — this keeps it working.
+                    for product in prod_batch.values():
+                        product["service_level_target"] = service_level_target
                     preloaded_products = prod_batch
-                    logger.info("[Orchestrator] Pre-fetched products for %d/%d SKUs", len(prod_batch), len(skus))
+                    logger.info(
+                        "[Orchestrator] Pre-fetched products for %d/%d SKUs | SL=%.2f injected",
+                        len(prod_batch), len(skus), service_level_target,
+                    )
             except Exception as exc:
                 logger.warning("[Orchestrator] get_products_batch failed: %s", exc)
 
@@ -167,6 +231,7 @@ class InventoryOrchestrator:
                     decision_agent=decision_agent,
                     preloaded_stock=preloaded_stock,
                     preloaded_products=preloaded_products,
+    
                 )
             except Exception as exc:
                 logger.error("[Orchestrator] SKU %s worker error: %s", sku, exc)
@@ -212,15 +277,16 @@ class InventoryOrchestrator:
 
     def _run_pipeline(
         self,
-        sku:                str,
-        store_id:           str,
-        business_objective: str,
-        agent_run_id:       Optional[str],
+        sku:                  str,
+        store_id:             str,
+        business_objective:   str,
+        agent_run_id:         Optional[str],
         analysis_agent,
         context_agent,
         decision_agent,
-        preloaded_stock:    Dict[str, Any] = None,
-        preloaded_products: Dict[str, Any] = None,
+        preloaded_stock:      Dict[str, Any] = None,
+        preloaded_products:   Dict[str, Any] = None,
+        service_level_target: float = 0.95,
     ) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "sku":                sku,
@@ -235,6 +301,7 @@ class InventoryOrchestrator:
                 sku, store_id, business_objective, agent_run_id,
                 preloaded_stock=preloaded_stock,
                 preloaded_product=preloaded_products.get(sku) if preloaded_products else None,
+
             )
             result["analysis_report"] = raw.get("analysis_report", {})
             analysis_report           = result["analysis_report"]

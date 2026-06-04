@@ -30,6 +30,7 @@ from auth_router import router as auth_router, setup_auth_tables
 
 # IMPORTANT : PostgreSQL officiel, pas mock
 from data.postgres_provider import get_data_provider
+from csv_realtime_provider import get_csv_provider as _get_csv_provider
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -227,6 +228,20 @@ async def startup_event():
 
         logger.info("📉 Sale: %s | %.0f → %.0f units (-%d)", sku_str, current, new_stock, units)
 
+        # ── Informer le CSVRealtimeProvider de la vente live ────────────────
+        try:
+            _csv_prov = _get_csv_provider()
+            # Estimer le prix depuis stock_tools ou fallback
+            try:
+                from src.tools.internal.stock_tools import _DataCache
+                _prod = _DataCache.get_product(sku_str) or {}
+                _price = float(_prod.get("unit_price") or _prod.get("pv_ttc") or 50.0)
+            except Exception:
+                _price = 50.0
+            _csv_prov.add_live_sale(sku_str, "SIM", _price, units)
+        except Exception as _exc:
+            logger.debug(f"[CSV_PROVIDER] add_live_sale: {_exc}")
+
         # ── 3 & 4. Persist to DB then broadcast (in order) ────────────────────
         # DB write must complete before broadcast triggers pipeline re-run,
         # otherwise the pipeline reads stale stock from DB.
@@ -421,23 +436,34 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
     print(f"  🤖 AGENT ANALYSTE — Cycle #{cycle} @ {datetime.now().strftime('%H:%M:%S')} | {store_id}")
     print(f"{'=' * 60}")
 
-    provider = get_data_provider()
+    # ── CSV Realtime Provider (remplace postgres_provider figé) ───────────────
+    csv_provider = _get_csv_provider()
 
     try:
-        pos_data = await provider.fetch_pos_data(store_id)
-        pos_history = await provider.fetch_pos_history(store_id)
-        prediction = await provider.fetch_timesfm_prediction(store_id)
+        pos_data    = await csv_provider.fetch_pos_data(store_id)
+        pos_history = await csv_provider.fetch_pos_history(store_id)
+        prediction  = await csv_provider.fetch_timesfm_prediction(store_id)
+        logger.info(
+            f"[CSV] CA={pos_data['current_revenue']:.0f} TND "
+            f"(hist={pos_data['ca_historique']:.0f} + live={pos_data['ca_live']:.0f}) | "
+            f"TX={pos_data['nb_transactions_today']} | "
+            f"EOD_forecast={prediction['forecast_end_of_day']:.0f} TND"
+        )
     except Exception as e:
-        logger.warning(f"[RUN_AGENTS] Data fallback: {e}")
-        pos_data = {
-            "store_id": store_id,
-            "daily_target": 1007,
-            "current_revenue": 0,
-            "nb_transactions_today": 0,
-            "data_status": "unavailable",
-        }
-        pos_history = []
-        prediction = {"forecast_end_of_day": 0, "mape": 99, "source": "fallback"}
+        logger.warning(f"[CSV_PROVIDER] Fallback PostgreSQL: {e}")
+        provider = get_data_provider()
+        try:
+            pos_data    = await provider.fetch_pos_data(store_id)
+            pos_history = await provider.fetch_pos_history(store_id)
+            prediction  = await provider.fetch_timesfm_prediction(store_id)
+        except Exception as e2:
+            logger.warning(f"[RUN_AGENTS] Double fallback: {e2}")
+            pos_data    = {"store_id": store_id, "daily_target": 1007,
+                          "current_revenue": 0, "nb_transactions_today": 0,
+                          "data_status": "unavailable"}
+            pos_history = []
+            prediction  = {"forecast_end_of_day": 0, "mape": 99, "source": "fallback"}
+
 
     cr = pos_data.get("current_revenue", 0) or 0
     dt_val = pos_data.get("daily_target", 1007) or 1007
@@ -656,9 +682,9 @@ def _build_payload(analysis: dict) -> dict:
         pg_sellers = _query("""
             SELECT a.agent_id,
                    a.agent_name || ' ' || a.agent_surname AS full_name,
-                   COALESCE(SUM(CASE WHEN t.date_only = CURRENT_DATE THEN t.lig_ttc ELSE 0 END), 0) AS revenue_today,
+                   COALESCE(SUM(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN t.lig_ttc ELSE 0 END), 0) AS revenue_today,
                    COALESCE(SUM(t.lig_ttc), 0) AS revenue_total,
-                   COUNT(CASE WHEN t.date_only = CURRENT_DATE THEN 1 END) AS nb_ventes
+                   COUNT(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN 1 END) AS nb_ventes
             FROM agents a
             LEFT JOIN transactions t ON t.agent_id = a.agent_id
                 AND t.store_id = 'I63'
@@ -834,10 +860,23 @@ def _build_payload(analysis: dict) -> dict:
             "value": 0.2,
         })
 
+    # ── Stock Health depuis inventory cache ─────────────────────────────────
+    _stock_health = {"critical": 0, "total": 0, "optimal": 0}
+    try:
+        from src.tools.internal.stock_tools import _DataCache
+        _overrides = getattr(_DataCache, "_stock_overrides", {})
+        _critical = sum(1 for v in _overrides.values() if float(v or 0) < 3)
+        _total = len(_overrides)
+        _optimal = _total - _critical
+        _stock_health = {"critical": _critical, "total": _total, "optimal": _optimal}
+    except Exception:
+        pass
+
     return {
         "type": "metrics_update",
         "timestamp": datetime.now().isoformat(),
         "ca_today": cr,
+        "stock_health": _stock_health,
         "ca_target": dt_val,
         "attainment": att,
         "visitors_h": visitors_h,
@@ -1115,9 +1154,9 @@ async def get_advisors(store_id: str):
         pg = _query("""
             SELECT a.agent_id,
                    a.agent_name || ' ' || a.agent_surname AS full_name,
-                   COALESCE(SUM(CASE WHEN t.date_only = CURRENT_DATE THEN t.lig_ttc ELSE 0 END), 0) AS revenue_today,
+                   COALESCE(SUM(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN t.lig_ttc ELSE 0 END), 0) AS revenue_today,
                    COALESCE(SUM(t.lig_ttc), 0) AS revenue_total,
-                   COUNT(CASE WHEN t.date_only = CURRENT_DATE THEN 1 END) AS nb_ventes
+                   COUNT(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN 1 END) AS nb_ventes
             FROM agents a
             LEFT JOIN transactions t ON t.agent_id = a.agent_id
                 AND t.store_id = 'I63'

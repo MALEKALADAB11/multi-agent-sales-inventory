@@ -206,7 +206,7 @@ async def node_rag_search(state: SalesAgentState) -> dict:
         resp = requests.post(
             f"{OLLAMA_URL}/api/embeddings",
             json={"model": "nomic-embed-text", "prompt": rag_query},
-            timeout=15,
+            timeout=30,
         )
         emb = resp.json().get("embedding", [])
         if not emb:

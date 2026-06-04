@@ -63,7 +63,6 @@ def compute_effective_service_level(
     """
     sl = base_service_level
 
-    # Lifecycle additive adjustments — union of old CSV strings + DB strings
     lifecycle_adjustments = {
         "introduction": +0.03,
         "new_launch":   +0.03,
@@ -79,7 +78,6 @@ def compute_effective_service_level(
     if adj != 0.0:
         sl += adj
 
-    # Objective-based bounds (same as old code, covers DB label variants)
     obj_settings = {
         "cost":          {"min": 0.75,                          "max": base_service_level},
         "cost_savings":  {"min": 0.75,                          "max": base_service_level},
@@ -94,8 +92,6 @@ def compute_effective_service_level(
     bounds     = obj_settings.get(business_objective.lower(),
                                   {"min": base_service_level, "max": base_service_level})
     sl_clipped = max(bounds["min"], min(sl, bounds["max"]))
-
-    # Hard floor/ceiling
     sl_final   = max(0.70, min(sl_clipped, 0.999))
 
     notes = []
@@ -132,19 +128,14 @@ def compute_demand_std(
       - DataFrame is empty
       - Fewer than 14 rows after filtering
       - Computed std is NaN or effectively zero
-
-    Args:
-        sales_df:         Pre-filtered DataFrame for one SKU/store
-        avg_daily_demand: Fallback multiplier
-        lookback_days:    How many recent days to use
     """
     if sales_df.empty or len(sales_df) < 14:
         return avg_daily_demand * 0.30
 
     try:
-        df       = sales_df.sort_values("date").tail(lookback_days)
-        daily    = df.groupby("date")["quantity_sold"].sum()
-        std_dev  = float(daily.std())
+        df      = sales_df.sort_values("date").tail(lookback_days)
+        daily   = df.groupby("date")["quantity_sold"].sum()
+        std_dev = float(daily.std())
 
         if math.isnan(std_dev) or std_dev < 0.01:
             return avg_daily_demand * 0.30
@@ -230,23 +221,9 @@ def classify_risk(
       else                               → LOW
 
     Final risk = higher of the two layers.
-    Both triggers are reported so the LLM evaluator can see which layer fired.
-
-    Returns:
-        {
-            "level": str,              # final level after layer combination
-            "raw_level": str,          # same (LLM may override later)
-            "override": None,          # set by reason node if LLM overrides
-            "overstock_flag": bool,
-            "threshold_triggered": str,  # "stock_min" | "stock_max" | "lead_time_math"
-            "rationale": str,
-            "layer1_result": str | None,
-            "layer2_result": str
-        }
     """
     total_stock = stock_current + stock_in_transit
 
-    # Layer 1: manager thresholds
     layer1_risk      = None
     layer1_rationale = None
     overstock_flag   = False
@@ -267,7 +244,6 @@ def classify_risk(
         elif threshold != "stock_min":
             threshold = "stock_max"
 
-    # Layer 2: lead-time math
     lt_variability_buffer = lead_time_std * 2
 
     if days_remaining < lead_time_avg:
@@ -296,15 +272,14 @@ def classify_risk(
             f"({lead_time_avg * 2.5:.0f}d). Well covered."
         )
 
-    # Higher risk wins
     risk_rank = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
     if layer1_risk and risk_rank[layer1_risk] >= risk_rank[layer2_risk]:
-        final_level    = layer1_risk
-        final_rationale= layer1_rationale
+        final_level     = layer1_risk
+        final_rationale = layer1_rationale
     else:
-        final_level    = layer2_risk
-        final_rationale= layer2_rationale
+        final_level     = layer2_risk
+        final_rationale = layer2_rationale
 
     if overstock_flag:
         final_rationale += f" WARNING: {days_remaining:.0f} days of stock — excess capital tied up."
@@ -360,13 +335,11 @@ def compute_inventory_metrics(
 
     Returns structured dict matching the analysis_report format.
     """
-    # Apply uplift to demand if requested
     if promo_uplift_pct != 0.0:
         uplift_factor    = 1.0 + (promo_uplift_pct / 100.0)
         avg_daily_demand = avg_daily_demand * uplift_factor
         total_30d_demand = total_30d_demand * uplift_factor
 
-    # Effective service level
     eff_sl, sl_explanation = compute_effective_service_level(
         service_level_target, lifecycle_stage, business_objective
     )
@@ -379,16 +352,13 @@ def compute_inventory_metrics(
     eoq               = compute_eoq(avg_daily_demand, unit_cost, holding_cost_pct, order_cost)
     formula_order_qty = max(moq, round(eoq))
 
-    # Days of stock remaining (using current stock only — conservative)
     days_remaining = stock_current / avg_daily_demand if avg_daily_demand > 0 else 999.0
 
-    # Two-layer risk classification
     risk_data = classify_risk(
         days_remaining, stock_current, stock_in_transit,
         stock_min, stock_max, lead_time_avg, lead_time_std
     )
 
-    # Cost flags
     total_replenishment_cost = formula_order_qty * unit_cost
     holding_cost_per_cycle   = (formula_order_qty / 2) * unit_cost * holding_cost_pct
     safety_stock_cost        = safety_stock * unit_cost
@@ -399,11 +369,20 @@ def compute_inventory_metrics(
 
     return {
         "stock": {
-            "current_stock":    stock_current,
-            "stock_in_transit": stock_in_transit,
-            "stock_min":        stock_min,
-            "stock_max":        stock_max,
-            "lifecycle_stage":  lifecycle_stage,
+            "current_stock":      stock_current,
+            "stock_in_transit":   stock_in_transit,
+            "stock_min":          stock_min,
+            "stock_max":          stock_max,
+            "lifecycle_stage":    lifecycle_stage,
+            # ── Product fields carried through so decision agent can
+            #    re-run compute_inventory_metrics with uplift applied
+            #    using real values instead of silent defaults. ──────────
+            "lead_time_avg_days":    lead_time_avg,
+            "lead_time_std_days":    lead_time_std,
+            "unit_cost":             unit_cost,
+            "holding_cost_pct":      holding_cost_pct,
+            "order_cost":            order_cost,
+            "service_level_target":  service_level_target,
         },
         "forecast": {
             "avg_daily_demand": avg_daily_demand,
@@ -426,17 +405,17 @@ def compute_inventory_metrics(
         },
         "risk_assessment": risk_data,
         "constraints": {
-            "moq":                    moq,
-            "moq_is_binding":         moq_is_binding,
+            "moq":             moq,
+            "moq_is_binding":  moq_is_binding,
             "moq_binding_note": (
                 f"EOQ ({eoq:.0f}) < MOQ ({moq:.0f}) — ordering more than optimal"
                 if moq_is_binding else
                 f"EOQ ({eoq:.0f}) ≥ MOQ ({moq:.0f}) — EOQ drives order size"
             ),
-            "high_cost_flag":         high_cost_flag,
-            "high_holding_flag":      high_holding_flag,
-            "objective_conflict":     False,   # set by LLM in reason node
-            "objective_conflict_note":None,
+            "high_cost_flag":          high_cost_flag,
+            "high_holding_flag":       high_holding_flag,
+            "objective_conflict":      False,   # set by LLM in reason node
+            "objective_conflict_note": None,
         },
         "objective_note":   "",    # filled by LLM in reason node
         "analyst_flag":     None,  # filled by LLM in reason node
