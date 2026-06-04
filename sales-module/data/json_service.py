@@ -276,6 +276,30 @@ class JsonDataService:
 
     # ── CA ────────────────────────────────────────────────────────────────────
 
+    def get_nb_transactions(self) -> int:
+        """Nombre de transactions du jour depuis PostgreSQL."""
+        try:
+            row = _query_one(
+                "SELECT COUNT(*) AS nb FROM transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
+                (self._cd,),
+            )
+            nb = int(row.get("nb", 0))
+            if nb > 0:
+                return nb
+        except Exception:
+            pass
+        # Fallback: depuis MAX(date_only)
+        try:
+            row = _query_one(
+                """SELECT COUNT(*) AS nb FROM transactions 
+                   WHERE store_id=%s AND date_only=(SELECT MAX(date_only) FROM transactions WHERE store_id=%s)
+                   AND lig_ttc>0""",
+                (self._cd, self._cd),
+            )
+            return int(row.get("nb", 0))
+        except Exception:
+            return 0
+
     def get_ca_total(self) -> float:
         """CA du jour depuis PostgreSQL. Fallback sur mock_provider si 0."""
         row = _query_one("""

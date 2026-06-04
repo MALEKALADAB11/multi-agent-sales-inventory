@@ -46,7 +46,7 @@ def _embed(text: str) -> Optional[list]:
         resp = requests.post(
             f"{OLLAMA_URL}/api/embeddings",
             json={"model": EMBED_MODEL, "prompt": text},
-            timeout=10,
+            timeout=30,
         )
         resp.raise_for_status()
         return resp.json()["embedding"]

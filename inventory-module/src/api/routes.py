@@ -520,7 +520,7 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
 def get_orchestrator():
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = create_orchestrator(use_llm=True)  # Force LLM enabled
+        _orchestrator = create_orchestrator(use_llm=False)  # Force LLM enabled
     return _orchestrator
 
 
@@ -678,7 +678,7 @@ def _to_inventory_item(
         "stable"
     )
     raw_cat = str(pi.get("category") or "").strip()
-    return {
+    item = {
         "id":               f"inv-{sku}",
         "sku":              sku,
         "name":             str(pi.get("name", "") or sku).strip() or str(sku),
@@ -720,11 +720,51 @@ def _to_inventory_item(
         "objectiveConflict": report.get("objective_conflict", False),
         "unitCost":         pi.get("unit_cost", 0),
         "moq":              pi.get("moq", 0),
-        "recommendation":   None,
-        "recommendationDetail": None,
-        "finalOrderQty":    None,
-        "orderTiming":      None,
+        # ── Decision agent output ────────────────────────────────────────
+        # decision_result is always present when the full pipeline ran.
+        # dec falls back to {} so every .get() below is safe.
+        "recommendation":         None,
+        "recommendationDetail":   None,
+        "recommendationId":       None,   # inv.recommendations UUID — used by PATCH /recommendations/{id}
+        "recommendationStatus":   "pending",  # current DB status — used by frontend to rehydrate UI state
+        "finalOrderQty":          None,
+        "orderTiming":            None,
+        "decisionConfidence":     None,
+        "escalateToHuman":        False,
+        "escalationReason":       None,
+        "tradeOffs":              None,
     }
+
+    # Patch in decision agent fields after item dict is built.
+    # Kept separate so the block is easy to find and the fallback Nones above
+    # remain valid when decision_result is missing (fast/rule-based path).
+    decision_result = result.get("decision_result", {}) or {}
+    dec             = decision_result.get("decision", {}) or {}
+
+    if dec:
+        item["recommendation"]       = dec.get("action")
+        item["recommendationDetail"] = dec.get("recommendation_text")
+        item["recommendationId"]     = decision_result.get("recommendation_id")
+        item["finalOrderQty"]        = dec.get("order_qty")
+        item["orderTiming"]          = dec.get("urgency")
+        item["decisionConfidence"]   = dec.get("confidence")
+        item["escalateToHuman"]      = bool(dec.get("escalate_to_human", False))
+        item["escalationReason"]     = dec.get("escalation_reason")
+        item["tradeOffs"]            = dec.get("trade_offs")
+
+        # Pull the live status from DB so the frontend can rehydrate UI state.
+        # get_latest_recommendation returns the most recent row for this SKU.
+        rec_id = decision_result.get("recommendation_id")
+        if rec_id:
+            try:
+                from db.repositories.inventory_repo import SyncInventoryRepo
+                rec_row = SyncInventoryRepo.get_recommendation_by_id(rec_id)
+                if rec_row:
+                    item["recommendationStatus"] = rec_row.get("status", "pending")
+            except Exception:
+                pass  # Non-fatal — frontend defaults to pending
+
+    return item
 
 
 def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dict[str, Any]]:
@@ -1396,6 +1436,83 @@ async def update_alert(alert_id: str, req: UpdateAlertRequest) -> Dict[str, Any]
         raise
     except Exception as exc:
         logger.error("Failed to update alert %s: %s", alert_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Recommendation Management
+# ══════════════════════════════════════════════════════════════════════════════
+
+class UpdateRecommendationRequest(BaseModel):
+    status: str = Field(
+        ...,
+        description=(
+            "New status. Allowed values: "
+            "'approved' — operator confirmed the order; "
+            "'rejected' — operator dismissed the recommendation."
+        )
+    )
+    decided_by: Optional[str] = Field(
+        default=None,
+        description="Optional identifier for the user who made the decision.",
+    )
+
+
+@router.patch("/recommendations/{recommendation_id}")
+async def update_recommendation(
+    recommendation_id: str,
+    req: UpdateRecommendationRequest,
+) -> Dict[str, Any]:
+    """
+    Update a recommendation's status.
+
+    {recommendation_id} must be the UUID returned in the 'recommendationId'
+    field of each inventory item (written by the decision agent to inv.recommendations).
+
+    Valid statuses:
+        approved — operator confirmed and will place the order
+        rejected — operator dismissed the recommendation
+    """
+    VALID_STATUSES = {"approved", "rejected"}
+
+    if req.status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{req.status}'. Must be one of: {sorted(VALID_STATUSES)}",
+        )
+
+    try:
+        from db.repositories.inventory_repo import SyncInventoryRepo
+
+        success = SyncInventoryRepo.update_recommendation_status(
+            recommendation_id=recommendation_id,
+            status=req.status,
+            decided_by=req.decided_by,
+        )
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Recommendation '{recommendation_id}' not found. "
+                    "Make sure you are using the UUID from the inventory item's "
+                    "'recommendationId' field."
+                ),
+            )
+
+        logger.info(
+            "Recommendation %s → %s (by %s)",
+            recommendation_id, req.status, req.decided_by or "unknown",
+        )
+        return {
+            "recommendation_id": recommendation_id,
+            "status":            req.status,
+            "decided_by":        req.decided_by,
+            "updated":           True,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to update recommendation %s: %s", recommendation_id, exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
