@@ -1,16 +1,12 @@
 """
 nodes.py — Agent Analyste LangGraph
-CSV Realtime Provider (transactions_2025_2026_v2.csv) + PostgreSQL fallback
+PostgreSQL uniquement — vw_pos_enriched, vw_ca_par_boutique, vw_stock_enriched
 + Logs + Analyst Memory + Fallback contrôlé.
-
-FIX : node_receive_pos et node_call_timesfm utilisent CSVRealtimeProvider
-      qui lit les données réelles du CSV progressivement selon l'heure.
 """
 
 import json
 import logging
 import os
-import sys
 import time
 from datetime import datetime
 
@@ -49,38 +45,6 @@ OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CSV Provider — import lazy pour éviter les problèmes de path
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _get_csv_provider():
-    """
-    Import lazy du CSVRealtimeProvider depuis la racine du backend.
-    Cherche dans sys.path, puis dans les dossiers parent.
-    """
-    try:
-        from csv_realtime_provider import get_csv_provider
-        return get_csv_provider()
-    except ImportError:
-        # Chercher dans les dossiers parent
-        for base in [
-            os.path.dirname(os.path.abspath(__file__)),  # nodes.py dir
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."),
-            "C:\\Users\\malek\\Desktop\\PFE-Backend",
-        ]:
-            candidate = os.path.normpath(os.path.join(base, "csv_realtime_provider.py"))
-            if os.path.exists(candidate):
-                spec_dir = os.path.dirname(candidate)
-                if spec_dir not in sys.path:
-                    sys.path.insert(0, spec_dir)
-                try:
-                    from csv_realtime_provider import get_csv_provider
-                    return get_csv_provider()
-                except Exception as e:
-                    logger.debug(f"[CSV] import depuis {spec_dir}: {e}")
-        logger.warning("[CSV] csv_realtime_provider introuvable — fallback PostgreSQL")
-        return None
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -113,7 +77,7 @@ def get_llm() -> ChatOllama:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 1 — receive_pos  (CSV en priorité, PostgreSQL en fallback)
+# NODE 1 — receive_pos  (PostgreSQL uniquement)
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_receive_pos(state: SalesAgentState) -> dict:
@@ -127,68 +91,48 @@ async def node_receive_pos(state: SalesAgentState) -> dict:
     pos_history = []
     source_used = "unknown"
 
-    # ── 1. Essayer CSVRealtimeProvider (données historiques progressives) ─────
+    # ── PostgreSQL uniquement (vw_pos_enriched + vw_ca_par_boutique) ──────────
     try:
-        csv_prov = _get_csv_provider()
-        if csv_prov is not None:
-            pos_data    = await csv_prov.fetch_pos_data(sid)
-            pos_history = await csv_prov.fetch_pos_history(sid)
-            source_used = "csv_realtime"
-            logger.info(
-                f"[ANALYST CSV] Node receive_pos — store={sid} | "
-                f"DATE={pos_data.get('sim_date','?')} | "
-                f"CA={pos_data.get('current_revenue',0):.0f} TND "
-                f"(hist={pos_data.get('ca_historique',0):.0f} "
-                f"+ live={pos_data.get('ca_live',0):.0f}) | "
-                f"TX={pos_data.get('nb_transactions_today',0)} | "
-                f"H={datetime.now().hour}h"
-            )
-    except Exception as e_csv:
-        logger.warning(f"[ANALYST] CSV provider failed: {e_csv} — fallback PostgreSQL")
-
-    # ── 2. Fallback PostgreSQL si CSV échoue ──────────────────────────────────
-    if pos_data is None:
-        try:
-            provider    = get_data_provider()
-            pos_data    = await provider.fetch_pos_data(sid)
-            pos_history = await provider.fetch_pos_history(sid)
-            source_used = "postgresql"
-            logger.info(
-                f"[ANALYST PG] Node receive_pos — store={sid} | "
-                f"TX={len(pos_history)} | CA={pos_data.get('current_revenue', 0):.0f} TND"
-            )
-        except Exception as e_pg:
-            duration = (time.time() - t0) * 1000
-            log.node_error("receive_pos", log_id, e_pg, state)
-            errors = list(state.get("errors") or [])
-            errors.append(f"receive_pos error: {e_pg}")
-
-            pos_data = {
-                "store_id":              sid,
-                "daily_target":          1007,
-                "daily_target_tnd":      1007,
-                "current_revenue":       0,
-                "current_revenue_tnd":   0,
-                "nb_transactions_today": 0,
-                "avg_ticket":            0,
-                "hourly_ca":             {},
-                "current_hour":          datetime.now().hour,
-                "snapshot_time":         datetime.now().strftime("%H:%M"),
-                "closing_hour":          20,
-                "source":                "fallback",
-                "data_status":           "unavailable",
-            }
-            pos_history = []
-            source_used = "fallback"
-            logger.warning(f"[ANALYST] receive_pos double-fallback — {e_pg}")
-
-            return {
-                **state,
-                "store_id":    sid,
-                "pos_data":    pos_data,
-                "pos_history": pos_history,
-                "errors":      errors,
-            }
+        provider    = get_data_provider()
+        pos_data    = await provider.fetch_pos_data(sid)
+        pos_history = await provider.fetch_pos_history(sid)
+        source_used = "postgresql"
+        logger.info(
+            f"[ANALYST PG] Node receive_pos — store={sid} | "
+            f"DATE={pos_data.get('business_date','?')} | "
+            f"CA={pos_data.get('current_revenue',0):.0f} TND | "
+            f"TX={pos_data.get('nb_transactions_today',0)}"
+        )
+    except Exception as e_pg:
+        duration = (time.time() - t0) * 1000
+        log.node_error("receive_pos", log_id, e_pg, state)
+        errors = list(state.get("errors") or [])
+        errors.append(f"receive_pos error: {e_pg}")
+        pos_data = {
+            "store_id":              sid,
+            "daily_target":          1007,
+            "daily_target_tnd":      1007,
+            "current_revenue":       0,
+            "current_revenue_tnd":   0,
+            "nb_transactions_today": 0,
+            "avg_ticket":            0,
+            "hourly_ca":             {},
+            "current_hour":          datetime.now().hour,
+            "snapshot_time":         datetime.now().strftime("%H:%M"),
+            "closing_hour":          20,
+            "source":                "fallback",
+            "data_status":           "unavailable",
+        }
+        pos_history = []
+        source_used = "fallback"
+        logger.warning(f"[ANALYST] receive_pos fallback — {e_pg}")
+        return {
+            **state,
+            "store_id":    sid,
+            "pos_data":    pos_data,
+            "pos_history": pos_history,
+            "errors":      errors,
+        }
 
     duration = (time.time() - t0) * 1000
     output = {
@@ -449,7 +393,7 @@ async def node_compute_gap(state: SalesAgentState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 6 — call_timesfm  (CSV en priorité, PostgreSQL en fallback)
+# NODE 6 — call_timesfm  (PostgreSQL uniquement)
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_call_timesfm(state: SalesAgentState) -> dict:
@@ -465,31 +409,21 @@ async def node_call_timesfm(state: SalesAgentState) -> dict:
     prediction  = None
     source_used = "unknown"
 
-    # ── 1. CSVRealtimeProvider forecast (multi-sources pondérées) ─────────────
+    # ── PostgreSQL uniquement (vw_ca_par_boutique multi-sources) ──────────────
     try:
-        csv_prov = _get_csv_provider()
-        if csv_prov is not None:
-            prediction  = await csv_prov.fetch_timesfm_prediction(sid)
-            source_used = "csv_forecast"
-    except Exception as e_csv:
-        logger.warning(f"[ANALYST] CSV forecast failed: {e_csv} — fallback PostgreSQL")
-
-    # ── 2. Fallback PostgreSQL ─────────────────────────────────────────────────
-    if prediction is None:
-        try:
-            provider    = get_data_provider()
-            prediction  = await provider.fetch_timesfm_prediction(sid)
-            source_used = "postgresql_forecast"
-        except Exception as e_pg:
-            prediction  = {
-                "forecast_end_of_day":     0,
-                "forecast_end_of_day_tnd": 0,
-                "confidence_interval":     {"low": 0, "high": 0},
-                "mape":                    99.0,
-                "source":                  "fallback",
-            }
-            source_used = "fallback"
-            logger.warning(f"[ANALYST] forecast double-fallback — {e_pg}")
+        provider    = get_data_provider()
+        prediction  = await provider.fetch_timesfm_prediction(sid)
+        source_used = "postgresql_forecast"
+    except Exception as e_pg:
+        prediction  = {
+            "forecast_end_of_day":     0,
+            "forecast_end_of_day_tnd": 0,
+            "confidence_interval":     {"low": 0, "high": 0},
+            "mape":                    99.0,
+            "source":                  "fallback",
+        }
+        source_used = "fallback"
+        logger.warning(f"[ANALYST] forecast fallback — {e_pg}")
 
     forecast_eod = float(prediction.get("forecast_end_of_day", 0) or 0)
     mape         = float(prediction.get("mape", 14.3)            or 14.3)

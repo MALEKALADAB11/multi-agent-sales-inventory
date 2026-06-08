@@ -180,7 +180,7 @@ def search_rag(
             output_fields   = [
                 "pg_id", "categorie", "situation", "action",
                 "produit", "argument", "impact",
-                "heure_min", "heure_max", "store_id",
+                "heure_min", "heure_max",
             ],
         )
 
@@ -191,9 +191,7 @@ def search_rag(
             # Bonus créneau horaire
             if e.get("heure_min", 0) <= hour <= e.get("heure_max", 24):
                 score += 0.12
-            # Bonus store_id
-            if e.get("store_id", "ALL") in ("ALL", store_id):
-                score += 0.05
+            # store_id supprimé — collection générique multi-boutiques
             scripts.append({
                 "score":      round(score, 3),
                 "categorie":  e.get("categorie", ""),
