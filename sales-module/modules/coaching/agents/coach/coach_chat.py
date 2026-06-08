@@ -65,7 +65,7 @@ async def _llm_fallback(request: dict) -> dict:
             f"Règles : français direct, max 120 mots, commence par l'action."
         )
         llm = ChatOllama(
-            model=os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b"),
+            model=os.getenv("OLLAMA_MODEL", "llama3.2:latest"),
             base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             temperature=0.3, num_predict=180, num_ctx=1500,
         )

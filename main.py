@@ -30,7 +30,6 @@ from auth_router import router as auth_router, setup_auth_tables
 
 # IMPORTANT : PostgreSQL officiel, pas mock
 from data.postgres_provider import get_data_provider
-from csv_realtime_provider import get_csv_provider as _get_csv_provider
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -66,6 +65,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _active_stores: set[str] = set()
+
+async def _safe_send(websocket, data: str) -> bool:
+    """Send JSON to WebSocket with connection guard — avoids race conditions."""
+    try:
+        await websocket.send_text(data)
+        return True
+    except Exception:
+        return False
+
+
 _live_stock: Dict[str, int] = {}  # stock live en mémoire
 
 STORE_MAP = {
@@ -227,20 +236,6 @@ async def startup_event():
         InventoryDataCache.record_sale(sku_str, store_id, units)
 
         logger.info("📉 Sale: %s | %.0f → %.0f units (-%d)", sku_str, current, new_stock, units)
-
-        # ── Informer le CSVRealtimeProvider de la vente live ────────────────
-        try:
-            _csv_prov = _get_csv_provider()
-            # Estimer le prix depuis stock_tools ou fallback
-            try:
-                from src.tools.internal.stock_tools import _DataCache
-                _prod = _DataCache.get_product(sku_str) or {}
-                _price = float(_prod.get("unit_price") or _prod.get("pv_ttc") or 50.0)
-            except Exception:
-                _price = 50.0
-            _csv_prov.add_live_sale(sku_str, "SIM", _price, units)
-        except Exception as _exc:
-            logger.debug(f"[CSV_PROVIDER] add_live_sale: {_exc}")
 
         # ── 3 & 4. Persist to DB then broadcast (in order) ────────────────────
         # DB write must complete before broadcast triggers pipeline re-run,
@@ -436,33 +431,25 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
     print(f"  🤖 AGENT ANALYSTE — Cycle #{cycle} @ {datetime.now().strftime('%H:%M:%S')} | {store_id}")
     print(f"{'=' * 60}")
 
-    # ── CSV Realtime Provider (remplace postgres_provider figé) ───────────────
-    csv_provider = _get_csv_provider()
-
+    # ── PostgreSQL uniquement (vw_pos_enriched, vw_ca_par_boutique) ─────────
+    provider = get_data_provider()
     try:
-        pos_data    = await csv_provider.fetch_pos_data(store_id)
-        pos_history = await csv_provider.fetch_pos_history(store_id)
-        prediction  = await csv_provider.fetch_timesfm_prediction(store_id)
+        pos_data    = await provider.fetch_pos_data(store_id)
+        pos_history = await provider.fetch_pos_history(store_id)
+        prediction  = await provider.fetch_timesfm_prediction(store_id)
         logger.info(
-            f"[CSV] CA={pos_data['current_revenue']:.0f} TND "
-            f"(hist={pos_data['ca_historique']:.0f} + live={pos_data['ca_live']:.0f}) | "
-            f"TX={pos_data['nb_transactions_today']} | "
-            f"EOD_forecast={prediction['forecast_end_of_day']:.0f} TND"
+            f"[PG] CA={pos_data.get('current_revenue',0):.0f} TND | "
+            f"TX={pos_data.get('nb_transactions_today',0)} | "
+            f"EOD={prediction.get('forecast_end_of_day',0):.0f} TND | "
+            f"DATE={pos_data.get('business_date','?')}"
         )
     except Exception as e:
-        logger.warning(f"[CSV_PROVIDER] Fallback PostgreSQL: {e}")
-        provider = get_data_provider()
-        try:
-            pos_data    = await provider.fetch_pos_data(store_id)
-            pos_history = await provider.fetch_pos_history(store_id)
-            prediction  = await provider.fetch_timesfm_prediction(store_id)
-        except Exception as e2:
-            logger.warning(f"[RUN_AGENTS] Double fallback: {e2}")
-            pos_data    = {"store_id": store_id, "daily_target": 1007,
-                          "current_revenue": 0, "nb_transactions_today": 0,
-                          "data_status": "unavailable"}
-            pos_history = []
-            prediction  = {"forecast_end_of_day": 0, "mape": 99, "source": "fallback"}
+        logger.warning(f"[PG] _run_agents fallback: {e}")
+        pos_data    = {"store_id": store_id, "daily_target": 1007,
+                      "current_revenue": 0, "nb_transactions_today": 0,
+                      "data_status": "unavailable"}
+        pos_history = []
+        prediction  = {"forecast_end_of_day": 0, "mape": 99, "source": "fallback"}
 
 
     cr = pos_data.get("current_revenue", 0) or 0
@@ -578,6 +565,7 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
             "focus_produits": strat_state.get("focus_produits", []),
             "rag_used": strat_state.get("rag_used", False),
             "nb_rag_scripts": strat_state.get("nb_rag_scripts", 0),
+            "real_time_alerts": strat_state.get("real_time_alerts", []),  # ← alertes temps réel
         }
 
     except (Exception, asyncio.CancelledError) as e:
@@ -872,6 +860,9 @@ def _build_payload(analysis: dict) -> dict:
     except Exception:
         pass
 
+    # Récupérer les alertes temps réel du stratège
+    real_time_alerts = analysis.get("real_time_alerts", [])
+
     return {
         "type": "metrics_update",
         "timestamp": datetime.now().isoformat(),
@@ -925,6 +916,7 @@ def _build_payload(analysis: dict) -> dict:
         ],
         "rag_used": analysis.get("rag_used", False),
         "nb_rag_scripts": analysis.get("nb_rag_scripts", 0),
+        "real_time_alerts": real_time_alerts,  # ← alertes temps réel conseiller
         "ca_yesterday_same_hour": cr * 0.88,
         "last_cycle_id": f"cycle_{datetime.now().strftime('%H%M%S')}",
     }
@@ -935,10 +927,9 @@ async def ws_store(websocket: WebSocket, store_id: str):
     await websocket.accept()
 
     if store_id in _active_stores:
-        await asyncio.sleep(2)
-        if store_id in _active_stores:
-            await websocket.close(code=1008)
-            return
+        # Un seul slot par store — fermer silencieusement sans close()
+        logger.info(f"[WS] Slot occupé pour {store_id} — connexion refusée")
+        return
 
     _active_stores.add(store_id)
 
@@ -1001,8 +992,9 @@ async def ws_store(websocket: WebSocket, store_id: str):
                 "feedback_history": [],
             }
 
-            await websocket.send_text(json.dumps(_build_payload(initial), default=str))
-            print("✅ Payload initial envoyé")
+            ok = await _safe_send(websocket, json.dumps(_build_payload(initial), default=str))
+            if ok:
+                print("✅ Payload initial envoyé")
 
         except Exception as e:
             logger.warning(f"[WS] Payload initial: {e}")
@@ -1016,19 +1008,25 @@ async def ws_store(websocket: WebSocket, store_id: str):
 
                 if not task.done():
                     try:
-                        await websocket.send_text(json.dumps({
+                        ok = await _safe_send(websocket, json.dumps({
                             "type": "processing",
                             "message": "Analyse en cours...",
                             "timestamp": datetime.now().isoformat(),
                         }))
+                        if not ok:
+                            task.cancel()
+                            break
                     except Exception:
                         task.cancel()
-                        raise
+                        break
 
             analysis = await task
             msg = _build_payload(analysis)
 
-            await websocket.send_text(json.dumps(msg, default=str))
+            ok = await _safe_send(websocket, json.dumps(msg, default=str))
+            if not ok:
+                logger.warning(f"[WS] Connexion perdue pendant l'envoi — {store_id}")
+                break
 
             print(f"\n📤 Payload #{cycle} ({len(json.dumps(msg, default=str)):,} bytes) — prochain dans 2min")
 
