@@ -72,3 +72,5 @@ sales-module/data/transactions_2025_2026_v2.csv
 volumes/etcd/
 volumes/minio/
 volumes/milvus/
+sales-module/.env
+.env
