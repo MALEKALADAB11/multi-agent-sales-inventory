@@ -185,9 +185,17 @@ def compute_eoq(
     """
     annual_demand = avg_daily_demand * 365
 
-    if holding_cost_pct <= 0 or unit_cost <= 0 or order_cost <= 0:
-        logger.warning("Invalid EOQ parameters — returning 0")
-        return 0.0
+    # unit_cost=0 arrive pour les SKUs SIM/Forfait sans prix dans product_master.csv
+    # Utiliser un coût minimal de 1.0 TND pour permettre le calcul EOQ
+    if unit_cost <= 0:
+        unit_cost = 1.0
+    if holding_cost_pct <= 0:
+        holding_cost_pct = 0.25  # 25% default
+    if order_cost <= 0:
+        order_cost = 50.0        # 50 TND default
+
+    if avg_daily_demand <= 0:
+        return 0.0  # pas de demande → pas de commande, silencieux
 
     return max(0.0, math.sqrt(
         (2 * annual_demand * order_cost) / (holding_cost_pct * unit_cost)

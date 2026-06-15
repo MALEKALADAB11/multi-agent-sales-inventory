@@ -251,7 +251,7 @@ class JsonDataService:
             SELECT AVG(ca_jour) * 1.10 AS obj
             FROM (
                 SELECT date_only, SUM(lig_ttc) AS ca_jour
-                FROM transactions
+                FROM sales.transactions
                 WHERE store_id = %s AND lig_ttc > 0
                 GROUP BY date_only
             ) sub
@@ -263,7 +263,7 @@ class JsonDataService:
 
     def get_store(self) -> dict:
         row = _query_one(
-            "SELECT store_id, store_name, ville FROM boutiques WHERE store_id=%s",
+            "SELECT store_id, store_name, ville FROM sales.boutiques WHERE store_id=%s",
             (self._cd,)
         )
         return {
@@ -280,7 +280,7 @@ class JsonDataService:
         """Nombre de transactions du jour depuis PostgreSQL."""
         try:
             row = _query_one(
-                "SELECT COUNT(*) AS nb FROM transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
+                "SELECT COUNT(*) AS nb FROM sales.transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
                 (self._cd,),
             )
             nb = int(row.get("nb", 0))
@@ -291,8 +291,8 @@ class JsonDataService:
         # Fallback: depuis MAX(date_only)
         try:
             row = _query_one(
-                """SELECT COUNT(*) AS nb FROM transactions 
-                   WHERE store_id=%s AND date_only=(SELECT MAX(date_only) FROM transactions WHERE store_id=%s)
+                """SELECT COUNT(*) AS nb FROM sales.transactions 
+                   WHERE store_id=%s AND date_only=(SELECT MAX(date_only) FROM sales.transactions WHERE store_id=%s)
                    AND lig_ttc>0""",
                 (self._cd, self._cd),
             )
@@ -304,7 +304,7 @@ class JsonDataService:
         """CA du jour depuis PostgreSQL. Fallback sur mock_provider si 0."""
         row = _query_one("""
             SELECT COALESCE(SUM(lig_ttc), 0) AS ca
-            FROM transactions
+            FROM sales.transactions
             WHERE store_id = %s AND date_only = CURRENT_DATE AND lig_ttc > 0
         """, (self._cd,))
         ca = float(row.get("ca", 0))
@@ -330,7 +330,7 @@ class JsonDataService:
         """CA du jour par agent depuis PostgreSQL."""
         rows = _query("""
             SELECT t.agent_id, SUM(t.lig_ttc) AS ca
-            FROM transactions t
+            FROM sales.transactions t
             WHERE t.store_id = %s AND t.date_only = CURRENT_DATE AND t.lig_ttc > 0
             GROUP BY t.agent_id
         """, (self._cd,))
@@ -353,7 +353,7 @@ class JsonDataService:
     def get_units_by_sku(self) -> dict:
         rows = _query("""
             SELECT cod_prod, SUM(qte_produit) AS units
-            FROM transactions
+            FROM sales.transactions
             WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
             GROUP BY cod_prod
         """, (self._cd,))
@@ -369,7 +369,7 @@ class JsonDataService:
                 t.lig_ttc, t.qte_produit, t.heure,
                 a.agent_name, a.agent_surname,
                 p.cod_famille, p.categorie
-            FROM transactions t
+            FROM sales.transactions t
             LEFT JOIN agents   a ON t.agent_id = a.agent_id
             LEFT JOIN produits p ON t.cod_prod  = p.cod_prod
             WHERE t.store_id = %s
@@ -403,7 +403,7 @@ class JsonDataService:
         """CA par heure depuis PostgreSQL."""
         rows = _query("""
             SELECT heure, SUM(lig_ttc) AS ca
-            FROM transactions
+            FROM sales.transactions
             WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
             GROUP BY heure ORDER BY heure
         """, (self._cd,))
@@ -451,7 +451,7 @@ class JsonDataService:
         # Nombre de ventes par agent
         ventes_rows = _query("""
             SELECT agent_id, COUNT(*) AS nb
-            FROM transactions
+            FROM sales.transactions
             WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
             GROUP BY agent_id
         """, (self._cd,))
@@ -528,7 +528,7 @@ class JsonDataService:
 
         demand_rows = _query("""
             SELECT cod_prod, SUM(qte_produit) / 30.0 AS demand_day
-            FROM transactions
+            FROM sales.transactions
             WHERE store_id=%s
               AND date_only >= CURRENT_DATE - INTERVAL '30 days'
               AND lig_ttc > 0
@@ -620,13 +620,13 @@ class JsonDataService:
         attain    = round((ca_total / ca_target * 100), 1) if ca_target else 0
 
         row = _query_one(
-            "SELECT store_name, ville FROM boutiques WHERE store_id=%s",
+            "SELECT store_name, ville FROM sales.boutiques WHERE store_id=%s",
             (self._cd,)
         )
 
         # Nombre de transactions du jour
         tx_row = _query_one(
-            "SELECT COUNT(*) AS nb FROM transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
+            "SELECT COUNT(*) AS nb FROM sales.transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
             (self._cd,)
         )
 
@@ -658,7 +658,7 @@ class JsonDataService:
     def get_stats(self) -> dict:
         ca_map = self.get_ca_by_advisor()
         tx_row = _query_one(
-            "SELECT COUNT(*) AS nb FROM transactions WHERE store_id=%s AND date_only=CURRENT_DATE",
+            "SELECT COUNT(*) AS nb FROM sales.transactions WHERE store_id=%s AND date_only=CURRENT_DATE",
             (self._cd,)
         )
         return {

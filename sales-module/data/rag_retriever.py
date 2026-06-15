@@ -43,13 +43,23 @@ def _get_client():
 def _embed(text: str) -> Optional[list]:
     """Génère un embedding via Ollama."""
     try:
+        # Timeout increased to 120s (2 min) because OLLAMA can be slow under load
+        # First attempt: 120s full timeout
         resp = requests.post(
             f"{OLLAMA_URL}/api/embeddings",
             json={"model": EMBED_MODEL, "prompt": text},
-            timeout=30,
+            timeout=120,  # Increased from 30 to 120 seconds
         )
         resp.raise_for_status()
-        return resp.json()["embedding"]
+        result = resp.json()
+        logger.info(f"[RAG] Embedding succès ({len(text)} chars)")
+        return result.get("embedding")
+    except requests.Timeout:
+        logger.warning(f"[RAG] Embedding timeout (120s) — OLLAMA trop lent")
+        return None
+    except requests.ConnectionError as e:
+        logger.warning(f"[RAG] Embedding connexion échouée: {e}")
+        return None
     except Exception as e:
         logger.warning(f"[RAG] Embedding échoué: {e}")
         return None

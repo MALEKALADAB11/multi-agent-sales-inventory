@@ -1,14 +1,10 @@
 """
-postgres_provider.py — v4.0
+postgres_provider.py — v4.1
 ============================
-Lit depuis les vues matérialisées Ooredoo :
-  - sales.vw_pos_enriched      → transactions enrichies (toutes boutiques)
-  - sales.vw_stock_enriched    → stock enrichi (toutes boutiques)
-  - sales.vw_ca_par_boutique   → CA agrégé par boutique × date
-  - sales.ooredoo_boutiques    → info boutiques
-  - sales.ooredoo_products     → catalogue produits
-
-Plus de CSV à chaud. Tout depuis PostgreSQL.
+Lit depuis les vues Ooredoo :
+  - sales.vw_pos_enriched      → transactions enrichies
+  - sales.vw_ca_par_boutique   → CA agrégé (inclut transactions_rt via UNION ALL)
+  - sales.transactions_rt      → transactions temps réel du jour
 """
 
 import logging
@@ -67,16 +63,22 @@ async def fetch_pos_data(store_id: str) -> dict:
     sid = normalize_store_id(store_id)
     conn = await get_pg_conn()
     try:
+        # vw_ca_par_boutique est maintenant une vue ordinaire qui inclut
+        # transactions_rt via UNION ALL — une seule source de vérité
         last_date = await conn.fetchval(
-            "SELECT MAX(date_only) FROM sales.vw_ca_par_boutique WHERE store_id = $1", sid
+            "SELECT MAX(date_only) FROM sales.vw_ca_par_boutique WHERE store_id = $1",
+            sid
         )
         if not last_date:
             return _fallback_pos(sid)
 
+        # Requête simple — vw_ca_par_boutique retourne déjà ca_total correct
         row = await conn.fetchrow("""
             SELECT store_id, store_name, ville, store_manager,
-                   date_only AS business_date,
-                   nb_transactions, ca_total AS current_revenue, avg_ticket
+                   date_only        AS business_date,
+                   nb_transactions,
+                   ca_total         AS current_revenue,
+                   avg_ticket
             FROM sales.vw_ca_par_boutique
             WHERE store_id = $1 AND date_only = $2
         """, sid, last_date)
@@ -91,8 +93,8 @@ async def fetch_pos_data(store_id: str) -> dict:
             GROUP BY heure ORDER BY heure
         """, sid, last_date)
 
-        hourly_ca     = {int(r["heure"]): float(r["ca_heure"]) for r in hourly_rows}
-        daily_target  = DAILY_TARGETS.get(sid, DEFAULT_TARGET)
+        hourly_ca       = {int(r["heure"]): float(r["ca_heure"]) for r in hourly_rows}
+        daily_target    = DAILY_TARGETS.get(sid, DEFAULT_TARGET)
         current_revenue = float(row["current_revenue"] or 0)
 
         logger.info(
@@ -146,12 +148,15 @@ async def fetch_pos_history(store_id: str, limit: int = 200) -> list[dict]:
     sid = normalize_store_id(store_id)
     conn = await get_pg_conn()
     try:
+        # Même logique : vw_ca_par_boutique inclut déjà RT → MAX retourne aujourd'hui
         last_date = await conn.fetchval(
-            "SELECT MAX(date_only) FROM sales.vw_pos_enriched WHERE store_id = $1", sid
+            "SELECT MAX(date_only) FROM sales.vw_ca_par_boutique WHERE store_id = $1",
+            sid
         )
         if not last_date:
             return []
 
+        # vw_pos_enriched lit FROM sales.transactions (vue = history + RT)
         rows = await conn.fetch("""
             SELECT sale_id, date_vente, heure, agent_id, sku,
                    product_name, famille, groupe, gamme,
@@ -265,7 +270,7 @@ async def fetch_timesfm_prediction(store_id: str) -> dict:
         forecast_eod = min(round(forecast_eod), int(daily_target * 1.5))
         forecast_eod = max(forecast_eod, round(ca_ref))
 
-        std_7d   = float(np.std(last7_ca)) if len(last7_ca) >= 2 else forecast_eod * 0.10
+        std_7d    = float(np.std(last7_ca)) if len(last7_ca) >= 2 else forecast_eod * 0.10
         ci_spread = min(std_7d * 0.5, forecast_eod * 0.15)
         mape = round(min(float(np.mean([abs(f - ca_ref) / ca_ref * 100
                    for f in forecasts[:2]])), 30.0), 1) if len(forecasts) >= 2 and ca_ref > 0 else 14.3
@@ -316,7 +321,7 @@ async def fetch_sellers(store_id: str) -> list[dict]:
     conn = await get_pg_conn()
     try:
         last_date = await conn.fetchval(
-            "SELECT MAX(date_only) FROM sales.vw_pos_enriched WHERE store_id = $1", sid
+            "SELECT MAX(date_only) FROM sales.vw_ca_par_boutique WHERE store_id = $1", sid
         )
         if not last_date:
             return []
@@ -331,9 +336,9 @@ async def fetch_sellers(store_id: str) -> list[dict]:
             GROUP BY agent_id ORDER BY SUM(montant_vente) DESC
         """, sid, last_date)
 
-        daily_target     = DAILY_TARGETS.get(sid, DEFAULT_TARGET)
-        nb_sellers       = max(len(rows), 1)
-        per_target       = round(daily_target / nb_sellers)
+        daily_target = DAILY_TARGETS.get(sid, DEFAULT_TARGET)
+        nb_sellers   = max(len(rows), 1)
+        per_target   = round(daily_target / nb_sellers)
 
         return [{
             "agent_id":       str(r["agent_id"] or ""),
@@ -425,7 +430,7 @@ async def get_latest_business_date(store_id: str) -> Optional[date]:
         await conn.close()
 
 
-# ── Singleton (compatibilité avec l'ancien code) ───────────────────────────────
+# ── Singleton ──────────────────────────────────────────────────────────────────
 
 class PostgresProvider:
     async def fetch_pos_data(self, store_id: str) -> dict:

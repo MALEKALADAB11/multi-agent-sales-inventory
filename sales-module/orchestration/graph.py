@@ -4,6 +4,9 @@ graph.py — Orchestrateur LangGraph v2
 Pipeline complet : Analyste → Stratège → Coach
 Chaque agent est un sous-graphe LangGraph compilé.
 Logs complets dans PostgreSQL via AgentLogger.
+
+Principe : aucun store_id hardcodé — tout est dynamique depuis le state
+et résolu via normalize_store_id() du postgres_provider.
 """
 import logging
 import uuid
@@ -13,6 +16,7 @@ from langgraph.graph import StateGraph, END
 
 from core.state import SalesAgentState, initial_state
 from data.json_service import JsonDataService
+from data.postgres_provider import normalize_store_id
 from mcp_servers.timefm.tools import TimesFMTools
 
 logger = logging.getLogger(__name__)
@@ -56,7 +60,7 @@ except ImportError as e:
     _COACH_OK = False
     logger.warning(f"[ORCHESTRATOR] Coach agent: {e}")
 
-# ── Tracer (compatibilité ancienne version) ───────────────────────────────────
+# ── Tracer ────────────────────────────────────────────────────────────────────
 try:
     from orchestration.tracer import CycleTracer
     tracer = CycleTracer(show_state=True)
@@ -165,12 +169,10 @@ def route_after_stratege(state: dict) -> str:
 def build_graph(json_svc: JsonDataService, timefm: TimesFMTools):
     graph = StateGraph(SalesAgentState)
 
-    # ── Nodes ─────────────────────────────────────────────────────────────
     graph.add_node("analyste", _run_analyst)
     graph.add_node("stratege", _run_stratege)
     graph.add_node("coach",    _run_coach)
 
-    # ── Edges ─────────────────────────────────────────────────────────────
     graph.set_entry_point("analyste")
     graph.add_conditional_edges("analyste", route_after_analyst, {
         "stratege": "stratege",
@@ -212,20 +214,13 @@ class CycleOrchestrator:
         self.cycle_count += 1
         started  = datetime.utcnow()
 
-        # Mapper store_id → internal
-        STORE_MAP = {
-            "store-lac2": "I63",
-            "OOR_LAC_01": "I63",
-            "I63": "I63",
+        # Résolution du store_id via normalize_store_id du postgres_provider.
+        # normalize_store_id lit le STORE_MAP défini dans postgres_provider.py
+        # et retourne le store_id interne (ex: "I63").
+        # Si le store_id n'est pas connu, il est passé tel quel — pas de fallback
+        # hardcodé sur "I63".
+        internal_id = normalize_store_id(store_id)
 
-            "store-menzah": "M23",
-            "M23": "M23",
-
-            "store-sfax": "S47",
-            "S47": "S47",
-        }
-
-        internal_id = STORE_MAP.get(store_id, "I63")
         tracer.cycle_start(cycle_id, store_id, triggered_by)
 
         # ── État initial ───────────────────────────────────────────────────
@@ -239,7 +234,7 @@ class CycleOrchestrator:
         final_state  = state
 
         try:
-            final_state = await self.graph.ainvoke(state)
+            final_state  = await self.graph.ainvoke(state)
             errors_count = len(final_state.get("errors") or [])
 
         except Exception as e:
@@ -252,16 +247,16 @@ class CycleOrchestrator:
                     agent_name = "orchestrator",
                     node_name  = "run_cycle",
                     error      = e,
-                    store_id   = "I63",
+                    store_id   = internal_id,   # dynamique — pas hardcodé
                 )
 
         # ── Métriques totales ──────────────────────────────────────────────
         total_ms = (datetime.utcnow() - started).total_seconds() * 1000
-        metrics  = dict(final_state.get("metrics") or {})
-        metrics["total_ms"]       = round(total_ms)
-        metrics["cycle_id"]       = cycle_id
-        metrics["completed_at"]   = datetime.utcnow().isoformat()
-        final_state = {**final_state, "metrics": metrics}
+        metrics  = dict((final_state or {}).get("metrics") or {})
+        metrics["total_ms"]     = round(total_ms)
+        metrics["cycle_id"]     = cycle_id
+        metrics["completed_at"] = datetime.utcnow().isoformat()
+        final_state = {**(final_state or state), "metrics": metrics}
 
         # ── Log cycle complet ──────────────────────────────────────────────
         if _LOGGING_ENABLED:
@@ -270,7 +265,7 @@ class CycleOrchestrator:
                 state          = final_state,
                 total_ms       = total_ms,
                 triggered_by   = triggered_by,
-                store_id       = "I63",
+                store_id       = internal_id,   # dynamique — pas hardcodé
                 nodes_executed = int(metrics.get("nodes_executed", 0)),
                 errors_count   = errors_count,
                 rag_used       = bool(final_state.get("rag_used")),
@@ -279,42 +274,47 @@ class CycleOrchestrator:
             # Enrichissement RAG si cycle réussi
             if errors_count == 0 and final_state.get("strategie_actions"):
                 try:
-                    enrich_rag_from_cycle(cycle_id, final_state, "I63")
+                    enrich_rag_from_cycle(cycle_id, final_state, internal_id)  # dynamique
                 except Exception:
                     pass
 
         # ── Résumé console ─────────────────────────────────────────────────
         urgency  = final_state.get("urgency_level", "?")
-        gap      = final_state.get("gap_objectif",  0)
+        gap      = float(final_state.get("gap_objectif", 0) or 0)
         nb_act   = len(final_state.get("strategie_actions") or [])
         rag_used = final_state.get("rag_used", False)
 
+        # tracer.cycle_end reçoit les valeurs extraites du state —
+        # jamais l'objet state lui-même pour éviter NoneType crash.
         tracer.cycle_end(
-            cycle_id, total_ms,
+            cycle_id,
+            total_ms,
             nodes   = int(metrics.get("nodes_executed", 0)),
             urgency = urgency,
             gap     = gap,
-            eod     = final_state.get("forecast_eod", 0),
+            eod     = float(final_state.get("forecast_eod", 0) or 0),
         )
 
         logger.info(
             f"[ORCHESTRATOR] ✅ Cycle {cycle_id} terminé | "
-            f"{total_ms:.0f}ms | urgence={urgency} | gap={gap:.1f}% | "
+            f"store={internal_id} | {total_ms:.0f}ms | "
+            f"urgence={urgency} | gap={gap:.1f}% | "
             f"actions={nb_act} | RAG={'✓' if rag_used else '✗'} | "
             f"erreurs={errors_count}"
         )
 
         self.last_state  = final_state
         self.last_result = {
-            "cycle_id":       cycle_id,
-            "niveau_urgence": urgency,
-            "ecart_objectif": gap,
-            "forecast_eod":   final_state.get("forecast_eod", 0),
+            "cycle_id":        cycle_id,
+            "store_id":        internal_id,
+            "niveau_urgence":  urgency,
+            "ecart_objectif":  gap,
+            "forecast_eod":    float(final_state.get("forecast_eod", 0) or 0),
             "analyst_summary": final_state.get("analyst_summary", ""),
-            "strategie":      final_state.get("strategie", ""),
-            "nb_actions":     nb_act,
-            "rag_used":       rag_used,
-            "total_ms":       round(total_ms),
+            "strategie":       final_state.get("strategie", ""),
+            "nb_actions":      nb_act,
+            "rag_used":        rag_used,
+            "total_ms":        round(total_ms),
         }
 
         return final_state

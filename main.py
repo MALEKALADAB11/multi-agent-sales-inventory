@@ -2,33 +2,28 @@
 Unified API Server — Inventory + Sales + Agents IA
 ===================================================
     uvicorn main:app --port 8000
+v4 : cache du dernier payload → renvoi immédiat à toute nouvelle connexion
+     slot unique par store remplacé par multi-connexion avec broadcast
 """
 
 import sys
 import os
 import asyncio
 import logging
-from typing import Dict
+from typing import Dict, Set
 import json, random, time
 from datetime import datetime
 from dotenv import load_dotenv
 
-# ── Chemins AVANT tous les imports sales-module ──────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(BASE_DIR, "inventory-module"))
 sys.path.insert(0, os.path.join(BASE_DIR, "sales-module"))
 
-# ── .env ─────────────────────────────────────────────────────────────────────
-# Charger d'abord les sous-modules SANS override (ne pas écraser)
 for env_dir in ("inventory-module", "sales-module"):
     load_dotenv(os.path.join(BASE_DIR, env_dir, ".env"), override=False)
-# Charger le .env racine EN DERNIER avec override (source de vérité)
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
-# ── Auth après sys.path ──────────────────────────────────────────────────────
 from auth_router import router as auth_router, setup_auth_tables
-
-# IMPORTANT : PostgreSQL officiel, pas mock
 from data.postgres_provider import get_data_provider
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,9 +44,6 @@ from mcp_servers.timefm.tools import TimesFMTools
 from orchestration.graph import CycleOrchestrator
 from orchestration.trigger import CronTrigger
 
-# IMPORTANT : utiliser PostgreSQL provider, pas mock_provider
-from data.postgres_provider import get_data_provider
-
 from modules.coaching.agents.analyst.agent import get_analyst_agent
 from modules.coaching.agents.stratege.agent import get_stratege_agent
 
@@ -64,29 +56,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_active_stores: set[str] = set()
+# ── Registry multi-connexions (remplace _active_stores slot unique) ───────────
+# store_id → set of active WebSocket connections
+_store_connections: Dict[str, Set[WebSocket]] = {}
 
-async def _safe_send(websocket, data: str) -> bool:
-    """Send JSON to WebSocket with connection guard — avoids race conditions."""
-    try:
-        await websocket.send_text(data)
-        return True
-    except Exception:
-        return False
+# Cache du dernier payload connu par store → renvoi immédiat aux nouvelles connexions
+_last_payload: Dict[str, str] = {}
 
+# Flag : le cycle agent tourne-t-il déjà pour ce store ?
+_agent_running: Dict[str, bool] = {}
 
-_live_stock: Dict[str, int] = {}  # stock live en mémoire
+_live_stock: Dict[str, int] = {}
 
 STORE_MAP = {
     "store-lac2": "I63",
-    "I63": "I63",
+    "I63":        "I63",
     "OOR_LAC_01": "I63",
-
-    "store-menzah": "M23",
-    "M23": "M23",
-
-    "store-sfax": "S47",
-    "S47": "S47",
+    "lac2":       "I63",
 }
 
 _weather_cache: dict = {}
@@ -96,7 +82,7 @@ _WEATHER_CACHE_TTL = 300
 app = FastAPI(
     title="Unified Retail AI API",
     description="Inventory + Sales + Agents IA (Analyste · Stratège · Coach)",
-    version="3.0.0",
+    version="4.0.0",
 )
 
 app.add_middleware(
@@ -122,27 +108,47 @@ except ImportError as e:
     logger.warning(f"⚠️ coach_chat_rag non trouvé: {e}")
 
 
-async def _warmup_sales_data(store_id: str = "I63") -> None:
-    """
-    Précharge les données sales avant de lancer les agents.
-    Corrige l'erreur ConnectionDoesNotExistError au premier cycle.
-    """
-    logger.info(f"⏳ Warm-up données sales pour {store_id}...")
+# ── Broadcast vers toutes les connexions actives d'un store ──────────────────
+async def _broadcast(store_id: str, payload: str) -> None:
+    """Envoie payload à toutes les connexions WS actives du store."""
+    _last_payload[store_id] = payload          # mise en cache systématique
+    conns = list(_store_connections.get(store_id, set()))
+    dead  = set()
+    for ws in conns:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.add(ws)
+    # Nettoyer les connexions mortes
+    if dead and store_id in _store_connections:
+        _store_connections[store_id] -= dead
 
+
+async def _safe_send(websocket: WebSocket, data: str) -> bool:
+    try:
+        await websocket.send_text(data)
+        return True
+    except Exception:
+        return False
+
+
+async def _warmup_sales_data(store_id: str = "I63") -> None:
+    logger.info(f"⏳ Warm-up données sales pour {store_id}...")
     try:
         provider = get_data_provider()
         await provider.fetch_pos_data(store_id)
         await provider.fetch_pos_history(store_id)
         await provider.fetch_timesfm_prediction(store_id)
         logger.info(f"✅ Warm-up données sales terminé pour {store_id}")
-
     except Exception as e:
         logger.warning(f"⚠️ Warm-up sales data échoué: {e}")
 
 
 @app.on_event("startup")
 async def startup_event():
-    _active_stores.clear()
+    _store_connections.clear()
+    _last_payload.clear()
+    _agent_running.clear()
 
     try:
         setup_auth_tables()
@@ -169,77 +175,40 @@ async def startup_event():
     set_stores_json(json_svc)
     app.state.json_svc = json_svc
 
-    # 1. Warm-up AVANT simulateur + cron
     await _warmup_sales_data("I63")
 
-    # 2. Charger TimeFM
     timefm = TimesFMTools(model_path="./models/timefm")
     await timefm.load_model()
     app.state.timefm = timefm
     logger.info("✅ TimesFM chargé")
 
-    # 3. Simulateur
-    stock_sim = None  # initialisé après le simulateur
-    simulator = RealtimeSimulator(json_svc, interval_seconds=15)
+    stock_sim = None
+    simulator = RealtimeSimulator(store_id="I63", interval=15)
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:
-        """
-        Called by RealtimeSimulator every time a sale fires.
-        1. Updates in-memory _live_stock (fast — for WebSocket broadcast)
-        2. Updates _DataCache._stock_overrides (so pipeline sees live stock)
-        3. Persists to inv.stock_levels via StockSimulator (DB source of truth)
-
-        Guards:
-          - Skips if (sku, store_id) has no stock_levels row in DB.
-            get_stock_level is a single query that implicitly validates both
-            the sku FK (inv.products) and store FK (inv.stores): if either is
-            missing the row won't exist.
-          - This prevents FK violations that would occur if StockSimulator
-            tried to INSERT a new row for an unseeded (sku, store_id) pair.
-        """
         sku_str = str(sku)
-
-        # ── Guard: validate (sku, store_id) exists in inv.stock_levels ────────
-        # One query covers both FK checks (products + stores).
-        # If there's no row, StockSimulator would have to INSERT — which causes
-        # FK violations. Skip the sale instead and log it.
         try:
             from db.repositories.inventory_repo import SyncInventoryRepo
             db_row = SyncInventoryRepo.get_stock_level(sku_str, store_id)
             if db_row is None:
-                logger.debug(
-                    "Skipping sale for %s@%s — no stock_levels row. "
-                    "Run init_stock_levels.py to seed this pair.",
-                    sku_str, store_id,
-                )
+                logger.debug("Skipping sale for %s@%s — no stock_levels row.", sku_str, store_id)
                 return
         except Exception:
-            # DB unavailable — allow through so in-memory path still works
             db_row = None
 
-        # ── 1. In-memory fast path ─────────────────────────────────────────────
-        # Seed _live_stock from DB on first sight so the broadcast delta
-        # reflects real stock rather than defaulting to 0.
         if sku_str not in _live_stock:
             if db_row is not None:
                 _live_stock[sku_str] = float(db_row["stock_current"])
             else:
-                # DB unavailable — try mem override, else 0
                 override = InventoryDataCache._stock_overrides.get((sku_str, store_id))
                 _live_stock[sku_str] = float(override) if override is not None else 0.0
 
         current   = _live_stock[sku_str]
         new_stock = max(0, current - units)
         _live_stock[sku_str] = new_stock
-
-        # ── 2. Keep analysis pipeline in sync ─────────────────────────────────
         InventoryDataCache.record_sale(sku_str, store_id, units)
-
         logger.info("📉 Sale: %s | %.0f → %.0f units (-%d)", sku_str, current, new_stock, units)
 
-        # ── 3 & 4. Persist to DB then broadcast (in order) ────────────────────
-        # DB write must complete before broadcast triggers pipeline re-run,
-        # otherwise the pipeline reads stale stock from DB.
         async def _sale_and_broadcast():
             if stock_sim is not None:
                 await stock_sim.record_sale(sku_str, store_id, units)
@@ -250,26 +219,21 @@ async def startup_event():
             if loop.is_running():
                 asyncio.create_task(_sale_and_broadcast())
 
-    # ✅ Wire on_sale callback BEFORE starting
     simulator.on_sale = _on_sale
     simulator.start()
     app.state.simulator = simulator
     logger.info("✅ Inventory ↔ Sales sync")
 
-    # 4. Orchestrateur
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)
-
     trigger = CronTrigger(
         orchestrator=orchestrator,
         store_id="I63",
         interval_minutes=15,
     )
-
     set_orchestrator(orchestrator, trigger)
     app.state.trigger = trigger
     app.state.orchestrator = orchestrator
 
-    # 5. Démarrage différé du cron
     async def _delayed_trigger_start():
         logger.info("⏳ CronTrigger démarrera après stabilisation des données...")
         await asyncio.sleep(10)
@@ -277,9 +241,8 @@ async def startup_event():
         logger.info("✅ CronTrigger démarré après warm-up")
 
     asyncio.create_task(_delayed_trigger_start())
-
     logger.info("✅ Orchestration préparée")
-    logger.info("🚀 All systems started — v3.0.0")
+    logger.info("🚀 All systems started — v4.0.0")
 
 
 @app.on_event("shutdown")
@@ -288,26 +251,16 @@ async def shutdown_event():
     if simulator: simulator.stop()
     trigger = getattr(app.state, "trigger", None)
     if trigger: trigger.stop()
-    db_repo = getattr(app.state, "db_repo", None)
-    if db_repo:
-        try:
-            await db_repo.close()
-            logger.info("✅ DB pool closed")
-        except Exception:
-            pass
     logger.info("Shutting down cleanly.")
 
 
 def _fetch_weather_fallback() -> dict:
     global _weather_cache, _weather_cache_time
-
     now = time.time()
     if _weather_cache and (now - _weather_cache_time) < _WEATHER_CACHE_TTL:
         return _weather_cache
-
     try:
         import httpx
-
         r = httpx.get(
             "https://api.open-meteo.com/v1/forecast"
             "?latitude=36.8065&longitude=10.1815"
@@ -315,123 +268,151 @@ def _fetch_weather_fallback() -> dict:
             "&timezone=Africa/Tunis",
             timeout=4,
         )
-        d = r.json().get("current", {})
+        d    = r.json().get("current", {})
         code = d.get("weathercode", 1)
         temp = d.get("temperature_2m", 22)
-
-        ICONS = {
-            0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
-            45: "🌫️", 61: "🌧️", 80: "🌦️", 95: "⛈️",
-        }
-        LABELS = {
-            0: "Ciel dégagé", 1: "Peu nuageux", 2: "Partiellement nuageux",
-            3: "Couvert", 45: "Brouillard", 61: "Pluie légère",
-            80: "Averses", 95: "Orage",
-        }
-
+        ICONS  = {0:"☀️",1:"🌤️",2:"⛅",3:"☁️",45:"🌫️",61:"🌧️",80:"🌦️",95:"⛈️"}
+        LABELS = {0:"Ciel dégagé",1:"Peu nuageux",2:"Partiellement nuageux",
+                  3:"Couvert",45:"Brouillard",61:"Pluie légère",80:"Averses",95:"Orage"}
         effect = -0.15 if code >= 61 else -0.05 if code >= 3 else +0.10 if code == 0 else +0.05
-
         result = {
-            "weather_icon": ICONS.get(code, "⛅"),
-            "weather_label": LABELS.get(code, "Variable"),
+            "weather_icon": ICONS.get(code,"⛅"),
+            "weather_label": LABELS.get(code,"Variable"),
             "weather_effect": effect,
             "temperature": temp,
             "is_rainy": code >= 61,
         }
-
         _weather_cache, _weather_cache_time = result, now
         return result
-
     except Exception as e:
         logger.warning(f"[WEATHER] {e}")
-        return {
-            "weather_icon": "🌤️",
-            "weather_label": "Tunis Lac",
-            "weather_effect": 0.0,
-            "temperature": 22,
-            "is_rainy": False,
-        }
+        return {"weather_icon":"🌤️","weather_label":"Tunis Lac",
+                "weather_effect":0.0,"temperature":22,"is_rainy":False}
 
 
 def _extract_summary(raw, gap_pct, urgency, cr, dt, feo):
     if not raw:
         return _make_fallback_summary(gap_pct, urgency, cr, dt, feo)
-
     raw = raw.strip()
-
     if raw.startswith("{"):
         try:
-            s = json.loads(raw).get("analyst_summary", "")
-            if s:
-                return s.strip()
+            s = json.loads(raw).get("analyst_summary","")
+            if s: return s.strip()
         except Exception:
             import re
             m = re.search(r'"analyst_summary"\s*:\s*"([^"]+)"', raw)
-            if m:
-                return m.group(1).strip()
-
+            if m: return m.group(1).strip()
     return raw[:400] if not raw.startswith("{") else _make_fallback_summary(gap_pct, urgency, cr, dt, feo)
 
 
 def _make_fallback_summary(gap_pct, urgency, cr, dt, feo):
-    if urgency in ("CRITICAL", "HIGH"):
-        return (
-            f"Gap critique {gap_pct:.1f}%. "
-            f"CA {cr:,.0f}/{dt:,.0f} TND. "
-            f"Forecast {feo:,.0f} TND — action immédiate."
-        )
-
+    if urgency in ("CRITICAL","HIGH"):
+        return f"Gap critique {gap_pct:.1f}%. CA {cr:,.0f}/{dt:,.0f} TND. Forecast {feo:,.0f} TND — action immédiate."
     if urgency == "MEDIUM":
-        return (
-            f"Gap {gap_pct:.1f}% à surveiller. "
-            f"CA {cr:,.0f}/{dt:,.0f} TND. "
-            f"Forecast EOD: {feo:,.0f} TND."
-        )
-
+        return f"Gap {gap_pct:.1f}% à surveiller. CA {cr:,.0f}/{dt:,.0f} TND. Forecast EOD: {feo:,.0f} TND."
     return f"Performance correcte — gap {gap_pct:.1f}%. CA {cr:,.0f}/{dt:,.0f} TND."
 
 
 def _compute_heatmap(urgency):
-    HIGH = (
-        ["med", "med", "high", "high", "crit", "crit", "high", "med"],
-        ["low", "med", "med", "high", "high", "crit", "crit", "high"],
-    )
-    MEDIUM = (
-        ["low", "med", "med", "high", "high", "med", "med", "low"],
-        ["low", "low", "med", "med", "high", "med", "med", "low"],
-    )
-    LOW = (
-        ["low", "low", "med", "med", "med", "low", "low", "low"],
-        ["low", "low", "low", "med", "med", "low", "low", "low"],
-    )
-
-    traffic, risk = {
-        "CRITICAL": HIGH,
-        "HIGH": HIGH,
-        "MEDIUM": MEDIUM,
-    }.get(urgency, LOW)
-
+    HIGH   = (["med","med","high","high","crit","crit","high","med"],["low","med","med","high","high","crit","crit","high"])
+    MEDIUM = (["low","med","med","high","high","med","med","low"],["low","low","med","med","high","med","med","low"])
+    LOW    = (["low","low","med","med","med","low","low","low"],["low","low","low","med","med","low","low","low"])
+    traffic, risk = {"CRITICAL":HIGH,"HIGH":HIGH,"MEDIUM":MEDIUM}.get(urgency, LOW)
     return {
-        "hours": ["11AM", "12PM", "1PM", "2PM", "3PM", "4PM", "5PM", "6PM"],
+        "hours":   ["11AM","12PM","1PM","2PM","3PM","4PM","5PM","6PM"],
         "traffic": traffic,
-        "weather": ["low", "low", "low", "med", "med", "high", "high", "high"],
-        "stock": ["low", "low", "med", "high", "high", "crit", "crit", "crit"],
-        "event": ["low", "low", "low", "low", "low", "med", "high", "high"],
-        "risk": risk,
+        "weather": ["low","low","low","med","med","high","high","high"],
+        "stock":   ["low","low","med","high","high","crit","crit","crit"],
+        "event":   ["low","low","low","low","low","med","high","high"],
+        "risk":    risk,
     }
+
+
+async def _get_advisors_from_pg(store_id: str, cr: float, dt: float) -> list:
+    import asyncpg
+    try:
+        conn = await asyncpg.connect(
+            host="localhost", port=5432,
+            database="ooredoo_sales", user="postgres", password="admin",
+            timeout=5,
+        )
+        try:
+            rows = await conn.fetch("""
+                SELECT
+                    t.agent_id,
+                    COALESCE(a.agent_name || ' ' || a.agent_surname, t.agent_id::text) AS full_name,
+                    SUM(t.lig_ttc)  AS revenue_today,
+                    COUNT(*)        AS nb_ventes
+                FROM sales.transactions t
+                LEFT JOIN sales.agents a
+                       ON a.agent_id = t.agent_id AND a.store_id = $1
+                WHERE t.store_id = $1
+                  AND t.date_only = (SELECT MAX(date_only) FROM sales.transactions WHERE store_id = $1)
+                  AND t.lig_ttc > 0
+                GROUP BY t.agent_id, full_name
+                ORDER BY revenue_today DESC
+            """, store_id)
+        finally:
+            await conn.close()
+
+        sellers = [
+            {
+                "name":         str(r["full_name"]).title(),
+                "revenue_today": float(r["revenue_today"] or 0),
+                "nb_ventes":    int(r["nb_ventes"] or 0),
+                "agent_id":     str(r["agent_id"]),
+            }
+            for r in rows
+        ]
+
+        if not sellers or all(s["revenue_today"] == 0 for s in sellers):
+            conn2 = await asyncpg.connect(
+                host="localhost", port=5432,
+                database="ooredoo_sales", user="postgres", password="admin",
+                timeout=5,
+            )
+            try:
+                hist = await conn2.fetch("""
+                    SELECT
+                        t.agent_id,
+                        COALESCE(a.agent_name || ' ' || a.agent_surname, t.agent_id::text) AS full_name,
+                        SUM(t.lig_ttc) AS revenue_total
+                    FROM sales.transactions_history t
+                    LEFT JOIN sales.agents a
+                           ON a.agent_id = t.agent_id AND a.store_id = $1
+                    WHERE t.store_id = $1 AND t.lig_ttc > 0
+                    GROUP BY t.agent_id, full_name
+                    ORDER BY revenue_total DESC
+                    LIMIT 10
+                """, store_id)
+            finally:
+                await conn2.close()
+
+            total_hist = sum(float(r["revenue_total"]) for r in hist) or 1
+            sellers = [
+                {
+                    "name":         str(r["full_name"]).title(),
+                    "revenue_today": round(cr * float(r["revenue_total"]) / total_hist, 2) if cr > 0 else 0,
+                    "nb_ventes":    max(1, round(cr * float(r["revenue_total"]) / total_hist / 80)) if cr > 0 else 0,
+                    "agent_id":     str(r["agent_id"]),
+                }
+                for r in hist
+            ]
+        return sellers
+    except Exception as e:
+        logger.warning(f"[ADVISORS PG] {e}")
+        return []
 
 
 async def _run_agents(store_id: str, cycle: int) -> dict:
     import uuid
-
     cycle_id = f"cycle-{uuid.uuid4().hex[:8]}"
-    started = datetime.utcnow()
+    started  = datetime.utcnow()
 
-    print(f"\n{'=' * 60}")
+    print(f"\n{'='*60}")
     print(f"  🤖 AGENT ANALYSTE — Cycle #{cycle} @ {datetime.now().strftime('%H:%M:%S')} | {store_id}")
-    print(f"{'=' * 60}")
+    print(f"{'='*60}")
 
-    # ── PostgreSQL uniquement (vw_pos_enriched, vw_ca_par_boutique) ─────────
     provider = get_data_provider()
     try:
         pos_data    = await provider.fetch_pos_data(store_id)
@@ -445,282 +426,210 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         )
     except Exception as e:
         logger.warning(f"[PG] _run_agents fallback: {e}")
-        pos_data    = {"store_id": store_id, "daily_target": 1007,
-                      "current_revenue": 0, "nb_transactions_today": 0,
-                      "data_status": "unavailable"}
+        pos_data    = {"store_id":store_id,"daily_target":1007,"current_revenue":0,
+                       "nb_transactions_today":0,"data_status":"unavailable"}
         pos_history = []
-        prediction  = {"forecast_end_of_day": 0, "mape": 99, "source": "fallback"}
+        prediction  = {"forecast_end_of_day":0,"mape":99,"source":"fallback"}
 
-
-    cr = pos_data.get("current_revenue", 0) or 0
+    cr     = pos_data.get("current_revenue", 0) or 0
     dt_val = pos_data.get("daily_target", 1007) or 1007
-    feo = prediction.get("forecast_end_of_day", 0) or 0
-
+    feo    = prediction.get("forecast_end_of_day", 0) or 0
     gap_amt = max(0, dt_val - cr)
     gap_pct = round((gap_amt / dt_val * 100) if dt_val > 0 else 0, 1)
-    att = round((cr / dt_val) * 100, 1) if dt_val > 0 else 0
-
-    hour = datetime.now().hour
+    att     = round((cr / dt_val) * 100, 1) if dt_val > 0 else 0
+    hour    = datetime.now().hour
     hrs_rem = max(0, 20 - hour)
+    cov     = 0.0 if pos_data.get("data_status") == "unavailable" else 100.0
 
-    cov = 0.0 if pos_data.get("data_status") == "unavailable" else 100.0
     if gap_amt > 0 and pos_data.get("data_status") != "unavailable":
         cov = round(min(100.0, ((feo - cr) / gap_amt) * 100), 1)
 
     if pos_data.get("data_status") == "unavailable":
-        urg_level = "CRITICAL"
-        urg_score = 1.0
+        urg_level = "CRITICAL"; urg_score = 1.0
     else:
-        gap_score = min(1.0, gap_pct / 50.0)
-        time_press = min(1.0, max(0.0, (hour - 8) / 10))
+        gap_score   = min(1.0, gap_pct / 50.0)
+        time_press  = min(1.0, max(0.0, (hour - 8) / 10))
         cov_penalty = max(0.0, (100 - cov) / 100) * 0.3
-        urg_score = round(min(1.0, gap_score * 0.5 + time_press * 0.3 + cov_penalty), 3)
-        urg_level = "HIGH" if (gap_pct > 30 and cov < 80) else "MEDIUM" if gap_pct > 15 else "LOW"
-
+        urg_score   = round(min(1.0, gap_score * 0.5 + time_press * 0.3 + cov_penalty), 3)
+        urg_level   = "HIGH" if (gap_pct > 30 and cov < 80) else "MEDIUM" if gap_pct > 15 else "LOW"
         if hrs_rem < 2 and gap_pct > 10:
-            urg_level = "HIGH"
-            urg_score = max(urg_score, 0.85)
+            urg_level = "HIGH"; urg_score = max(urg_score, 0.85)
 
     analyst_summary = ""
-
     try:
-        agent = get_analyst_agent()
+        agent  = get_analyst_agent()
         result = await agent.ainvoke({
-            "cycle_id": cycle_id,
-            "store_id": store_id,
+            "cycle_id": cycle_id, "store_id": store_id,
             "pos_data": {**pos_data, "current_hour": hour},
-            "pos_history": pos_history,
-            "timesfm_prediction": prediction,
+            "pos_history": pos_history, "timesfm_prediction": prediction,
             "feedback_history": [],
-            "metrics": {
-                "cycle_id": cycle_id,
-                "store_id": store_id,
-                "triggered_by": "websocket",
-                "nodes_executed": 0,
-            },
-            "errors": [],
-            "warnings": [],
+            "metrics": {"cycle_id":cycle_id,"store_id":store_id,
+                        "triggered_by":"websocket","nodes_executed":0},
+            "errors": [], "warnings": [],
         })
-
-        raw = result.get("analyst_summary", "")
+        raw             = result.get("analyst_summary","")
         analyst_summary = _extract_summary(raw, gap_pct, urg_level, cr, dt_val, feo)
-
         urg_level = result.get("urgency_level", urg_level)
         urg_score = result.get("urgency_score", urg_score)
-        gap_pct = result.get("gap_objectif", gap_pct)
-        gap_amt = result.get("gap_amount", gap_amt)
-        feo = result.get("forecast_eod", feo)
-        cov = result.get("coverage", cov)
-
+        gap_pct   = result.get("gap_objectif", gap_pct)
+        gap_amt   = result.get("gap_amount", gap_amt)
+        feo       = result.get("forecast_eod", feo)
+        cov       = result.get("coverage", cov)
         print(f"  💬 {analyst_summary[:100]}")
-
     except (Exception, asyncio.CancelledError) as e:
         analyst_summary = _make_fallback_summary(gap_pct, urg_level, cr, dt_val, feo)
         logger.warning(f"[ANALYST] Fallback: {str(e)[:80]}")
 
     analyst_output = {
-        "pos_data": pos_data,
-        "pos_history": pos_history,
-        "prediction": prediction,
-        "urgency_level": urg_level,
-        "urgency_score": urg_score,
-        "gap_objectif": gap_pct,
-        "gap_pct": gap_pct,
-        "gap_amount": gap_amt,
-        "analyst_summary": analyst_summary,
-        "current_revenue": cr,
-        "daily_target": dt_val,
-        "forecast_eod": feo,
-        "attainment": att,
-        "coverage": cov,
-        "mape": prediction.get("mape", 14.3),
-        "timesfm_prediction": prediction,
-        "feedback_history": [],
+        "pos_data": pos_data, "pos_history": pos_history, "prediction": prediction,
+        "urgency_level": urg_level, "urgency_score": urg_score,
+        "gap_objectif": gap_pct, "gap_pct": gap_pct, "gap_amount": gap_amt,
+        "analyst_summary": analyst_summary, "current_revenue": cr,
+        "daily_target": dt_val, "forecast_eod": feo, "attainment": att,
+        "coverage": cov, "mape": prediction.get("mape", 14.3),
+        "timesfm_prediction": prediction, "feedback_history": [],
         "metrics": {"cycle_id": cycle_id, "store_id": store_id},
     }
 
     print(f"\n  🎯 AGENT STRATÈGE — Cycle #{cycle}")
-
     stratege_output: dict = {}
-
     try:
-        stratege = get_stratege_agent()
+        stratege    = get_stratege_agent()
         strat_state = await stratege.ainvoke(analyst_output)
-
-        ctx = (strat_state.get("external_context") or {}).get("summary") or {}
-        nb_actions = len(strat_state.get("strategie_actions") or [])
-
-        print(f"  Météo   : {ctx.get('weather_icon', '')} {ctx.get('weather_label', '')}")
-        print(f"  Cause   : {str(strat_state.get('cause_racine', ''))[:60]}")
+        ctx         = (strat_state.get("external_context") or {}).get("summary") or {}
+        nb_actions  = len(strat_state.get("strategie_actions") or [])
+        print(f"  Météo   : {ctx.get('weather_icon','')} {ctx.get('weather_label','')}")
+        print(f"  Cause   : {str(strat_state.get('cause_racine',''))[:60]}")
         print(f"  Actions : {nb_actions}")
-
         stratege_output = {
-            "strategie": strat_state.get("strategie", ""),
-            "strategie_actions": strat_state.get("strategie_actions", []),
-            "cause_racine": strat_state.get("cause_racine", ""),
-            "context_heatmap": strat_state.get("context_heatmap", {}),
-            "context_signals": strat_state.get("context_signals", []),
-            "external_context": strat_state.get("external_context", {}),
-            "message_manager": strat_state.get("message_manager", ""),
-            "focus_produits": strat_state.get("focus_produits", []),
-            "rag_used": strat_state.get("rag_used", False),
-            "nb_rag_scripts": strat_state.get("nb_rag_scripts", 0),
-            "real_time_alerts": strat_state.get("real_time_alerts", []),  # ← alertes temps réel
+            "strategie":          strat_state.get("strategie",""),
+            "strategie_actions":  strat_state.get("strategie_actions",[]),
+            "cause_racine":       strat_state.get("cause_racine",""),
+            "context_heatmap":    strat_state.get("context_heatmap",{}),
+            "context_signals":    strat_state.get("context_signals",[]),
+            "external_context":   strat_state.get("external_context",{}),
+            "message_manager":    strat_state.get("message_manager",""),
+            "focus_produits":     strat_state.get("focus_produits",[]),
+            "rag_used":           strat_state.get("rag_used",False),
+            "nb_rag_scripts":     strat_state.get("nb_rag_scripts",0),
+            "real_time_alerts":   strat_state.get("real_time_alerts",[]),
         }
-
     except (Exception, asyncio.CancelledError) as e:
         logger.warning(f"[STRATEGE] Fallback: {str(e)[:80]}")
         stratege_output = {
-            "strategie": "",
-            "strategie_actions": [],
-            "cause_racine": f"Gap {gap_pct:.1f}%",
-            "context_heatmap": {},
-            "context_signals": [],
-            "external_context": {},
-            "message_manager": "",
-            "focus_produits": [],
-            "rag_used": False,
-            "nb_rag_scripts": 0,
+            "strategie":"","strategie_actions":[],
+            "cause_racine":f"Gap {gap_pct:.1f}%","context_heatmap":{},
+            "context_signals":[],"external_context":{},"message_manager":"",
+            "focus_produits":[],"rag_used":False,"nb_rag_scripts":0,
+            "real_time_alerts":[],
         }
 
     try:
         from agent_logger import log_cycle
-
         total_ms = (datetime.utcnow() - started).total_seconds() * 1000
         log_cycle(
-            cycle_id=cycle_id,
-            state={**analyst_output, **stratege_output},
-            total_ms=total_ms,
-            triggered_by="websocket",
-            store_id=store_id,
-            nodes_executed=2,
-            errors_count=0,
-            rag_used=stratege_output.get("rag_used", False),
-            nb_rag_scripts=stratege_output.get("nb_rag_scripts", 0),
+            cycle_id=cycle_id, state={**analyst_output, **stratege_output},
+            total_ms=total_ms, triggered_by="websocket", store_id=store_id,
+            nodes_executed=2, errors_count=0,
+            rag_used=stratege_output.get("rag_used",False),
+            nb_rag_scripts=stratege_output.get("nb_rag_scripts",0),
         )
     except Exception:
         pass
-
+    # ── Trace Langfuse ────────────────────────────────────────────────────────
+    try:
+        from langfuse_observer import trace_full_cycle
+        total_ms = (datetime.utcnow() - started).total_seconds() * 1000
+        trace_full_cycle(
+            cycle_id        = cycle_id,
+            store_id        = store_id,
+            urgency         = urg_level,
+            gap_pct         = gap_pct,
+            analyst_summary = analyst_summary,
+            nb_actions      = len(stratege_output.get("strategie_actions", [])),
+            rag_used        = stratege_output.get("rag_used", False),
+            nb_rag_scripts  = stratege_output.get("nb_rag_scripts", 0),
+            total_ms        = total_ms,
+        )
+    except Exception:
+        pass
     return {**analyst_output, **stratege_output}
 
 
 def _build_payload(analysis: dict) -> dict:
-    pos_data = analysis.get("pos_data") or {}
+    pos_data    = analysis.get("pos_data") or {}
     pos_history = analysis.get("pos_history") or []
-    prediction = analysis.get("prediction") or {}
+    prediction  = analysis.get("prediction") or {}
 
-    urgency_level = analysis.get("urgency_level") or "LOW"
-    urgency_score = analysis.get("urgency_score") or 0
-    gap_pct = analysis.get("gap_pct") or 0
-    gap_amount = analysis.get("gap_amount") or 0
+    urgency_level   = analysis.get("urgency_level") or "LOW"
+    urgency_score   = analysis.get("urgency_score") or 0
+    gap_pct         = analysis.get("gap_pct") or 0
+    gap_amount      = analysis.get("gap_amount") or 0
     analyst_summary = analysis.get("analyst_summary") or ""
-
-    cr = analysis.get("current_revenue") or 0
+    cr     = analysis.get("current_revenue") or 0
     dt_val = analysis.get("daily_target") or 1007
-    feo = analysis.get("forecast_eod") or 0
-    att = analysis.get("attainment") or 0
+    feo    = analysis.get("forecast_eod") or 0
+    att    = analysis.get("attainment") or 0
 
-    strategie = analysis.get("strategie") or ""
+    strategie         = analysis.get("strategie") or ""
     strategie_actions = analysis.get("strategie_actions") or []
-    cause_racine = analysis.get("cause_racine") or ""
-    context_heatmap = analysis.get("context_heatmap") or {}
-    context_signals = analysis.get("context_signals") or []
-    external_ctx = analysis.get("external_context") or {}
-    message_manager = analysis.get("message_manager") or ""
-    focus_produits = analysis.get("focus_produits") or []
+    cause_racine      = analysis.get("cause_racine") or ""
+    context_heatmap   = analysis.get("context_heatmap") or {}
+    context_signals   = analysis.get("context_signals") or []
+    external_ctx      = analysis.get("external_context") or {}
+    message_manager   = analysis.get("message_manager") or ""
+    focus_produits    = analysis.get("focus_produits") or []
 
     weather_sum = external_ctx.get("summary") or {}
-    holidays = external_ctx.get("holidays") or {}
+    holidays    = external_ctx.get("holidays") or {}
     events_data = external_ctx.get("events") or {}
 
     if not weather_sum or not weather_sum.get("weather_icon"):
         weather_sum = _fetch_weather_fallback()
 
-    weather_str = f"{weather_sum.get('weather_icon', '🌤️')} {weather_sum.get('weather_label', 'Tunis')}".strip()
-
+    weather_str  = f"{weather_sum.get('weather_icon','🌤️')} {weather_sum.get('weather_label','Tunis')}".strip()
     next_holiday = holidays.get("next_holiday") or {}
-    event_str = ""
+    event_str    = ""
 
     if holidays.get("is_holiday_today"):
-        event_str = f"🎉 {(holidays.get('today_holiday') or {}).get('name', 'Jour férié')}"
+        event_str = f"🎉 {(holidays.get('today_holiday') or {}).get('name','Jour férié')}"
     elif next_holiday.get("name"):
-        event_str = f"📅 {next_holiday['name']} dans {next_holiday.get('days_until', 0)}j"
+        event_str = f"📅 {next_holiday['name']} dans {next_holiday.get('days_until',0)}j"
 
     all_promos = (events_data.get("promotions") or []) + (events_data.get("new_offers") or [])
-    promo_str = f"🎯 {len(all_promos)} offre(s) Ooredoo" if all_promos else ""
+    promo_str  = f"🎯 {len(all_promos)} offre(s) Ooredoo" if all_promos else ""
 
     store_context = {
-        "weather": weather_str,
-        "event": event_str,
-        "promo": promo_str,
-        "stock_alert": "📦 iPhone 15 — 3 unités restantes",
-        "temperature": f"{weather_sum.get('temperature', 22)}°C",
+        "weather":     weather_str,
+        "event":       event_str,
+        "promo":       promo_str,
+        "stock_alert": "📦 Stock critique — vérifier boutique",
+        "temperature": f"{weather_sum.get('temperature',22)}°C",
     }
 
-    hour = datetime.now().hour
+    hour          = datetime.now().hour
     hours_elapsed = max(1, hour - 9)
-    nb_tx = pos_data.get("nb_transactions_today", 0) or 0
-    visitors_h = max(10, round(nb_tx / hours_elapsed * random.uniform(0.9, 1.2)))
+    nb_tx         = pos_data.get("nb_transactions_today",0) or 0
+    visitors_h    = max(10, round(nb_tx / hours_elapsed * random.uniform(0.9,1.2)))
 
-    sellers = []
-
-    try:
-        from data.json_service import _query
-
-        pg_sellers = _query("""
-            SELECT a.agent_id,
-                   a.agent_name || ' ' || a.agent_surname AS full_name,
-                   COALESCE(SUM(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN t.lig_ttc ELSE 0 END), 0) AS revenue_today,
-                   COALESCE(SUM(t.lig_ttc), 0) AS revenue_total,
-                   COUNT(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN 1 END) AS nb_ventes
-            FROM agents a
-            LEFT JOIN transactions t ON t.agent_id = a.agent_id
-                AND t.store_id = 'I63'
-                AND t.lig_ttc > 0
-            WHERE a.store_id = 'I63'
-              AND a.actif = true
-            GROUP BY a.agent_id, a.agent_name, a.agent_surname
-            ORDER BY revenue_today DESC, revenue_total DESC
-        """)
-
-        total_hist = sum(float(s["revenue_total"]) for s in pg_sellers) or 1
-
-        for s in pg_sellers:
-            rev_today = float(s["revenue_today"])
-
-            if rev_today == 0 and cr > 0:
-                rev_today = round(cr * float(s["revenue_total"]) / total_hist, 2)
-
-            nb_v = int(s["nb_ventes"]) or max(1, round(rev_today / 80))
-
-            sellers.append({
-                "name": s["full_name"].title(),
-                "revenue_today": rev_today,
-                "nb_ventes": nb_v,
-                "agent_id": s["agent_id"],
-            })
-
-    except Exception as e:
-        logger.warning(f"[PAYLOAD] sellers fallback: {e}")
-        sellers = pos_data.get("sellers", []) or []
-
-    per_seller = round(dt_val / max(len(sellers), 1))
-    max_rev = max((s.get("revenue_today", 0) for s in sellers), default=0)
+    sellers    = analysis.get("_sellers_cache") or pos_data.get("sellers") or []
+    per_seller = round(dt_val / max(len(sellers),1))
+    max_rev    = max((s.get("revenue_today",0) for s in sellers), default=1)
 
     advisors = sorted([
         {
-            "id": s.get("name", "").replace(" ", "_").lower(),
-            "name": s.get("name", ""),
-            "revenue": round(s.get("revenue_today", 0)),
-            "target": per_seller,
-            "attainment": round(s.get("revenue_today", 0) / max(per_seller, 1) * 100),
-            "nb_ventes": s.get("nb_ventes", 0),
+            "id":         s.get("name","").replace(" ","_").lower(),
+            "name":       s.get("name",""),
+            "revenue":    round(s.get("revenue_today",0)),
+            "target":     per_seller,
+            "attainment": round(s.get("revenue_today",0) / max(per_seller,1) * 100),
+            "nb_ventes":  s.get("nb_ventes",0),
             "status": (
-                "Top" if s.get("revenue_today", 0) == max_rev
-                else "OK" if s.get("revenue_today", 0) / max(per_seller, 1) >= 0.5
+                "Top"    if s.get("revenue_today",0) == max_rev
+                else "OK"     if s.get("revenue_today",0) / max(per_seller,1) >= 0.5
                 else "Urgent"
             ),
-            "trend": "up" if s.get("revenue_today", 0) >= per_seller * 0.7 else "down",
+            "trend": "up" if s.get("revenue_today",0) >= per_seller * 0.7 else "down",
         }
         for s in sellers
     ], key=lambda x: -x["revenue"])
@@ -730,523 +639,410 @@ def _build_payload(analysis: dict) -> dict:
 
     coaching_cards = [
         {
-            "id": f"card-{i}",
-            "advisor": a["name"],
+            "id":       f"card-{i}",
+            "advisor":  a["name"],
             "initials": "".join(p[0].upper() for p in a["name"].split() if p)[:2],
-            "gap": max(0, 100 - a["attainment"]),
-            "urgency": "HIGH" if a["attainment"] < 50 else "MEDIUM" if a["attainment"] < 80 else "LOW",
-            "context": f"{a['nb_ventes']} ventes · {a['revenue']:,} DT",
-            "advice": analyst_summary[:120] or f"Gap {max(0, 100 - a['attainment'])}% — focus produits premium",
-            "action": strategie_actions[0].get("action", "Focus bundle terminal + forfait") if strategie_actions else "Focus bundle terminal + forfait",
-            "produit": strategie_actions[0].get("produit_cible", "Forfait Flexi 25Go") if strategie_actions else "Forfait Flexi 25Go",
-            "status": "pending",
+            "gap":      max(0, 100 - a["attainment"]),
+            "urgency":  "HIGH" if a["attainment"] < 50 else "MEDIUM" if a["attainment"] < 80 else "LOW",
+            "context":  f"{a['nb_ventes']} ventes · {a['revenue']:,} DT",
+            "advice":   analyst_summary[:120] or f"Gap {max(0,100-a['attainment'])}% — focus produits premium",
+            "action":   strategie_actions[0].get("action","Focus bundle terminal + forfait") if strategie_actions else "Focus bundle terminal + forfait",
+            "produit":  strategie_actions[0].get("produit_cible","Forfait Flexi 25Go") if strategie_actions else "Forfait Flexi 25Go",
+            "status":   "pending",
             "priority": i + 1,
         }
         for i, a in enumerate(advisors)
         if a["attainment"] < 80
     ]
 
-    tph = round(dt_val / 11)
+    tph         = round(dt_val / 11)
     hourly_rate = cr / hours_elapsed
     hd: dict[int, float] = {}
-
     for tx in pos_history:
         t = tx.get("transaction_time")
         if t and hasattr(t, "hour"):
-            hd[t.hour] = hd.get(t.hour, 0.0) + tx.get("revenue", 0.0)
+            hd[t.hour] = hd.get(t.hour,0.0) + tx.get("revenue",0.0)
 
     hourly_performance = []
-
-    for h in range(9, min(hour + 1, 21)):
-        rev = max(0, hd.get(h, 0.0))
-        label = "12PM" if h == 12 else f"{h}AM" if h < 12 else f"{h - 12}PM"
+    for h in range(9, min(hour+1, 21)):
+        rev   = max(0, hd.get(h,0.0))
+        label = "12PM" if h==12 else f"{h}AM" if h<12 else f"{h-12}PM"
         hourly_performance.append({
-            "hour": label,
-            "revenue": round(rev),
-            "actual": round(rev),
-            "target": tph,
-            "forecast": round(rev) if rev > 0 else round(max(0, hourly_rate) * random.uniform(0.85, 1.10)),
-            "risk": rev > 0 and rev < tph * 0.85,
+            "hour":label,"revenue":round(rev),"actual":round(rev),"target":tph,
+            "forecast":round(rev) if rev>0 else round(max(0,hourly_rate)*random.uniform(0.85,1.10)),
+            "risk":rev>0 and rev<tph*0.85,
         })
-
-    for h in range(hour + 1, 21):
-        label = "12PM" if h == 12 else f"{h}AM" if h < 12 else f"{h - 12}PM"
-        mult = (
-            random.uniform(1.10, 1.30) if h in [12, 13, 17, 18]
-            else random.uniform(0.60, 0.80) if h in [9, 10, 19, 20]
-            else random.uniform(0.90, 1.10)
-        )
-        hourly_performance.append({
-            "hour": label,
-            "revenue": 0,
-            "actual": 0,
-            "target": tph,
-            "forecast": round(tph * mult),
-            "risk": False,
-        })
+    for h in range(hour+1, 21):
+        label = "12PM" if h==12 else f"{h}AM" if h<12 else f"{h-12}PM"
+        mult  = random.uniform(1.10,1.30) if h in [12,13,17,18] else random.uniform(0.60,0.80) if h in [9,10,19,20] else random.uniform(0.90,1.10)
+        hourly_performance.append({"hour":label,"revenue":0,"actual":0,"target":tph,"forecast":round(tph*mult),"risk":False})
 
     risk_hours = [
-        {
-            "hour": h["hour"],
-            "target_pct": round((h["revenue"] / tph) * 100),
-            "units_behind": round((h["revenue"] - tph) / 150),
-        }
+        {"hour":h["hour"],"target_pct":round((h["revenue"]/tph)*100),"units_behind":round((h["revenue"]-tph)/150)}
         for h in hourly_performance
-        if tph > 0 and h["revenue"] > 0 and (h["revenue"] / tph) * 100 < 85
+        if tph>0 and h["revenue"]>0 and (h["revenue"]/tph)*100<85
     ]
 
-    by_cat: dict[str, float] = {}
-
+    by_cat: dict[str,float] = {}
     for tx in pos_history:
-        cat = tx.get("product_category", "Autre")
-        by_cat[cat] = by_cat.get(cat, 0) + tx.get("revenue", 0)
+        cat = tx.get("product_category","Autre")
+        by_cat[cat] = by_cat.get(cat,0) + tx.get("revenue",0)
 
     product_mix = [
-        {
-            "product": cat,
-            "revenue": round(rev),
-            "attainment": round(rev / max(dt_val / max(len(by_cat), 1), 1) * 100),
-            "stock_level": "Low" if "Smartphone" in cat else "OK",
-            "forecast": round(rev * 1.10),
-        }
+        {"product":cat,"revenue":round(rev),
+         "attainment":round(rev/max(dt_val/max(len(by_cat),1),1)*100),
+         "stock_level":"Low" if "Smartphone" in cat else "OK","forecast":round(rev*1.10)}
         for cat, rev in sorted(by_cat.items(), key=lambda x: -x[1])
     ]
 
     final_heatmap = context_heatmap if context_heatmap and context_heatmap.get("traffic") else _compute_heatmap(urgency_level)
-
-    w_eff = weather_sum.get("weather_effect", 0)
-    w_level = "high" if w_eff <= -0.15 else "med" if w_eff < 0 else "low"
+    w_eff   = weather_sum.get("weather_effect",0)
+    w_level = "high" if w_eff<=-0.15 else "med" if w_eff<0 else "low"
 
     final_signals = context_signals or [
-        {
-            "type": "weather",
-            "label": f"{weather_sum.get('weather_icon', '⛅')} {weather_sum.get('weather_label', 'Tunis')} — {weather_sum.get('temperature', 22)}°C",
-            "level": w_level,
-            "value": w_eff,
-        },
-        {
-            "type": "stock",
-            "label": "📦 iPhone 15 — 3 unités restantes",
-            "level": "high",
-            "value": -0.3,
-        },
+        {"type":"weather","label":f"{weather_sum.get('weather_icon','⛅')} {weather_sum.get('weather_label','Tunis')} — {weather_sum.get('temperature',22)}°C","level":w_level,"value":w_eff},
     ]
-
     if event_str and not context_signals:
-        final_signals.append({
-            "type": "holiday",
-            "label": event_str,
-            "level": "med",
-            "value": 0.5,
-        })
-
+        final_signals.append({"type":"holiday","label":event_str,"level":"med","value":0.5})
     if promo_str and not context_signals:
-        final_signals.append({
-            "type": "event",
-            "label": promo_str,
-            "level": "low",
-            "value": 0.2,
-        })
+        final_signals.append({"type":"event","label":promo_str,"level":"low","value":0.2})
 
-    # ── Stock Health depuis inventory cache ─────────────────────────────────
-    _stock_health = {"critical": 0, "total": 0, "optimal": 0}
+    _stock_health = {"critical":0,"total":0,"optimal":0}
     try:
         from src.tools.internal.stock_tools import _DataCache
-        _overrides = getattr(_DataCache, "_stock_overrides", {})
-        _critical = sum(1 for v in _overrides.values() if float(v or 0) < 3)
-        _total = len(_overrides)
-        _optimal = _total - _critical
-        _stock_health = {"critical": _critical, "total": _total, "optimal": _optimal}
+        _overrides = getattr(_DataCache,"_stock_overrides",{})
+        _critical  = sum(1 for v in _overrides.values() if float(v or 0)<3)
+        _total     = len(_overrides)
+        _stock_health = {"critical":_critical,"total":_total,"optimal":_total-_critical}
     except Exception:
         pass
 
-    # Récupérer les alertes temps réel du stratège
-    real_time_alerts = analysis.get("real_time_alerts", [])
-
     return {
-        "type": "metrics_update",
-        "timestamp": datetime.now().isoformat(),
-        "ca_today": cr,
-        "stock_health": _stock_health,
-        "ca_target": dt_val,
-        "attainment": att,
-        "visitors_h": visitors_h,
-        "agents_live": 4,
-        "niveau_urgence": urgency_level,
-        "urgency_score": urgency_score,
-        "ecart_objectif": gap_pct,
-        "gap_amount": gap_amount,
-        "analyst_summary": analyst_summary,
-        "route_to": "strategie" if urgency_level in ("CRITICAL", "HIGH", "MEDIUM") else "coach",
-        "forecast_eod": feo,
-        "forecast_ci_low": (prediction.get("confidence_interval") or {}).get("low", 0),
-        "forecast_ci_high": (prediction.get("confidence_interval") or {}).get("high", 0),
-        "forecast_mape": analysis.get("mape", 14.3),
-        "strategie": strategie,
-        "strategie_actions": strategie_actions,
-        "cause_racine": cause_racine,
-        "message_manager": message_manager,
-        "focus_produits": focus_produits,
-        "store_context": store_context,
-        "context_heatmap": final_heatmap,
-        "context_signals": final_signals,
-        "coaching_cards": coaching_cards,
-        "advisors": advisors,
-        "liveAdvisors": advisors,
+        "type":               "metrics_update",
+        "timestamp":          datetime.now().isoformat(),
+        "ca_today":           cr,
+        "stock_health":       _stock_health,
+        "ca_target":          dt_val,
+        "attainment":         att,
+        "visitors_h":         visitors_h,
+        "agents_live":        4,
+        "niveau_urgence":     urgency_level,
+        "urgency_score":      urgency_score,
+        "ecart_objectif":     gap_pct,
+        "gap_amount":         gap_amount,
+        "analyst_summary":    analyst_summary,
+        "route_to":           "strategie" if urgency_level in ("CRITICAL","HIGH","MEDIUM") else "coach",
+        "forecast_eod":       feo,
+        "forecast_ci_low":    (prediction.get("confidence_interval") or {}).get("low",0),
+        "forecast_ci_high":   (prediction.get("confidence_interval") or {}).get("high",0),
+        "forecast_mape":      analysis.get("mape",14.3),
+        "strategie":          strategie,
+        "strategie_actions":  strategie_actions,
+        "cause_racine":       cause_racine,
+        "message_manager":    message_manager,
+        "focus_produits":     focus_produits,
+        "store_context":      store_context,
+        "context_heatmap":    final_heatmap,
+        "context_signals":    final_signals,
+        "coaching_cards":     coaching_cards,
+        "advisors":           advisors,
+        "liveAdvisors":       advisors,
         "analyst_nodes": {
-            "receive_pos": {"status": "done", "transactions": len(pos_history)},
-            "compute_gap": {"status": "done", "gap_pct": gap_pct, "gap_amount": gap_amount},
-            "call_timesfm": {"status": "done", "forecast_eod": feo},
-            "detect_urgency": {"status": "done", "level": urgency_level, "score": urgency_score},
-            "llm_summary": {"status": "done", "summary": analyst_summary},
+            "receive_pos":    {"status":"done","transactions":len(pos_history)},
+            "compute_gap":    {"status":"done","gap_pct":gap_pct,"gap_amount":gap_amount},
+            "call_timesfm":   {"status":"done","forecast_eod":feo},
+            "detect_urgency": {"status":"done","level":urgency_level,"score":urgency_score},
+            "llm_summary":    {"status":"done","summary":analyst_summary},
         },
         "hourly_performance": hourly_performance,
-        "risk_hours": risk_hours,
-        "product_mix": product_mix,
+        "risk_hours":         risk_hours,
+        "product_mix":        product_mix,
         "advisor_priorities": [
             {
-                "advisor_id": a["id"],
-                "name": a["name"],
-                "performance": a["attainment"],
-                "priority": "TOP_CLOSE" if a["attainment"] >= 80 else "STABLE" if a["attainment"] >= 50 else "AT_RISK",
-                "reason": f"{a['nb_ventes']} ventes · {a['revenue']:,} DT",
-                "action": f"Gap {100 - a['attainment']}% à combler" if a["attainment"] < 80 else "Maintenir le rythme",
+                "advisor_id": a["id"], "name": a["name"], "performance": a["attainment"],
+                "priority":   "TOP_CLOSE" if a["attainment"]>=80 else "STABLE" if a["attainment"]>=50 else "AT_RISK",
+                "reason":     f"{a['nb_ventes']} ventes · {a['revenue']:,} DT",
+                "action":     f"Gap {100-a['attainment']}% à combler" if a["attainment"]<80 else "Maintenir le rythme",
             }
             for a in advisors
         ],
-        "rag_used": analysis.get("rag_used", False),
-        "nb_rag_scripts": analysis.get("nb_rag_scripts", 0),
-        "real_time_alerts": real_time_alerts,  # ← alertes temps réel conseiller
+        "rag_used":               analysis.get("rag_used",False),
+        "nb_rag_scripts":         analysis.get("nb_rag_scripts",0),
+        "real_time_alerts":       analysis.get("real_time_alerts",[]),
         "ca_yesterday_same_hour": cr * 0.88,
-        "last_cycle_id": f"cycle_{datetime.now().strftime('%H%M%S')}",
+        "last_cycle_id":          f"cycle_{datetime.now().strftime('%H%M%S')}",
     }
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Agent loop — tourne en tâche de fond pour un store
+# Séparé du handler WS → les reconnexions n'interrompent pas le cycle
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _agent_loop(mapped_id: str, frontend_id: str) -> None:
+    """
+    Boucle agent indépendante des connexions WS.
+    Démarre une seule fois par store et tourne tant qu'il y a des connexions.
+    Résultats broadcastés à toutes les connexions actives via _broadcast().
+    """
+    cycle = 0
+    logger.info(f"[AGENT LOOP] Démarré pour {mapped_id}")
+
+    # ── Payload initial rapide depuis PG ──────────────────────────────────────
+    try:
+        provider    = get_data_provider()
+        pos_data    = await provider.fetch_pos_data(mapped_id)
+        pos_history = await provider.fetch_pos_history(mapped_id)
+        prediction  = await provider.fetch_timesfm_prediction(mapped_id)
+        sellers     = await _get_advisors_from_pg(
+            mapped_id,
+            pos_data.get("current_revenue",0),
+            pos_data.get("daily_target",1007),
+        )
+        cr  = pos_data.get("current_revenue",0) or 0
+        dt_ = pos_data.get("daily_target",1007) or 1007
+        ga  = max(0, dt_ - cr)
+        gp  = round((ga/dt_*100) if dt_>0 else 0, 1)
+        feo = prediction.get("forecast_end_of_day",0) or 0
+        ul  = "HIGH" if gp>30 else "MEDIUM" if gp>15 else "LOW"
+
+        initial_payload = _build_payload({
+            "pos_data":pos_data,"pos_history":pos_history,"prediction":prediction,
+            "urgency_level":ul,"urgency_score":round(min(1.0,gp/60),3),
+            "gap_pct":gp,"gap_amount":ga,
+            "analyst_summary":f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt_:,.0f} TND. Analyse en cours...",
+            "current_revenue":cr,"daily_target":dt_,"forecast_eod":feo,
+            "attainment":round((cr/dt_)*100,1) if dt_>0 else 0,
+            "coverage":100.0,"mape":14.3,
+            "strategie":"","strategie_actions":[],"cause_racine":"",
+            "context_heatmap":{},"context_signals":[],"external_context":{},
+            "message_manager":"","focus_produits":[],"timesfm_prediction":prediction,
+            "feedback_history":[],"_sellers_cache":sellers,
+        })
+        await _broadcast(frontend_id, json.dumps(initial_payload, default=str))
+        logger.info(f"[AGENT LOOP] Payload initial broadcasté pour {mapped_id}")
+    except Exception as e:
+        logger.warning(f"[AGENT LOOP] Payload initial échoué: {e}")
+
+    # ── Boucle principale ─────────────────────────────────────────────────────
+    while _store_connections.get(frontend_id):
+        cycle += 1
+
+        # Signaler que l'analyse est en cours
+        await _broadcast(frontend_id, json.dumps({
+            "type":"processing","message":"Analyse en cours...",
+            "timestamp":datetime.now().isoformat(),
+        }))
+
+        try:
+            analysis = await _run_agents(mapped_id, cycle)
+            sellers  = await _get_advisors_from_pg(
+                mapped_id,
+                analysis.get("current_revenue",0),
+                analysis.get("daily_target",1007),
+            )
+            analysis["_sellers_cache"] = sellers
+            payload = _build_payload(analysis)
+            await _broadcast(frontend_id, json.dumps(payload, default=str))
+            nb_bytes = len(json.dumps(payload, default=str))
+            print(f"\n📤 Payload #{cycle} ({nb_bytes:,} bytes) — prochain dans 2min")
+        except Exception as e:
+            logger.error(f"[AGENT LOOP] Cycle #{cycle} erreur: {e}")
+
+        # Attendre 2 minutes entre cycles
+        for _ in range(24):   # 24 × 5s = 120s
+            if not _store_connections.get(frontend_id):
+                break
+            await asyncio.sleep(5)
+
+    _agent_running[frontend_id] = False
+    logger.info(f"[AGENT LOOP] Arrêté pour {mapped_id} (plus de connexions)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WebSocket handler — connexion légère, renvoie le cache puis attend
+# ══════════════════════════════════════════════════════════════════════════════
 
 @app.websocket("/ws/store/{store_id}")
 async def ws_store(websocket: WebSocket, store_id: str):
     await websocket.accept()
 
-    if store_id in _active_stores:
-        # Un seul slot par store — fermer silencieusement sans close()
-        logger.info(f"[WS] Slot occupé pour {store_id} — connexion refusée")
-        return
-
-    _active_stores.add(store_id)
-
-    print(f"\n🔌 Frontend connecté → {store_id}")
-
     mapped_id = STORE_MAP.get(store_id, "I63")
-    cycle = 0
+    print(f"\n🔌 Frontend connecté → {store_id} (mapped={mapped_id})")
 
-    async def heartbeat():
-        while True:
-            try:
-                await asyncio.sleep(30)
-                await websocket.send_text(json.dumps({
-                    "type": "ping",
-                    "timestamp": datetime.now().isoformat(),
-                }))
-            except Exception:
-                break
-
-    hb_task = asyncio.create_task(heartbeat())
+    # Enregistrer la connexion
+    if store_id not in _store_connections:
+        _store_connections[store_id] = set()
+    _store_connections[store_id].add(websocket)
 
     try:
-        try:
-            provider = get_data_provider()
-            pos_data = await provider.fetch_pos_data(mapped_id)
-            pos_history = await provider.fetch_pos_history(mapped_id)
-            prediction = await provider.fetch_timesfm_prediction(mapped_id)
+        # ── Renvoi immédiat du dernier payload connu ──────────────────────────
+        # Le client voit les données instantanément sans attendre un nouveau cycle
+        if store_id in _last_payload:
+            await _safe_send(websocket, _last_payload[store_id])
+            logger.info(f"[WS] Cache renvoyé immédiatement → {store_id}")
+        else:
+            # Première connexion : envoyer un payload minimal
+            await _safe_send(websocket, json.dumps({
+                "type":"processing","message":"Connexion établie — chargement des données...",
+                "timestamp":datetime.now().isoformat(),
+            }))
 
-            cr = pos_data.get("current_revenue", 0) or 0
-            dt_ = pos_data.get("daily_target", 1007) or 1007
-            ga = max(0, dt_ - cr)
-            gp = round((ga / dt_ * 100) if dt_ > 0 else 0, 1)
-            feo = prediction.get("forecast_end_of_day", 0) or 0
-            ul = "HIGH" if gp > 30 else "MEDIUM" if gp > 15 else "LOW"
+        # ── Démarrer la boucle agent si pas déjà active ───────────────────────
+        if not _agent_running.get(store_id, False):
+            _agent_running[store_id] = True
+            asyncio.create_task(_agent_loop(mapped_id, store_id))
+            logger.info(f"[WS] Agent loop démarrée pour {store_id}")
+        else:
+            logger.info(f"[WS] Agent loop déjà active pour {store_id} — connexion ajoutée")
 
-            initial = {
-                "pos_data": pos_data,
-                "pos_history": pos_history,
-                "prediction": prediction,
-                "urgency_level": ul,
-                "urgency_score": round(min(1.0, gp / 60), 3),
-                "gap_pct": gp,
-                "gap_amount": ga,
-                "analyst_summary": f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt_:,.0f} TND. Analyse en cours...",
-                "current_revenue": cr,
-                "daily_target": dt_,
-                "forecast_eod": feo,
-                "attainment": round((cr / dt_) * 100, 1) if dt_ > 0 else 0,
-                "coverage": 100.0,
-                "mape": 14.3,
-                "strategie": "",
-                "strategie_actions": [],
-                "cause_racine": "",
-                "context_heatmap": {},
-                "context_signals": [],
-                "external_context": {},
-                "message_manager": "",
-                "focus_produits": [],
-                "timesfm_prediction": prediction,
-                "feedback_history": [],
-            }
-
-            ok = await _safe_send(websocket, json.dumps(_build_payload(initial), default=str))
-            if ok:
-                print("✅ Payload initial envoyé")
-
-        except Exception as e:
-            logger.warning(f"[WS] Payload initial: {e}")
-
+        # ── Heartbeat ─────────────────────────────────────────────────────────
         while True:
-            cycle += 1
-            task = asyncio.create_task(_run_agents(mapped_id, cycle))
-
-            while not task.done():
-                await asyncio.sleep(30)
-
-                if not task.done():
-                    try:
-                        ok = await _safe_send(websocket, json.dumps({
-                            "type": "processing",
-                            "message": "Analyse en cours...",
-                            "timestamp": datetime.now().isoformat(),
-                        }))
-                        if not ok:
-                            task.cancel()
-                            break
-                    except Exception:
-                        task.cancel()
-                        break
-
-            analysis = await task
-            msg = _build_payload(analysis)
-
-            ok = await _safe_send(websocket, json.dumps(msg, default=str))
+            await asyncio.sleep(30)
+            ok = await _safe_send(websocket, json.dumps({
+                "type":"ping","timestamp":datetime.now().isoformat(),
+            }))
             if not ok:
-                logger.warning(f"[WS] Connexion perdue pendant l'envoi — {store_id}")
                 break
-
-            print(f"\n📤 Payload #{cycle} ({len(json.dumps(msg, default=str)):,} bytes) — prochain dans 2min")
-
-            await asyncio.sleep(120)
 
     except WebSocketDisconnect:
         print(f"\n🔌 Déconnecté : {store_id}")
-
     except Exception as e:
-        logger.error(f"[WS] Erreur cycle #{cycle}: {e}")
-        try:
-            await websocket.close()
-        except Exception:
-            pass
-
+        logger.error(f"[WS] Erreur: {e}")
     finally:
-        hb_task.cancel()
-        _active_stores.discard(store_id)
-        print(f"🔓 Slot libéré → {store_id}")
+        # Retirer proprement la connexion
+        if store_id in _store_connections:
+            _store_connections[store_id].discard(websocket)
+            nb = len(_store_connections[store_id])
+            logger.info(f"[WS] {store_id} — {nb} connexion(s) restante(s)")
+        print(f"🔓 Connexion libérée → {store_id}")
 
 
 @app.websocket("/ws/advisor/{advisor_id}")
 async def ws_advisor(websocket: WebSocket, advisor_id: str):
     await websocket.accept()
-
     try:
         while True:
             await websocket.send_text(json.dumps({
-                "type": "coach_update",
-                "advisor_id": advisor_id,
-                "timestamp": datetime.now().isoformat(),
-                "status": "active",
+                "type":"coach_update","advisor_id":advisor_id,
+                "timestamp":datetime.now().isoformat(),"status":"active",
             }))
             await asyncio.sleep(30)
-
     except Exception:
         pass
 
 
 @app.get("/health")
 async def health():
-    trigger = getattr(app.state, "trigger", None)
-    last = trigger.last_result if trigger else None
-
+    trigger = getattr(app.state,"trigger",None)
+    last    = trigger.last_result if trigger else None
     return {
-        "status": "ok",
-        "version": "3.0.0",
-        "modules": ["inventory", "sales", "agents-ia", "rag", "coach", "monitoring"],
+        "status":"ok","version":"4.0.0",
+        "modules":["inventory","sales","agents-ia","rag","coach","monitoring"],
+        "active_connections": {k: len(v) for k,v in _store_connections.items()},
         "last_cycle": {
-            "cycle_id": last.get("cycle_id") if last else None,
+            "cycle_id":       last.get("cycle_id") if last else None,
             "niveau_urgence": last.get("niveau_urgence") if last else None,
             "ecart_objectif": last.get("ecart_objectif") if last else None,
-            "forecast_eod": last.get("forecast_eod") if last else None,
+            "forecast_eod":   last.get("forecast_eod") if last else None,
         } if last else None,
     }
 
 
 @app.get("/api/v1/stores/{store_id}/metrics")
 async def get_store_metrics(store_id: str):
-    mapped_id = STORE_MAP.get(store_id, "I63")
-    provider = get_data_provider()
-
-    pos_data = await provider.fetch_pos_data(mapped_id)
-    weather = _fetch_weather_fallback()
-
-    cr = pos_data.get("current_revenue", 0) or 0
-    dt = pos_data.get("daily_target", 1007) or 1007
-
+    mapped_id = STORE_MAP.get(store_id,"I63")
+    provider  = get_data_provider()
+    pos_data  = await provider.fetch_pos_data(mapped_id)
+    weather   = _fetch_weather_fallback()
+    cr = pos_data.get("current_revenue",0) or 0
+    dt = pos_data.get("daily_target",1007) or 1007
     return JSONResponse({
-        "ca_today": cr,
-        "ca_target": dt,
-        "attainment": round((cr / dt) * 100, 1) if dt > 0 else 0,
-        "visitors_h": pos_data.get("nb_transactions_today", 0),
+        "ca_today":   cr, "ca_target": dt,
+        "attainment": round((cr/dt)*100,1) if dt>0 else 0,
+        "visitors_h": pos_data.get("nb_transactions_today",0),
         "agents_live": 4,
         "store_context": {
-            "weather": f"{weather['weather_icon']} {weather['weather_label']}",
-            "event": "",
-            "promo": "",
-            "stock_alert": "📦 iPhone 15 — 3 unités restantes",
+            "weather":     f"{weather['weather_icon']} {weather['weather_label']}",
+            "event":"","promo":"",
+            "stock_alert": "📦 Stock critique — vérifier boutique",
             "temperature": f"{weather['temperature']}°C",
         },
-        "ca_yesterday_same_hour": cr * 0.88,
-        "source": "postgresql",
+        "ca_yesterday_same_hour": cr*0.88,
+        "source":"postgresql",
     })
 
 
 @app.get("/api/v1/forecast/eod/{store_id}")
 async def get_forecast_eod(store_id: str):
-    mapped_id = STORE_MAP.get(store_id, "I63")
-    provider = get_data_provider()
-
-    pred = await provider.fetch_timesfm_prediction(mapped_id)
-    pos_data = await provider.fetch_pos_data(mapped_id)
-
-    dt = pos_data.get("daily_target", 1007) or 1007
-    cr = pos_data.get("current_revenue", 0) or 0
-    ga = max(0, dt - cr)
-    gp = round((ga / dt * 100) if dt > 0 else 0, 1)
-
+    mapped_id = STORE_MAP.get(store_id,"I63")
+    provider  = get_data_provider()
+    pred      = await provider.fetch_timesfm_prediction(mapped_id)
+    pos_data  = await provider.fetch_pos_data(mapped_id)
+    dt = pos_data.get("daily_target",1007) or 1007
+    cr = pos_data.get("current_revenue",0) or 0
+    ga = max(0, dt-cr)
+    gp = round((ga/dt*100) if dt>0 else 0, 1)
     return JSONResponse({
-        "eod": pred.get("forecast_end_of_day", 0),
-        "gap_pct": gp,
-        "gap_amount": ga,
-        "ci_low": (pred.get("confidence_interval") or {}).get("low", 0),
-        "ci_high": (pred.get("confidence_interval") or {}).get("high", 0),
-        "source": "prophet+ratio",
+        "eod":pred.get("forecast_end_of_day",0),"gap_pct":gp,"gap_amount":ga,
+        "ci_low":(pred.get("confidence_interval") or {}).get("low",0),
+        "ci_high":(pred.get("confidence_interval") or {}).get("high",0),
+        "source":"prophet+ratio",
     })
 
 
 @app.get("/api/v1/stores/{store_id}/advisors")
 async def get_advisors(store_id: str):
-    mapped_id = STORE_MAP.get(store_id, "I63")
-    provider = get_data_provider()
-
-    pos_data = await provider.fetch_pos_data(mapped_id)
-
-    dt = pos_data.get("daily_target", 1007) or 1007
-    cr = pos_data.get("current_revenue", 0) or 0
-
-    try:
-        from data.json_service import _query
-
-        pg = _query("""
-            SELECT a.agent_id,
-                   a.agent_name || ' ' || a.agent_surname AS full_name,
-                   COALESCE(SUM(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN t.lig_ttc ELSE 0 END), 0) AS revenue_today,
-                   COALESCE(SUM(t.lig_ttc), 0) AS revenue_total,
-                   COUNT(CASE WHEN t.date_only = (SELECT MAX(date_only) FROM transactions WHERE store_id = 'I63') THEN 1 END) AS nb_ventes
-            FROM agents a
-            LEFT JOIN transactions t ON t.agent_id = a.agent_id
-                AND t.store_id = 'I63'
-                AND t.lig_ttc > 0
-            WHERE a.store_id = 'I63'
-              AND a.actif = true
-            GROUP BY a.agent_id, a.agent_name, a.agent_surname
-            ORDER BY revenue_today DESC, revenue_total DESC
-        """)
-
-        th = sum(float(s["revenue_total"]) for s in pg) or 1
-        ps = round(dt / max(len(pg), 1))
-
-        sellers = []
-
-        for s in pg:
-            rt = float(s["revenue_today"])
-
-            if rt == 0 and cr > 0:
-                rt = round(cr * float(s["revenue_total"]) / th, 2)
-
-            nb = int(s["nb_ventes"]) or max(1, round(rt / 80))
-
-            sellers.append({
-                "name": s["full_name"].title(),
-                "revenue_today": rt,
-                "nb_ventes": nb,
-            })
-
-    except Exception as e:
-        logger.warning(f"[ADVISORS] PG fallback: {e}")
-        sellers = pos_data.get("sellers", []) or []
-        ps = round(dt / max(len(sellers), 1))
-
-    mr = max((s.get("revenue_today", 0) for s in sellers), default=0)
-
+    mapped_id = STORE_MAP.get(store_id,"I63")
+    provider  = get_data_provider()
+    pos_data  = await provider.fetch_pos_data(mapped_id)
+    dt = pos_data.get("daily_target",1007) or 1007
+    cr = pos_data.get("current_revenue",0) or 0
+    sellers = await _get_advisors_from_pg(mapped_id, cr, dt)
+    ps  = round(dt/max(len(sellers),1))
+    mr  = max((s.get("revenue_today",0) for s in sellers), default=1)
     advisors = sorted([
         {
-            "id": s.get("name", "").replace(" ", "_").lower(),
-            "name": s.get("name", ""),
-            "revenue": round(s.get("revenue_today", 0)),
-            "target": ps,
-            "attainment": round(s.get("revenue_today", 0) / max(ps, 1) * 100),
-            "nb_ventes": s.get("nb_ventes", 0),
-            "status": "Top" if s.get("revenue_today", 0) == mr else "OK",
+            "id":         s.get("name","").replace(" ","_").lower(),
+            "name":       s.get("name",""),
+            "revenue":    round(s.get("revenue_today",0)),
+            "target":     ps,
+            "attainment": round(s.get("revenue_today",0)/max(ps,1)*100),
+            "nb_ventes":  s.get("nb_ventes",0),
+            "status":     "Top" if s.get("revenue_today",0)==mr else "OK",
         }
         for s in sellers
     ], key=lambda x: -x["revenue"])
-
-    return JSONResponse({
-        "advisors": advisors,
-        "source": "postgresql",
-    })
+    return JSONResponse({"advisors":advisors,"source":"postgresql"})
 
 
 @app.get("/api/v1/stores/{store_id}/live-analysis")
 async def get_live_analysis(store_id: str):
-    mapped_id = STORE_MAP.get(store_id, "I63")
-    provider = get_data_provider()
-
-    pos_data = await provider.fetch_pos_data(mapped_id)
+    mapped_id   = STORE_MAP.get(store_id,"I63")
+    provider    = get_data_provider()
+    pos_data    = await provider.fetch_pos_data(mapped_id)
     pos_history = await provider.fetch_pos_history(mapped_id)
-    prediction = await provider.fetch_timesfm_prediction(mapped_id)
-
-    cr = pos_data.get("current_revenue", 0) or 0
-    dt = pos_data.get("daily_target", 1007) or 1007
-    ga = max(0, dt - cr)
-    gp = round((ga / dt * 100) if dt > 0 else 0, 1)
-    feo = prediction.get("forecast_end_of_day", 0) or 0
-    ul = "HIGH" if gp > 30 else "MEDIUM" if gp > 15 else "LOW"
-
+    prediction  = await provider.fetch_timesfm_prediction(mapped_id)
+    sellers     = await _get_advisors_from_pg(
+        mapped_id,
+        pos_data.get("current_revenue",0),
+        pos_data.get("daily_target",1007),
+    )
+    cr  = pos_data.get("current_revenue",0) or 0
+    dt  = pos_data.get("daily_target",1007) or 1007
+    ga  = max(0, dt-cr)
+    gp  = round((ga/dt*100) if dt>0 else 0, 1)
+    feo = prediction.get("forecast_end_of_day",0) or 0
+    ul  = "HIGH" if gp>30 else "MEDIUM" if gp>15 else "LOW"
     return JSONResponse(_build_payload({
-        "pos_data": pos_data,
-        "pos_history": pos_history,
-        "prediction": prediction,
-        "urgency_level": ul,
-        "urgency_score": round(min(1.0, gp / 60), 3),
-        "gap_pct": gp,
-        "gap_amount": ga,
-        "analyst_summary": f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt:,.0f} TND.",
-        "current_revenue": cr,
-        "daily_target": dt,
-        "forecast_eod": feo,
-        "attainment": round((cr / dt) * 100, 1) if dt > 0 else 0,
-        "coverage": 100.0,
-        "mape": 14.3,
-        "strategie": "",
-        "strategie_actions": [],
-        "cause_racine": "",
-        "context_heatmap": {},
-        "context_signals": [],
-        "external_context": {},
-        "message_manager": "",
-        "focus_produits": [],
+        "pos_data":pos_data,"pos_history":pos_history,"prediction":prediction,
+        "urgency_level":ul,"urgency_score":round(min(1.0,gp/60),3),
+        "gap_pct":gp,"gap_amount":ga,
+        "analyst_summary":f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt:,.0f} TND.",
+        "current_revenue":cr,"daily_target":dt,"forecast_eod":feo,
+        "attainment":round((cr/dt)*100,1) if dt>0 else 0,
+        "coverage":100.0,"mape":14.3,
+        "strategie":"","strategie_actions":[],"cause_racine":"",
+        "context_heatmap":{},"context_signals":[],"external_context":{},
+        "message_manager":"","focus_produits":[],"_sellers_cache":sellers,
     }))

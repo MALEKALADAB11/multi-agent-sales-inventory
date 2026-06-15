@@ -1440,10 +1440,12 @@ class SyncInventoryRepo:
             return set()
         try:
             with conn.cursor() as cur:
+                # Cast explicite text[] → uuid[] requis car la colonne id est uuid
+                # et psycopg2 passe les strings Python comme text sans cast automatique
                 cur.execute("""
                     SELECT id::text
                     FROM inv.alerts
-                    WHERE id = ANY(%s)
+                    WHERE id = ANY(%s::uuid[])
                       AND status != 'pending'
                 """, (list(uuids),))
                 return {str(row[0]) for row in cur.fetchall()}

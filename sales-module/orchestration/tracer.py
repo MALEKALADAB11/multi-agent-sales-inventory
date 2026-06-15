@@ -37,6 +37,10 @@ class CycleTracer:
     """
     Affiche le cycle LangGraph dans le terminal.
     Montre : nodes, tools appelés, state écrit, timings.
+
+    cycle_end reçoit les valeurs directement via kwargs nommés
+    (urgency=, gap=, eod=, nodes=) tels que passés par graph.py —
+    state n'est jamais passé directement ici.
     """
 
     def __init__(self, show_state: bool = True):
@@ -61,15 +65,35 @@ class CycleTracer:
         )
         print(f"{DIM}{_line()}{RESET}")
 
-    def cycle_end(self, cycle_id=None, total_ms=None, nodes=None, urgency=None, gap=None, eod=None, state: dict = None, **kwargs):
+    def cycle_end(
+        self,
+        cycle_id:  str  = None,
+        total_ms:  float = None,
+        nodes:     int  = None,
+        urgency:   str  = None,
+        gap:       float = None,
+        eod:       float = None,
+        **kwargs,
+    ):
+        """
+        Appelé par graph.py avec :
+            tracer.cycle_end(cycle_id, total_ms, nodes=..., urgency=..., gap=..., eod=...)
+
+        Tous les champs viennent en kwargs nommés depuis final_state —
+        jamais via un objet state brut pour éviter le NoneType crash.
+        """
         elapsed = (time.time() - self._t_cycle) * 1000
-        urgence = state.get("niveau_urgence", "?")
-        gap     = state.get("ecart_objectif", 0)
-        eod     = state.get("forecast_eod", 0)
+
+        # Valeurs directement depuis les kwargs — aucun .get() sur un objet potentiellement None
+        urgence   = urgency   if urgency  is not None else "?"
+        gap_val   = gap       if gap      is not None else 0.0
+        eod_val   = eod       if eod      is not None else 0.0
+        nodes_val = nodes     if nodes    is not None else self._node_count
 
         urg_color = (
-            RED    if urgence == "HIGH"   else
-            YELLOW if urgence == "MEDIUM" else
+            RED    if urgence == "CRITICAL" else
+            RED    if urgence == "HIGH"     else
+            YELLOW if urgence == "MEDIUM"   else
             GREEN
         )
 
@@ -77,9 +101,9 @@ class CycleTracer:
         print(_box(f"CYCLE END  {elapsed:.0f}ms", CYAN))
         print(
             f"  {DIM}urgence={RESET}{BOLD}{urg_color}{urgence}{RESET}"
-            f"  {DIM}gap={RESET}{BOLD}{RED}{gap:.1f}%{RESET}"
-            f"  {DIM}eod={RESET}{BOLD}{GREEN}{eod:,.0f} DT{RESET}"
-            f"  {DIM}nodes={RESET}{WHITE}{self._node_count}{RESET}"
+            f"  {DIM}gap={RESET}{BOLD}{RED}{gap_val:.1f}%{RESET}"
+            f"  {DIM}eod={RESET}{BOLD}{GREEN}{eod_val:,.0f} DT{RESET}"
+            f"  {DIM}nodes={RESET}{WHITE}{nodes_val}{RESET}"
         )
         print()
 
@@ -112,7 +136,6 @@ class CycleTracer:
             f"    {CYAN}⚙  tool:{RESET} {BOLD}{tool}{RESET}"
         )
 
-        # Inputs
         for k, v in inputs.items():
             if isinstance(v, float):
                 v_str = f"{v:,.2f}"
@@ -122,7 +145,6 @@ class CycleTracer:
                 v_str = str(v)[:60]
             print(f"       {DIM}→ {k}={RESET}{WHITE}{v_str}{RESET}")
 
-        # Outputs
         if outputs:
             for k, v in outputs.items():
                 if isinstance(v, float):
@@ -149,15 +171,14 @@ class CycleTracer:
             else:
                 v_str = str(v)[:60]
 
-            # Colorer les valeurs importantes
-            if k == "niveau_urgence":
+            if k == "urgency_level":
                 val_color = (
-                    RED    if v == "HIGH"   else
-                    YELLOW if v == "MEDIUM" else
+                    RED    if v in ("HIGH", "CRITICAL") else
+                    YELLOW if v == "MEDIUM"             else
                     GREEN
                 )
                 v_str = f"{BOLD}{val_color}{v}{RESET}"
-            elif k in ("ecart_objectif", "forecast_eod", "forecast_mape"):
+            elif k in ("gap_objectif", "forecast_eod", "forecast_mape", "gap_amount", "attainment"):
                 v_str = f"{BOLD}{WHITE}{v_str}{RESET}"
             else:
                 v_str = f"{DIM}{v_str}{RESET}"
@@ -167,7 +188,7 @@ class CycleTracer:
     # ── Router decision ───────────────────────────────
 
     def router_decision(self, from_node: str, to_node: str, reason: str = ""):
-        icon = "⟶" if to_node != "END" else "⊠"
+        icon  = "⟶" if to_node != "END" else "⊠"
         color = YELLOW if to_node != "END" else DIM
         print(
             f"    {color}{icon}  router:{RESET}"

@@ -82,7 +82,12 @@ class _DataCache:
     @classmethod
     def sales(cls) -> pd.DataFrame:
         if cls._sales_df is None:
-            cls._sales_df = pd.read_csv(SALES_HISTORY_PATH, parse_dates=["date"])
+            cls._sales_df = pd.read_csv(
+                SALES_HISTORY_PATH,
+                parse_dates=["date"],
+                low_memory=False,  # évite DtypeWarning colonnes mixtes
+            )
+            cls._sales_df = cls._sales_df.copy()
             cls._sales_df["sku"] = cls._sales_df["sku"].astype(str)
             if "store_id" in cls._sales_df.columns:
                 cls._sales_df["store_id"] = cls._sales_df["store_id"].astype(str)
@@ -92,7 +97,13 @@ class _DataCache:
     @classmethod
     def forecast(cls) -> pd.DataFrame:
         if cls._forecast_df is None:
-            cls._forecast_df = pd.read_csv(str(FORECAST_OUTPUT_PATH), parse_dates=["date"])
+            cls._forecast_df = pd.read_csv(
+                str(FORECAST_OUTPUT_PATH),
+                parse_dates=["date"],
+                low_memory=False,  # évite DtypeWarning et tuple index out of range
+            )
+            # Reconstruire le block manager après chargement mixed-type
+            cls._forecast_df = cls._forecast_df.copy()
             if "sku" in cls._forecast_df.columns:
                 cls._forecast_df["sku"] = cls._forecast_df["sku"].astype(str)
             if "store_id" in cls._forecast_df.columns:
@@ -250,21 +261,30 @@ def get_forecast(sku: str, store_id: str) -> pd.DataFrame:
     CSV only — no DB equivalent.
 
     Returns filtered DataFrame with date, predicted_demand columns.
+
+    Note: .reset_index(drop=True) est requis après le filtre boolean pour
+    reconstruire le block manager pandas et éviter le IndexError 'tuple index
+    out of range' causé par des colonnes mixed-type dans le CSV source.
     """
     sku = str(sku)
     store_id = str(store_id)
 
-    df = _DataCache.forecast().copy()
+    try:
+        df = _DataCache.forecast().copy()
 
-    if "sku" in df.columns:
-        df = df[df["sku"] == sku]
-    if "store_id" in df.columns:
-        df = df[df["store_id"] == store_id]
+        if "sku" in df.columns:
+            df = df[df["sku"] == sku].reset_index(drop=True)
+        if "store_id" in df.columns:
+            df = df[df["store_id"] == store_id].reset_index(drop=True)
 
-    if df.empty:
-        logger.debug("No forecast for %s@%s", sku, store_id)
+        if df.empty:
+            logger.debug("No forecast for %s@%s", sku, store_id)
 
-    return df
+        return df
+
+    except Exception as e:
+        logger.warning("get_forecast error for %s@%s: %s — returning empty", sku, store_id, e)
+        return pd.DataFrame(columns=["date", "predicted_demand", "sku", "store_id"])
 
 
 def get_store(store_id: str) -> Optional[Dict[str, Any]]:

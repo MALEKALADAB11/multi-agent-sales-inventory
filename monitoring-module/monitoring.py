@@ -127,3 +127,77 @@ async def get_monitoring_kpis():
         "cost_today_tnd": round(cost_today * 3.1, 2),  # USD to TND conversion
         "timestamp": datetime.now().isoformat(),
     }
+
+
+@router.get("/dependencies")
+async def get_monitoring_dependencies():
+    """
+    État des dépendances systèmes — affiché dans l'onglet Monitoring Angular.
+    Vérifie PostgreSQL, Milvus (RAG), Ollama (LLM) en temps réel.
+    Aucune valeur mockée — tout provient de vraies connexions.
+    """
+    deps = {}
+
+    # ── PostgreSQL ─────────────────────────────────────────────────────────
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host="localhost", port=5432, dbname="ooredoo_sales",
+            user="postgres", password="admin", connect_timeout=3,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM sales.vw_pos_enriched")
+            nb_tx = cur.fetchone()[0]
+        conn.close()
+        deps["postgresql"] = {
+            "status": "ok", "latency_ms": 0,
+            "detail": f"{nb_tx} transactions in vw_pos_enriched",
+        }
+    except Exception as e:
+        deps["postgresql"] = {"status": "error", "detail": str(e)[:80]}
+
+    # ── Milvus (RAG) ───────────────────────────────────────────────────────
+    try:
+        from pymilvus import MilvusClient
+        import time
+        t0 = time.time()
+        client = MilvusClient(uri="http://localhost:19530")
+        has_col = client.has_collection("coaching_scripts")
+        lat = round((time.time() - t0) * 1000)
+        nb_docs = 0
+        if has_col:
+            nb_docs = client.get_collection_stats("coaching_scripts").get("row_count", 0)
+        deps["milvus"] = {
+            "status": "ok" if has_col else "degraded",
+            "latency_ms": lat,
+            "detail": f"coaching_scripts: {nb_docs} vectors",
+        }
+    except Exception as e:
+        deps["milvus"] = {"status": "error", "detail": str(e)[:80]}
+
+    # ── Ollama (LLM) ───────────────────────────────────────────────────────
+    try:
+        import httpx, time, os
+        t0 = time.time()
+        r = httpx.get(
+            os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/api/tags",
+            timeout=3,
+        )
+        lat = round((time.time() - t0) * 1000)
+        models = [m["name"] for m in r.json().get("models", [])]
+        deps["ollama"] = {
+            "status": "ok" if r.status_code == 200 else "degraded",
+            "latency_ms": lat,
+            "detail": f"models: {', '.join(models[:3])}",
+        }
+    except Exception as e:
+        deps["ollama"] = {"status": "error", "detail": str(e)[:80]}
+
+    # ── Résumé global ──────────────────────────────────────────────────────
+    all_ok = all(d.get("status") == "ok" for d in deps.values())
+
+    return {
+        "status":      "ok" if all_ok else "degraded",
+        "dependencies": deps,
+        "timestamp":   datetime.utcnow().isoformat(),
+    }

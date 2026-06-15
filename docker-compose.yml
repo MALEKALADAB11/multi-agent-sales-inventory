@@ -57,6 +57,50 @@ services:
       - "etcd"
       - "minio"
 
+  # ── Langfuse v2 (autonome — pas besoin de ClickHouse) ──────────────────────
+  langfuse-db:
+    container_name: langfuse-db
+    image: postgres:15
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse:
+    container_name: langfuse
+    image: langfuse/langfuse:2
+    ports:
+      - "3001:3000"
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=pfe-secret-local-2026
+      - NEXTAUTH_URL=http://localhost:3001
+      - SALT=pfe-salt-local-2026
+      - LANGFUSE_INIT_ORG_ID=ooredoo-pfe
+      - LANGFUSE_INIT_ORG_NAME=Ooredoo PFE
+      - LANGFUSE_INIT_PROJECT_ID=sales-coach
+      - LANGFUSE_INIT_PROJECT_NAME=AI Sales Coach
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=pk-lf-pfe-local
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=sk-lf-pfe-local
+      - LANGFUSE_INIT_USER_EMAIL=admin@ooredoo.tn
+      - LANGFUSE_INIT_USER_PASSWORD=admin123
+      - LANGFUSE_INIT_USER_NAME=Admin PFE
+      - TELEMETRY_ENABLED=false
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=false
+
+volumes:
+  langfuse-pg:
+
 networks:
   default:
     name: milvus
