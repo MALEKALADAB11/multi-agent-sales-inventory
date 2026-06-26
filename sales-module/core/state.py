@@ -61,6 +61,38 @@ class SalesAgentState(TypedDict, total=False):
     errors: List[str]
     warnings: List[str]
 
+    # ── Champs v5 (ajoutés en Phase 1) ───────────────────────────────────────
+    # Phase 2 — Inventory Cross-Reference
+    inventory_snapshot: Optional[dict]         # snapshot stock depuis Redis
+    stock_filtered_products: List[str]         # SKUs avec stock > 0 dispo
+
+    # Phase 3 — Critique Agent
+    critique_score: float                      # 0.0 → 1.0
+    critique_passed: bool
+    critique_checks: Optional[dict]            # {check_name: {passed, score, reason}}
+    critique_feedback: Optional[str]           # feedback textuel au Stratège
+    critique_cycles: int                       # nb révisions itératives
+
+    # Phase 4 — Human-in-the-Loop
+    hitl_required: bool
+    hitl_approved: bool
+    hitl_approver: Optional[str]
+
+    # Phase 5 — Procedural Memory & Feedback
+    procedural_rules: List[dict]               # règles apprises [{rule, confidence, source}]
+    feedback_score: Optional[float]            # score retour CA réel
+
+    # Phase 4 — Supervisor routing
+    supervisor_routing: Optional[dict]
+    circuit_states: Optional[dict]            # snapshot états CB
+
+    # Phase 4 — Extension v5 sérialisée (UnifiedCycleState)
+    v5_extension: Optional[dict]
+
+    # Coach-Stratège Orchestrator (v2)
+    strategie_source: Optional[str]           # "success"|"cached"|"stale_cache"|"fallback"|"pre_loaded"
+    strategie_cached: Optional[bool]          # True si retour depuis cache LRU
+
 
 AgentState = SalesAgentState
 
@@ -144,4 +176,25 @@ def initial_state(
         route_to=None,
         errors=[],
         warnings=[],
+
+        # ── Champs v5 ────────────────────────────────────────────────────────
+        inventory_snapshot=None,
+        stock_filtered_products=[],
+
+        critique_score=0.0,
+        critique_passed=False,
+        critique_checks=None,
+        critique_feedback=None,
+        critique_cycles=0,
+
+        hitl_required=False,
+        hitl_approved=False,
+        hitl_approver=None,
+
+        procedural_rules=[],
+        feedback_score=None,
+
+        supervisor_routing=None,
+        circuit_states=None,
+        v5_extension=None,
     )

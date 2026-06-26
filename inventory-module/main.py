@@ -5,7 +5,7 @@ Tests the complete three-agent pipeline (backend + DB) before touching the front
 
 Pipeline per SKU:
     analysis_agent  ┐
-                    ├── parallel ──→  decision_agent → inv.recommendations
+                    ├── parallel ──→  decision_agent → inventory.recommendations
     context_agent   ┘
 
 Usage:
@@ -30,7 +30,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from src.services.orchestrator import create_orchestrator
-from config.settings import STOCK_HISTORY_PATH
+from src.pg_data_loader import get_available_skus, get_available_stores
 
 OBJECTIVES = ["balanced", "minimize_cost", "maximize_service_level", "clear_stock", "prioritize_margin"]
 
@@ -38,14 +38,13 @@ OBJECTIVES = ["balanced", "minimize_cost", "maximize_service_level", "clear_stoc
 # ─── Data helpers ─────────────────────────────────────────────────────────────
 
 def _get_all_skus() -> list:
-    return sorted(pd.read_csv(STOCK_HISTORY_PATH)["sku"].unique().tolist())
+    return get_available_skus()
 
 def _get_all_stores() -> list:
-    return sorted(pd.read_csv(STOCK_HISTORY_PATH)["store_id"].unique().tolist())
+    return get_available_stores()
 
 def _get_skus_for_store(store_id: str) -> list:
-    df = pd.read_csv(STOCK_HISTORY_PATH)
-    return sorted(df[df["store_id"] == store_id]["sku"].unique().tolist())
+    return get_available_skus(store_id)
 
 
 # ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -216,7 +215,7 @@ def print_report(result: dict) -> None:
 
         rec_id = dr.get("recommendation_id")
         if rec_id:
-            print(f"\n  ✅ inv.recommendations → {rec_id}")
+            print(f"\n  ✅ inventory.recommendations → {rec_id}")
         elif action in ("ORDER", "EXPEDITE"):
             print(f"\n  ⚠  No recommendation_id returned (check DB write)")
 
@@ -253,12 +252,12 @@ def run_context_standalone(sku: str, store_id: str, use_llm: bool) -> None:
         from db.repositories.inventory_repo import SyncInventoryRepo
         row = SyncInventoryRepo.get_context_adjustment(sku=sku, store_id=store_id)
         if row:
-            print(f"  ✅ inv.context_adjustments — "
+            print(f"  ✅ inventory.context_adjustments — "
                   f"uplift={row.get('demand_uplift_pct')}  "
                   f"signal={row.get('dominant_signal')}  "
                   f"valid {row.get('valid_from')} → {row.get('valid_to')}")
         else:
-            print("  ⚠  No row found in inv.context_adjustments")
+            print("  ⚠  No row found in inventory.context_adjustments")
     except Exception as e:
         print(f"  DB check skipped: {e}")
 
@@ -324,7 +323,7 @@ def run_decision_standalone(sku: str, store_id: str, objective: str, use_llm: bo
 
     rec_id = result.get("recommendation_id")
     if rec_id:
-        print(f"\n  ✅ inv.recommendations → {rec_id}")
+        print(f"\n  ✅ inventory.recommendations → {rec_id}")
     elif action in ("ORDER", "EXPEDITE"):
         print("  ⚠  No recommendation_id returned")
 
@@ -340,16 +339,16 @@ def run_db_check() -> None:
         return
 
     checks = [
-        ("inv.stores",                lambda: SyncInventoryRepo.get_store("DUMMY")),
-        ("inv.products",              lambda: SyncInventoryRepo.get_product("DUMMY")),
-        ("inv.stock_levels",          lambda: SyncInventoryRepo.get_stock_level("DUMMY","DUMMY")),
-        ("inv.agent_runs (write)",    lambda: SyncInventoryRepo.start_agent_run("analysis_agent","DUMMY")),
-        ("inv.alerts",                lambda: SyncInventoryRepo.get_store_alerts("DUMMY")),
-        ("inv.recommendations",       lambda: SyncInventoryRepo.get_latest_recommendation("DUMMY","DUMMY")),
-        ("inv.business_objectives",   lambda: SyncInventoryRepo.get_active_objective()),
-        ("inv.context_adjustments",   lambda: SyncInventoryRepo.get_context_adjustment("DUMMY","DUMMY")),
-        ("inv.promotions",            lambda: None),  # no sync read yet — skip
-        ("inv.events",                lambda: None),
+        ("inventory.stores",                lambda: SyncInventoryRepo.get_store("DUMMY")),
+        ("inventory.products",              lambda: SyncInventoryRepo.get_product("DUMMY")),
+        ("inventory.stock_levels",          lambda: SyncInventoryRepo.get_stock_level("DUMMY","DUMMY")),
+        ("inventory.agent_runs (write)",    lambda: SyncInventoryRepo.start_agent_run("analysis_agent","DUMMY")),
+        ("inventory.alerts",                lambda: SyncInventoryRepo.get_store_alerts("DUMMY")),
+        ("inventory.recommendations",       lambda: SyncInventoryRepo.get_latest_recommendation("DUMMY","DUMMY")),
+        ("inventory.business_objectives",   lambda: SyncInventoryRepo.get_active_objective()),
+        ("inventory.context_adjustments",   lambda: SyncInventoryRepo.get_context_adjustment("DUMMY","DUMMY")),
+        ("inventory.promotions",            lambda: None),  # no sync read yet — skip
+        ("inventory.events",                lambda: None),
     ]
 
     all_ok = True
@@ -454,3 +453,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+

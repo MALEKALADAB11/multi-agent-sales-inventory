@@ -6,7 +6,7 @@ Modular architecture:
   Nodes:  fetch_signals → interpret
   Two jobs:
     1. Learn from history what impact past events/promotions had on this
-       product category (real observed uplifts from sales_history.csv)
+       product category (real observed uplifts from inventory.sales_history PG)
     2. Assess the current moment through that historical lens and produce
        a calibrated demand_uplift_pct for the next 7 days
 
@@ -15,8 +15,8 @@ is applied to baseline metrics to produce adjusted EOQ, safety stock,
 and reorder point.
 
 Persists to:
-  inv.context_adjustments  — timestamped audit trail (monitoring reads this)
-  inv.agent_runs           — agent health tracking
+  inventory.context_adjustments  — timestamped audit trail (monitoring reads this)
+  inventory.agent_runs           — agent health tracking
 """
 
 import logging
@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[4]))
 
 from src.agents.context.nodes import fetch_signals_node, create_interpret_node
-from src.utils.llm_factory import get_llm
+from src.utils.llm_factory import get_llm, get_fast_llm
 
 try:
     from db.repositories.inventory_repo import SyncInventoryRepo
@@ -77,8 +77,15 @@ class InventoryContextAgent:
                         Rule-based fallback produces the same structure.
 
     Output dict is passed directly to the decision agent in memory.
-    The DB write (inv.context_adjustments) is for the monitoring module only.
+    The DB write (inventory.context_adjustments) is for the monitoring module only.
+
+    Class-level compiled graph cache (same pattern as InventoryAnalysisAgent):
+      Compiled once per process per use_llm mode, reused across all SKUs.
+      LangGraph compiled graphs are stateless — sharing is safe.
     """
+
+    _compiled_graphs: Dict[bool, Any] = {}
+    _graph_lock = __import__("threading").Lock()
 
     def __init__(
         self,
@@ -89,7 +96,11 @@ class InventoryContextAgent:
         self.use_llm = use_llm
 
         if use_llm:
-            self.llm = get_llm(provider=provider, api_key=api_key)
+            # FAST tier (OpenRouter) — interprétation de signaux de contexte
+            try:
+                self.llm = get_fast_llm(api_key=api_key) if not provider else get_llm(provider=provider, api_key=api_key)
+            except Exception:
+                self.llm = get_llm(provider=provider, api_key=api_key)
         else:
             self.llm = None
 
@@ -99,19 +110,31 @@ class InventoryContextAgent:
             provider or "default", llm_class, use_llm,
         )
 
-        workflow = StateGraph(ContextAgentState)
-        workflow.add_node("fetch_signals", fetch_signals_node)
-        workflow.add_node("interpret",     create_interpret_node(self.llm, use_llm))
-        workflow.set_entry_point("fetch_signals")
-        workflow.add_edge("fetch_signals", "interpret")
-        workflow.add_edge("interpret",     END)
-        self.graph = workflow.compile()
+        if use_llm not in InventoryContextAgent._compiled_graphs:
+            with InventoryContextAgent._graph_lock:
+                if use_llm not in InventoryContextAgent._compiled_graphs:
+                    logger.info(
+                        "[ContextAgent] Compiling graph (use_llm=%s) — once per process", use_llm
+                    )
+                    workflow = StateGraph(ContextAgentState)
+                    workflow.add_node("fetch_signals", fetch_signals_node)
+                    workflow.add_node("interpret",     create_interpret_node(self.llm, use_llm))
+                    workflow.set_entry_point("fetch_signals")
+                    workflow.add_edge("fetch_signals", "interpret")
+                    workflow.add_edge("interpret",     END)
+                    InventoryContextAgent._compiled_graphs[use_llm] = workflow.compile()
+                    logger.info(
+                        "[ContextAgent] Graph compiled and cached (use_llm=%s)", use_llm
+                    )
+
+        self.graph = InventoryContextAgent._compiled_graphs[use_llm]
 
     def run(
         self,
         sku:          str,
         store_id:     str = "I63",
         agent_run_id: Optional[str] = None,
+        lf_span=None,
     ) -> Dict[str, Any]:
         """
         Run context analysis for a single SKU.
@@ -158,13 +181,17 @@ class InventoryContextAgent:
         effective_run_id = own_run_id or agent_run_id
 
         try:
-            result = self.graph.invoke({
-                "messages":       [],
-                "sku":            sku,
-                "store_id":       store_id,
-                "signals":        {},
-                "context_report": {},
-            })
+            _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
+            result = self.graph.invoke(
+                {
+                    "messages":       [],
+                    "sku":            sku,
+                    "store_id":       store_id,
+                    "signals":        {},
+                    "context_report": {},
+                },
+                config={"callbacks": _callbacks} if _callbacks else {},
+            )
 
             context_report = result["context_report"]
             signals        = context_report.pop("signals", {})
@@ -232,7 +259,7 @@ class InventoryContextAgent:
         agent_run_id: Optional[str],
     ) -> None:
         """
-        Persist context result to inv.context_adjustments.
+        Persist context result to inventory.context_adjustments.
 
         This write is for the monitoring module's audit trail.
         The orchestrator does NOT re-read this row — it uses the in-memory dict.

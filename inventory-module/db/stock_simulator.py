@@ -24,8 +24,8 @@ Usage from an agent:
 
 Design note on record_sale / record_adjustment:
     These methods ONLY update existing rows. They never INSERT new rows.
-    Seeding inv.stock_levels is the job of init_stock_levels.py.
-    Attempting to INSERT here would trigger FK violations on inv.stores
+    Seeding inventory.stock_levels is the job of init_stock_levels.py.
+    Attempting to INSERT here would trigger FK violations on inventory.stores
     for any store_id not present in that table.
 """
 import logging
@@ -89,7 +89,7 @@ class StockSimulator:
 
         If no stock_levels row exists for (sku, store_id), logs a warning
         and returns {} without attempting an INSERT — seeding is the init
-        script's job and an INSERT here would cause FK violations on inv.stores.
+        script's job and an INSERT here would cause FK violations on inventory.stores.
         """
         current = await self.repo.get_stock_level(sku, store_id)
         if current is None:

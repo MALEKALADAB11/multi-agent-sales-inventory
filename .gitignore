@@ -37,15 +37,31 @@ ENV/
 *.swo
 *~
 
-#data 
+#data
 inventory-module/data/forecasts/
 inventory-module/data/cleaned/
 inventory-module/data/processed/
 shared-module/data/raw/
+shared_module/data/raw/
 sales-module/data/product.xls
 sales-module/data/boutique_actif.xls
 sales-module/data/stock_centre.xls
 sales-module/data/transaction_vente*
+monitoring-module/data/
+
+# Root-level data files (large, not for git)
+sales_history.csv
+stock_history.csv
+transaction_vente_test_100500_fast.csv
+boutique_actif.xls
+product.xls
+stock_centre.xls
+product_master.csv
+promotions.csv
+coaching_scripts_v2.csv
+
+# Generated large data
+generated_data/transactions_6months.csv
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/

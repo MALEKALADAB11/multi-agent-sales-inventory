@@ -1,6 +1,6 @@
 """
 init_stock_levels.py
-Initializes inv.stock_levels (live state) from historical CSV data.
+Initializes inventory.stock_levels (live state) from historical CSV data.
 
 This runs ONCE after seed_inventory.py. It answers:
   stock_current           → most recent stock_level from stock_history.csv
@@ -111,7 +111,7 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
       - remaining_days     = stock_current / avg_daily_demand
       - stock_in_transit   = 0  (unknown; updated when reorders are approved)
 
-    Rows whose store_id or sku is not present in inv.stores / inv.products
+    Rows whose store_id or sku is not present in inventory.stores / inventory.products
     are skipped with a warning (seed_inventory.py should have seeded both).
     """
     logger.info("Reading CSV files...")
@@ -131,7 +131,7 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
 
     # Fetch valid FKs from DB (already seeded by seed_inventory.py)
     products = await conn.fetch(
-        "SELECT sku, lead_time_days, moq FROM inv.products"
+        "SELECT sku, lead_time_days, moq FROM inventory.products"
     )
     product_info = {
         r["sku"]: {
@@ -143,7 +143,7 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
 
     valid_store_ids = {
         r["store_id"]
-        for r in await conn.fetch("SELECT store_id FROM inv.stores")
+        for r in await conn.fetch("SELECT store_id FROM inventory.stores")
     }
 
     count            = 0
@@ -153,13 +153,13 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
 
     for (sku, store_id), stock_current in latest_stocks.items():
 
-        # Guard FK: store_id must exist in inv.stores
+        # Guard FK: store_id must exist in inventory.stores
         if store_id not in valid_store_ids:
             unknown_stores.add(store_id)
             skipped_store += 1
             continue
 
-        # Guard FK: sku must exist in inv.products
+        # Guard FK: sku must exist in inventory.products
         if sku not in product_info:
             skipped_sku += 1
             continue
@@ -179,7 +179,7 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
 
         await conn.execute(
             """
-            INSERT INTO inv.stock_levels
+            INSERT INTO inventory.stock_levels
                 (sku, store_id, stock_current, stock_in_transit,
                  stock_min, stock_max, remaining_days_of_stock, last_updated)
             VALUES ($1, $2, $3, 0, $4, $5, $6, NOW())
@@ -203,14 +203,14 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
     if unknown_stores:
         logger.warning(
             f"  ⚠  These store_ids were in stock_history.csv but missing from "
-            f"inv.stores — re-run seed_inventory.py to fix: {sorted(unknown_stores)}"
+            f"inventory.stores — re-run seed_inventory.py to fix: {sorted(unknown_stores)}"
         )
 
     # Surface items that are already below their reorder point
     low_stock = await conn.fetch(
         """
         SELECT sku, store_id, stock_current, stock_min, remaining_days_of_stock
-        FROM inv.stock_levels
+        FROM inventory.stock_levels
         WHERE stock_current <= stock_min
         ORDER BY remaining_days_of_stock ASC NULLS FIRST
         LIMIT 10
@@ -230,7 +230,7 @@ async def init_stock_levels(conn: asyncpg.Connection, pool: asyncpg.Pool) -> int
 
 async def main():
     logger.info("=" * 55)
-    logger.info("Initializing inv.stock_levels from historical data")
+    logger.info("Initializing inventory.stock_levels from historical data")
     logger.info("=" * 55)
 
     for f in [SALES_FILE, STOCK_FILE]:

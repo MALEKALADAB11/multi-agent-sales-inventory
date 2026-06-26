@@ -7,11 +7,42 @@ interpret      → synthesise signals into a demand adjustment (LLM or rule-base
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from decimal import Decimal
+from threading import Lock
 from typing import Any, Dict
 
+try:
+    from config.inventory_settings import SIGNAL_WEIGHTS
+except ImportError:
+    SIGNAL_WEIGHTS = {
+        "promo_factor": 0.5, "holiday_uplift_pct": 10.0,
+        "bad_weather_impact": -3.0, "confidence_min_sample": 50,
+    }
+
 logger = logging.getLogger(__name__)
+
+# ── Cache TTL in-memory pour signaux store-level (météo/holidays/events) ───
+# Ces données ne changent pas entre SKUs — même store/date → même valeur.
+# Évite 330 appels identiques par cycle de 143 SKUs.
+_SIGNAL_CACHE: Dict[str, Any] = {}
+_SIGNAL_CACHE_LOCK = Lock()
+_SIGNAL_TTL_SECONDS = 3600  # 1 heure
+
+
+def _cache_get(key: str):
+    """Retourne la valeur si non expirée, sinon None."""
+    entry = _SIGNAL_CACHE.get(key)
+    if entry and time.monotonic() - entry["ts"] < _SIGNAL_TTL_SECONDS:
+        return entry["val"]
+    return None
+
+
+def _cache_set(key: str, val: Any) -> None:
+    with _SIGNAL_CACHE_LOCK:
+        _SIGNAL_CACHE[key] = {"val": val, "ts": time.monotonic()}
 
 
 class _SafeEncoder(json.JSONEncoder):
@@ -45,69 +76,116 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Gather all external context signals for a SKU/store.
 
-    Each signal is fetched independently — failure in one does NOT block
-    the rest. The interpret node degrades gracefully with partial data.
+    Optimizations vs v1:
+      - Parallel fetch via ThreadPoolExecutor(max_workers=4)
+      - Store-level signals (weather/holidays/events) cached 1h to avoid
+        N×330 identical calls per inventory cycle
+      - Failure in any signal does NOT block the rest
     """
     sku      = state["sku"]
     store_id = state["store_id"]
 
-    # ── 1. Product category ────────────────────────────────────────────────
+    # ── 1. Product category (SKU-specific — no cache) ──────────────────────
     try:
         category = get_product_category(sku)
     except Exception as e:
         logger.warning("[Context/fetch] category lookup failed for %s: %s", sku, e)
         category = "unknown"
 
-    logger.debug("[Context/fetch] SKU=%s store=%s category=%s", sku, store_id, category)
+    today_str = str(date.today())
 
-    # ── 2. Historical demand patterns (category-level) ─────────────────────
-    try:
-        historical_patterns = get_historical_patterns(category, store_id)
-    except Exception as e:
-        logger.warning("[Context/fetch] historical_patterns failed: %s", e)
-        historical_patterns = {
-            "baseline_avg_qty": 0.0,
-            "category": category,
-            "sample_size": 0,
-            "by_event_type": {},
-            "by_promo": {},
-            "by_season": {},
-        }
+    # ── 2-6. Parallel fetch avec cache pour signaux store-level ───────────
+    def _fetch_historical():
+        key = f"hist:{category}:{store_id}"
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        try:
+            result = get_historical_patterns(category, store_id)
+            _cache_set(key, result)
+            return result
+        except Exception as e:
+            logger.warning("[Context/fetch] historical_patterns failed: %s", e)
+            return {
+                "baseline_avg_qty": 0.0, "category": category,
+                "sample_size": 0, "by_event_type": {}, "by_promo": {}, "by_season": {},
+            }
 
-    # ── 3. Active / upcoming promotions ────────────────────────────────────
-    try:
-        promotions = get_active_promotions(sku, category, store_id)
-    except Exception as e:
-        logger.warning("[Context/fetch] promotions failed: %s", e)
-        promotions = []
+    def _fetch_promotions():
+        # Promos sont SKU-spécifiques → pas de cache global
+        try:
+            return get_active_promotions(sku, category, store_id)
+        except Exception as e:
+            logger.warning("[Context/fetch] promotions failed: %s", e)
+            return []
 
-    # ── 4. 7-day weather forecast ──────────────────────────────────────────
-    try:
-        weather = get_weather(store_id)
-    except Exception as e:
-        logger.warning("[Context/fetch] weather failed: %s", e)
-        weather = {
-            "summary": "unavailable",
-            "avg_temp_max": None,
-            "total_precip_mm": None,
-            "bad_weather_days": 0,
-            "days": [],
-            "source": "error",
-        }
+    def _fetch_weather():
+        key = f"weather:{store_id}:{today_str}"
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        try:
+            result = get_weather(store_id)
+            _cache_set(key, result)
+            return result
+        except Exception as e:
+            logger.warning("[Context/fetch] weather failed: %s", e)
+            return {
+                "summary": "unavailable", "avg_temp_max": None,
+                "total_precip_mm": None, "bad_weather_days": 0,
+                "days": [], "source": "error",
+            }
 
-    # ── 5. Upcoming public holidays ────────────────────────────────────────
-    try:
-        holidays = get_upcoming_holidays()
-    except Exception as e:
-        logger.warning("[Context/fetch] holidays failed: %s", e)
-        holidays = []
+    def _fetch_holidays():
+        key = f"holidays:{today_str}"
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        try:
+            result = get_upcoming_holidays()
+            _cache_set(key, result)
+            return result
+        except Exception as e:
+            logger.warning("[Context/fetch] holidays failed: %s", e)
+            return []
 
-    # ── 6. Upcoming events from DB ─────────────────────────────────────────
-    try:
-        events = get_upcoming_events(category)
-    except Exception as e:
-        logger.warning("[Context/fetch] db_events failed: %s", e)
-        events = []
+    def _fetch_events():
+        key = f"events:{category}:{today_str}"
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        try:
+            result = get_upcoming_events(category)
+            _cache_set(key, result)
+            return result
+        except Exception as e:
+            logger.warning("[Context/fetch] db_events failed: %s", e)
+            return []
+
+    # Lancer les 5 fetches en parallèle
+    tasks = {
+        "historical": _fetch_historical,
+        "promotions": _fetch_promotions,
+        "weather":    _fetch_weather,
+        "holidays":   _fetch_holidays,
+        "events":     _fetch_events,
+    }
+    results: Dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(fn): name for name, fn in tasks.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                results[name] = future.result()
+            except Exception as e:
+                logger.warning("[Context/fetch] parallel task '%s' failed: %s", name, e)
+                results[name] = [] if name in ("promotions", "holidays", "events") else {}
+
+    historical_patterns = results.get("historical", {})
+    promotions          = results.get("promotions", [])
+    weather             = results.get("weather", {})
+    holidays            = results.get("holidays", [])
+    events              = results.get("events", [])
 
     signals = {
         "category":           category,
@@ -116,7 +194,7 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "weather":             weather,
         "holidays":            holidays,
         "events":              events,
-        "today":               str(date.today()),
+        "today":               today_str,
         "horizon":             str(date.today() + timedelta(days=7)),
     }
 
@@ -159,9 +237,10 @@ def _rule_based_interpret(
 
     # Promotions
     promo_uplift = 0.0
+    promo_factor = SIGNAL_WEIGHTS["promo_factor"]
     for p in signals.get("promotions", []):
         disc = float(p.get("discount_pct", 0))
-        contrib = disc * 0.5
+        contrib = disc * promo_factor
         promo_uplift += contrib
         notes.append(
             f"{p.get('promo_name', 'promo')} ({disc:.0f}% off) → +{contrib:.1f}%"
@@ -171,12 +250,13 @@ def _rule_based_interpret(
         dominant = "promotions"
 
     # Holidays
+    holiday_uplift_pct = SIGNAL_WEIGHTS["holiday_uplift_pct"]
     holiday_uplift = 0.0
     for h in signals.get("holidays", []):
         if h.get("is_national", True):
-            holiday_uplift += 10.0
+            holiday_uplift += holiday_uplift_pct
             notes.append(
-                f"{h.get('name', 'holiday')} in {h.get('days_away', '?')} days → +10%"
+                f"{h.get('name', 'holiday')} in {h.get('days_away', '?')} days → +{holiday_uplift_pct:.0f}%"
             )
     if holiday_uplift > 0:
         if holiday_uplift > promo_uplift:
@@ -198,8 +278,9 @@ def _rule_based_interpret(
         uplift += event_uplift
 
     # Bad weather
-    bad_days     = signals.get("weather", {}).get("bad_weather_days", 0)
-    weather_uplift = bad_days * (-3.0)
+    bad_days       = signals.get("weather", {}).get("bad_weather_days", 0)
+    weather_factor = SIGNAL_WEIGHTS["bad_weather_impact"]
+    weather_uplift = bad_days * weather_factor
     if bad_days > 0:
         notes.append(f"{bad_days} days heavy rain → {weather_uplift:.1f}%")
         if abs(weather_uplift) > abs(promo_uplift) and abs(weather_uplift) > holiday_uplift:
@@ -207,8 +288,9 @@ def _rule_based_interpret(
         uplift += weather_uplift
 
     # Confidence
-    sample_size = signals.get("historical_patterns", {}).get("sample_size", 0)
-    confidence  = "medium" if sample_size >= 50 else "low"
+    sample_size  = signals.get("historical_patterns", {}).get("sample_size", 0)
+    conf_min     = SIGNAL_WEIGHTS["confidence_min_sample"]
+    confidence   = "medium" if sample_size >= conf_min else "low"
 
     signal_summary = "; ".join(notes) if notes else "no active signals"
     interpretation = (

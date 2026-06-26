@@ -21,16 +21,16 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 # Load .env from project root
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env", encoding="utf-8")
 
 logger = logging.getLogger(__name__)
 
 _DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "port": int(os.getenv("DB_PORT", 5432)),
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
+    "host":     os.getenv("POSTGRES_HOST", "localhost"),
+    "port":     int(os.getenv("POSTGRES_PORT", 5432)),
+    "dbname":   os.getenv("POSTGRES_DB", "ooredoo_sales"),
+    "user":     os.getenv("POSTGRES_USER", "postgres"),
+    "password": os.getenv("POSTGRES_PASSWORD", "admin"),
 }
 
 
@@ -144,6 +144,27 @@ def setup_monitoring_tables():
             );
             CREATE INDEX IF NOT EXISTS idx_rag_cycle   ON rag_feedback(cycle_id);
             CREATE INDEX IF NOT EXISTS idx_rag_created ON rag_feedback(created_at DESC);
+
+            -- Table scripts de coaching enrichis automatiquement par le RAG
+            CREATE SCHEMA IF NOT EXISTS sales;
+            CREATE TABLE IF NOT EXISTS sales.coaching_scripts (
+                id              SERIAL PRIMARY KEY,
+                store_id        VARCHAR(10)  DEFAULT 'I63',
+                categorie       VARCHAR(50),
+                situation       TEXT,
+                action          TEXT,
+                produit_cible   VARCHAR(100),
+                argument_vente  TEXT,
+                impact_observe  VARCHAR(100),
+                heure_min       INT,
+                heure_max       INT,
+                jour_semaine    INT,
+                source          VARCHAR(100),
+                created_at      TIMESTAMP DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_cs_store   ON sales.coaching_scripts(store_id);
+            CREATE INDEX IF NOT EXISTS idx_cs_cat     ON sales.coaching_scripts(categorie);
+            CREATE INDEX IF NOT EXISTS idx_cs_created ON sales.coaching_scripts(created_at DESC);
             """)
         conn.commit()
         logger.info("[AGENT_LOGGER] Tables monitoring créées ✅")
@@ -451,7 +472,7 @@ def enrich_rag_from_cycle(
         with conn.cursor() as cur:
             for s in new_scripts:
                 cur.execute("""
-                    INSERT INTO coaching_scripts
+                    INSERT INTO sales.coaching_scripts
                         (store_id, categorie, situation, action, produit_cible,
                          argument_vente, impact_observe, heure_min, heure_max,
                          jour_semaine, source)
@@ -469,9 +490,30 @@ def enrich_rag_from_cycle(
 
         # Générer les embeddings et insérer dans Milvus
         try:
-            from pymilvus import MilvusClient
+            from pymilvus import MilvusClient, DataType
 
             client = MilvusClient(uri="http://localhost:19530")
+
+            # Create collection if it doesn't exist (e.g. after Milvus reset)
+            if not client.has_collection("coaching_scripts"):
+                schema = client.create_schema(auto_id=True, enable_dynamic_field=True)
+                schema.add_field("id",           DataType.INT64,        is_primary=True, auto_id=True)
+                schema.add_field("vector",       DataType.FLOAT_VECTOR, dim=768)
+                schema.add_field("pg_id",        DataType.INT64)
+                schema.add_field("categorie",    DataType.VARCHAR,       max_length=100)
+                schema.add_field("situation",    DataType.VARCHAR,       max_length=200)
+                schema.add_field("action",       DataType.VARCHAR,       max_length=200)
+                schema.add_field("produit",      DataType.VARCHAR,       max_length=100)
+                schema.add_field("argument",     DataType.VARCHAR,       max_length=200)
+                schema.add_field("impact",       DataType.VARCHAR,       max_length=100)
+                schema.add_field("heure_min",    DataType.INT64)
+                schema.add_field("heure_max",    DataType.INT64)
+                schema.add_field("jour_semaine", DataType.INT64)
+                schema.add_field("store_id",     DataType.VARCHAR,       max_length=20)
+                idx = client.prepare_index_params()
+                idx.add_index("vector", index_type="FLAT", metric_type="COSINE")
+                client.create_collection("coaching_scripts", schema=schema, index_params=idx)
+                logger.info("[AGENT_LOGGER] Collection coaching_scripts créée")
 
             data = []
             for script, pg_id in zip(new_scripts, pg_ids):
@@ -621,3 +663,87 @@ def get_agent_stats(store_id: str = "I63", hours: int = 24) -> dict:
     except Exception as e:
         logger.warning(f"[AGENT_LOGGER] get_agent_stats error: {e}")
         return {}
+
+
+# ── Classe AgentLogger — interface fluide ─────────────────────────────────────
+
+class AgentLogger:
+    """
+    Interface fluide pour logger tous les nodes LangGraph depuis n'importe
+    quel module (sales-module ou inventory-module).
+
+    Usage dans un node :
+        log    = AgentLogger("stratege", cycle_id, store_id)
+        log_id = log.node_start("rag_search", state)
+        ...
+        log.node_done("rag_search", log_id, output, duration_ms, metadata)
+    """
+
+    def __init__(self, agent_name: str, cycle_id: str, store_id: str = "I63"):
+        self.agent_name = agent_name
+        self.cycle_id   = cycle_id
+        self.store_id   = store_id
+
+    def node_start(self, node_name: str, state: dict) -> int:
+        return log_node_start(
+            cycle_id    = self.cycle_id,
+            agent_name  = self.agent_name,
+            node_name   = node_name,
+            input_state = state,
+            store_id    = self.store_id,
+        )
+
+    def node_done(
+        self,
+        node_name:   str,
+        log_id:      int,
+        output:      dict,
+        duration_ms: float,
+        metadata:    Optional[dict] = None,
+        status:      str = "completed",
+    ):
+        log_node_complete(
+            log_id       = log_id,
+            output_state = output,
+            duration_ms  = duration_ms,
+            metadata     = metadata,
+            status       = status,
+        )
+        logger.debug("[%s] %s (%.0fms) %s", self.agent_name.upper(), node_name, duration_ms, status)
+
+    def node_error(self, node_name: str, log_id: int, error: Exception, context: dict):
+        log_node_error(
+            log_id     = log_id,
+            cycle_id   = self.cycle_id,
+            agent_name = self.agent_name,
+            node_name  = node_name,
+            error      = error,
+            context    = context,
+            store_id   = self.store_id,
+        )
+
+    def rag_log(
+        self,
+        query:       str,
+        scripts:     list,
+        action_used: str = "",
+        context:     Optional[dict] = None,
+        **_kwargs,
+    ):
+        log_rag_feedback(
+            cycle_id    = self.cycle_id,
+            query       = query,
+            scripts     = scripts,
+            action_used = action_used,
+            store_id    = self.store_id,
+            context     = context,
+        )
+
+    def fallback(self, node_name: str, log_id: int, reason: str, duration_ms: float):
+        log_node_complete(
+            log_id       = log_id,
+            output_state = {"fallback_reason": reason},
+            duration_ms  = duration_ms,
+            metadata     = {"fallback": True, "reason": reason},
+            status       = "fallback",
+        )

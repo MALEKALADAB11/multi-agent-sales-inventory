@@ -1,25 +1,26 @@
 """
-Tools de l'Agent Stratège — contexte externe.
-Version sans scraper web (timeout réseau).
-Météo : Open-Meteo (gratuit, fiable)
-Fériés : Nager.Date API
-Promos : cache statique Ooredoo (mise à jour manuelle)
+Tools Agent Stratège — 100% PostgreSQL.
+Toutes les données viennent de la base ooredoo_sales (market.*, agent_kpi_daily).
+Météo : Open-Meteo (gratuit, sans clé). Fériés : Nager.Date API.
+Aucune donnée hardcodée, aucun CSV.
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, date
 from typing import Optional
 
+import asyncpg
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# ── Coordonnées boutiques ─────────────────────────────────────────────────────
-STORE_COORDS = {
-    "OOR_LAC_01":    {"lat": 36.8065, "lon": 10.1815, "city": "Tunis Lac"},
-    "OOR_MENZAH_02": {"lat": 36.8448, "lon": 10.1942, "city": "Menzah"},
-    "OOR_SFAX_03":   {"lat": 34.7406, "lon": 10.7603, "city": "Sfax"},
-    "I63":           {"lat": 36.8065, "lon": 10.1815, "city": "Tunis Lac"},
+_DB_CONFIG = {
+    "host":     os.getenv("POSTGRES_HOST", "localhost"),
+    "port":     int(os.getenv("POSTGRES_PORT", "5432")),
+    "database": os.getenv("POSTGRES_DB", "ooredoo_sales"),
+    "user":     os.getenv("POSTGRES_USER", "postgres"),
+    "password": os.getenv("POSTGRES_PASSWORD", "admin"),
 }
 
 WEATHER_CODES = {
@@ -36,41 +37,42 @@ WEATHER_CODES = {
     95: {"label": "Orage",               "icon": "⛈️",  "effect": -0.40},
 }
 
-# ── Promotions Ooredoo statiques (mise à jour manuelle) ──────────────────────
-STATIC_PROMOTIONS = [
-    {"title": "Forfait 5G Max — Offre découverte", "price": "49 DT/mois",
-     "type": "forfait", "discount": "10%"},
-    {"title": "iPhone 16 Pro — Avance postpayé",   "price": "1299 DT",
-     "type": "terminal", "discount": "0%"},
-    {"title": "Box Fibre 1Go — Installation offerte", "price": "59 DT/mois",
-     "type": "fibre", "discount": "installation"},
-]
-
-STATIC_NEW_OFFERS = [
-    {"title": "Samsung Galaxy S25 Ultra disponible", "price": "1599 DT"},
-    {"title": "AirPods Pro 3 en stock",              "price": "279 DT"},
-]
-
-# ── Cache météo global ────────────────────────────────────────────────────────
 _weather_cache: dict = {}
 _weather_cache_time: float = 0.0
-_WEATHER_TTL = 300  # 5 minutes
+_WEATHER_TTL = 300
 
+
+# ── Coordonnées boutique depuis PostgreSQL ────────────────────────────────────
+
+async def _fetch_store_coords(store_id: str) -> dict:
+    """Lit latitude/longitude depuis sales.boutiques. Fallback Tunis centre."""
+    try:
+        conn = await asyncpg.connect(**_DB_CONFIG, timeout=5, command_timeout=10)
+        try:
+            row = await conn.fetchrow(
+                "SELECT latitude, longitude, ville FROM sales.boutiques WHERE store_id = $1",
+                store_id
+            )
+            if row and row["latitude"] and row["longitude"]:
+                return {"lat": float(row["latitude"]), "lon": float(row["longitude"]),
+                        "city": row["ville"] or store_id}
+        finally:
+            await conn.close()
+    except Exception:
+        pass
+    return {"lat": 36.8065, "lon": 10.1815, "city": "Tunis"}
+
+
+# ── Météo Open-Meteo ──────────────────────────────────────────────────────────
 
 async def fetch_weather(store_id: str) -> dict:
-    """Météo depuis Open-Meteo (gratuit, sans clé)."""
     import time
     global _weather_cache, _weather_cache_time
-
     now = time.time()
-    cache_key = store_id
-    if (
-        _weather_cache.get(cache_key)
-        and (now - _weather_cache_time) < _WEATHER_TTL
-    ):
-        return _weather_cache[cache_key]
+    if _weather_cache.get(store_id) and (now - _weather_cache_time) < _WEATHER_TTL:
+        return _weather_cache[store_id]
 
-    coords = STORE_COORDS.get(store_id, STORE_COORDS["OOR_LAC_01"])
+    coords = await _fetch_store_coords(store_id)
     lat, lon = coords["lat"], coords["lon"]
 
     try:
@@ -89,34 +91,18 @@ async def fetch_weather(store_id: str) -> dict:
             data    = resp.json()
             current = data.get("current", {})
             hourly  = data.get("hourly", {})
-
-            code  = current.get("weathercode", 1)
-            temp  = current.get("temperature_2m", 22)
-            rain  = current.get("precipitation", 0)
-            wind  = current.get("windspeed_10m", 0)
-
-            w     = WEATHER_CODES.get(code, {"label":"Variable","icon":"⛅","effect":0.0})
-            hour  = datetime.now().hour
-
-            # Heures à risque (forte prob. pluie)
+            code    = current.get("weathercode", 1)
+            temp    = current.get("temperature_2m", 22)
+            rain    = current.get("precipitation", 0)
+            wind    = current.get("windspeed_10m", 0)
+            w       = WEATHER_CODES.get(code, {"label": "Variable", "icon": "⛅", "effect": 0.0})
+            hour    = datetime.now().hour
             rain_probs = hourly.get("precipitation_probability", [])
-            rain_hours = []
-            if rain_probs:
-                for i, prob in enumerate(rain_probs[:24]):
-                    if prob and prob > 60:
-                        h = (hour + i) % 24
-                        rain_hours.append(h)
-
-            result = {
-                "current": {
-                    "weathercode":  code,
-                    "temperature":  temp,
-                    "precipitation": rain,
-                    "windspeed":    wind,
-                },
-                "hourly": hourly,
-            }
-
+            rain_hours = [
+                (hour + i) % 24
+                for i, prob in enumerate(rain_probs[:24])
+                if prob and prob > 60
+            ]
             summary = {
                 "weather_label":  w["label"],
                 "weather_icon":   w["icon"],
@@ -128,63 +114,47 @@ async def fetch_weather(store_id: str) -> dict:
                 "rain_hours":     rain_hours[:3],
                 "best_hours":     [16, 17, 19] if code <= 2 else [11, 12],
                 "is_holiday":     False,
-                "active_promos":  len(STATIC_PROMOTIONS),
+                "city":           coords["city"],
             }
-
-            _weather_cache[cache_key] = {"current": result["current"],
-                                          "hourly": hourly, "summary": summary}
+            result = {"current": dict(current), "hourly": hourly, "summary": summary}
+            _weather_cache[store_id] = result
             _weather_cache_time = now
-
-            logger.info(
-                f"[STRATEGE] Météo {coords['city']}: "
-                f"{w['icon']} {w['label']} | "
-                f"Effet trafic: {w['effect']:+.0%}"
-            )
-            return _weather_cache[cache_key]
-
+            logger.info(f"[STRATEGE] Météo {coords['city']}: {w['icon']} | effet={w['effect']:+.0%}")
+            return result
     except Exception as e:
         logger.warning(f"[STRATEGE] Météo fallback: {e}")
         return {
-            "current": {"weathercode":1,"temperature":22,"precipitation":0,"windspeed":0},
+            "current": {"weathercode": 1, "temperature": 22, "precipitation": 0, "windspeed": 0},
             "hourly":  {},
             "summary": {
-                "weather_label":"Tunis Lac","weather_icon":"🌤️",
-                "weather_effect":0.05,"temperature":22,
-                "is_rainy":False,"is_sunny":True,
-                "rain_hours":[],"best_hours":[16,17,19],
-                "is_holiday":False,"active_promos":len(STATIC_PROMOTIONS),
+                "weather_label": "Tunis", "weather_icon": "🌤️",
+                "weather_effect": 0.05, "temperature": 22,
+                "is_rainy": False, "is_sunny": True,
+                "rain_hours": [], "best_hours": [16, 17, 19],
+                "is_holiday": False, "city": coords.get("city", "Tunis"),
             },
         }
 
 
+# ── Jours fériés Nager.Date ────────────────────────────────────────────────────
+
 async def fetch_holidays(year: int = None) -> dict:
-    """Jours fériés Tunisie depuis Nager.Date API."""
     if year is None:
         year = datetime.now().year
     today = date.today()
-
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                f"https://date.nager.at/api/v3/PublicHolidays/{year}/TN"
-            )
+            resp  = await client.get(f"https://date.nager.at/api/v3/PublicHolidays/{year}/TN")
             holidays = resp.json()
-
-        is_today    = False
-        today_hol   = None
-        next_hol    = None
-        min_days    = 9999
-
+        is_today, today_hol, next_hol, min_days = False, None, None, 9999
         for h in holidays:
             try:
                 hdate = date.fromisoformat(h.get("date", ""))
             except Exception:
                 continue
-
             if hdate == today:
                 is_today  = True
                 today_hol = {"name": h.get("localName", h.get("name", "")), "date": str(hdate)}
-
             days_until = (hdate - today).days
             if 0 < days_until < min_days:
                 min_days = days_until
@@ -193,109 +163,230 @@ async def fetch_holidays(year: int = None) -> dict:
                     "date":       str(hdate),
                     "days_until": days_until,
                 }
-
-        return {
-            "is_holiday_today": is_today,
-            "today_holiday":    today_hol,
-            "next_holiday":     next_hol,
-        }
-
+        return {"is_holiday_today": is_today, "today_holiday": today_hol, "next_holiday": next_hol}
     except Exception as e:
-        logger.warning(f"[STRATEGE] Holidays fallback: {e}")
-        # Fériés Tunisie 2026 hardcodés
-        HOLIDAYS_2026 = [
-            (1,  1,  "Jour de l'An"),
-            (3,  20, "Fête de l'Indépendance"),
-            (4,  9,  "Journée des Martyrs"),
-            (5,  1,  "Fête du Travail"),
-            (7,  25, "Fête de la République"),
-            (8,  13, "Fête de la Femme"),
-            (10, 15, "Fête de l'Évacuation"),
-            (11, 7,  "Anniversaire 7 Novembre"),
-        ]
-        next_hol = None
-        for m, d, name in HOLIDAYS_2026:
-            try:
-                hdate = date(today.year, m, d)
-                days  = (hdate - today).days
-                if 0 < days < (next_hol or {}).get("days_until", 9999):
-                    next_hol = {"name": name, "date": str(hdate), "days_until": days}
-            except Exception:
-                pass
-        is_today = any(
-            date(today.year, m, d) == today for m, d, _ in HOLIDAYS_2026
-        )
-        return {
-            "is_holiday_today": is_today,
-            "today_holiday":    None,
-            "next_holiday":     next_hol,
-        }
+        logger.warning(f"[STRATEGE] Holidays API failed: {e}")
+        return {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}
 
 
-def get_static_events() -> dict:
-    """Événements et promotions Ooredoo (statique, pas de scraping)."""
-    return {
-        "promotions": STATIC_PROMOTIONS,
-        "new_offers": STATIC_NEW_OFFERS,
-        "active":     STATIC_PROMOTIONS + STATIC_NEW_OFFERS,
+# ── Market Intelligence PostgreSQL ────────────────────────────────────────────
+
+async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
+    """
+    Charge depuis market.* et agent_kpi_daily :
+    - Événements actifs / proches (30j)
+    - Saisonnalité mois courant par catégorie
+    - Concurrents et prix (dernier relevé 90j)
+    - MNP flows nets 3 derniers mois
+    - Tendance KPI store 7j
+    """
+    result = {
+        "events_actifs":     [],
+        "seasonal_factors":  {},
+        "competitors":       [],
+        "competitor_pricing": [],
+        "mnp_net":           {},
+        "agent_kpi_trend":   {},
+        "source":            "postgresql_market",
     }
+    try:
+        conn = await asyncpg.connect(**_DB_CONFIG, timeout=8, command_timeout=15)
+        try:
+            ev_rows = await conn.fetch("""
+                SELECT event_name, event_type, sous_type,
+                       start_date, end_date, intensite, scope,
+                       uplift_terminal, uplift_forfait, uplift_sim,
+                       uplift_recharge, uplift_accessoire, note_strategie
+                FROM market.events
+                WHERE start_date <= CURRENT_DATE + INTERVAL '30 days'
+                  AND end_date   >= CURRENT_DATE
+                ORDER BY start_date ASC LIMIT 10
+            """)
+            result["events_actifs"] = [
+                {
+                    "nom":       r["event_name"],
+                    "type":      r["event_type"],
+                    "sous_type": r["sous_type"],
+                    "debut":     str(r["start_date"]),
+                    "fin":       str(r["end_date"]),
+                    "intensite": r["intensite"],
+                    "scope":     r["scope"],
+                    "uplift": {
+                        "terminal":   float(r["uplift_terminal"] or 0),
+                        "forfait":    float(r["uplift_forfait"] or 0),
+                        "sim":        float(r["uplift_sim"] or 0),
+                        "recharge":   float(r["uplift_recharge"] or 0),
+                        "accessoire": float(r["uplift_accessoire"] or 0),
+                    },
+                    "strategie": r["note_strategie"] or "",
+                }
+                for r in ev_rows
+            ]
 
+            sp_rows = await conn.fetch("""
+                SELECT categorie, mois, jour_semaine,
+                       facteur_demande, confidence, notes
+                FROM market.seasonal_patterns
+                WHERE mois = EXTRACT(MONTH FROM CURRENT_DATE)::INTEGER
+                ORDER BY categorie, facteur_demande DESC
+            """)
+            for r in sp_rows:
+                cat = r["categorie"]
+                fd  = float(r["facteur_demande"])
+                if cat not in result["seasonal_factors"]:
+                    result["seasonal_factors"][cat] = {
+                        "mois":        r["mois"],
+                        "facteur_max": fd,
+                        "confidence":  r["confidence"],
+                        "notes":       r["notes"] or "",
+                        "par_jour":    {},
+                    }
+                else:
+                    result["seasonal_factors"][cat]["facteur_max"] = max(
+                        result["seasonal_factors"][cat]["facteur_max"], fd
+                    )
+                if r["jour_semaine"] is not None:
+                    result["seasonal_factors"][cat]["par_jour"][str(r["jour_semaine"])] = fd
+
+            comp_rows = await conn.fetch("""
+                SELECT concurrent_id, nom, part_marche_pct, positionnement, points_forts
+                FROM market.competitors WHERE actif = TRUE
+                ORDER BY part_marche_pct DESC NULLS LAST
+            """)
+            result["competitors"] = [
+                {
+                    "id":       r["concurrent_id"],
+                    "nom":      r["nom"],
+                    "pdm_pct":  float(r["part_marche_pct"] or 0),
+                    "position": r["positionnement"],
+                    "avantages": r["points_forts"] if isinstance(r["points_forts"], list)
+                                 else [],
+                }
+                for r in comp_rows
+            ]
+
+            pricing_rows = await conn.fetch("""
+                SELECT concurrent_id, categorie, produit_type, donnees_go,
+                       prix_ttc, engagement_mois, date_releve
+                FROM market.competitor_pricing
+                WHERE date_releve >= CURRENT_DATE - INTERVAL '90 days' AND actif = TRUE
+                ORDER BY concurrent_id, categorie, date_releve DESC
+                LIMIT 30
+            """)
+            result["competitor_pricing"] = [
+                {
+                    "concurrent": r["concurrent_id"],
+                    "categorie":  r["categorie"],
+                    "produit":    r["produit_type"],
+                    "data_go":    float(r["donnees_go"] or 0),
+                    "prix_ttc":   float(r["prix_ttc"] or 0),
+                    "engagement": int(r["engagement_mois"] or 0),
+                    "releve":     str(r["date_releve"]),
+                }
+                for r in pricing_rows
+            ]
+
+            mnp_rows = await conn.fetch("""
+                SELECT direction, SUM(volume) AS vol
+                FROM market.mnp_flows
+                WHERE mois >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '3 months')
+                GROUP BY direction
+            """)
+            for r in mnp_rows:
+                result["mnp_net"][r["direction"]] = int(r["vol"] or 0)
+            port_in  = result["mnp_net"].get("PORT_IN", 0)
+            port_out = result["mnp_net"].get("PORT_OUT", 0)
+            result["mnp_net"]["bilan"]    = port_in - port_out
+            result["mnp_net"]["tendance"] = "favorable" if port_in > port_out else "defavorable"
+
+            if store_id:
+                kpi_rows = await conn.fetch("""
+                    SELECT kpi_date, SUM(ca_realise) AS ca,
+                           SUM(nb_forfaits)  AS forfaits,
+                           SUM(nb_terminaux) AS terminaux,
+                           SUM(nb_postpaye)  AS postpaye,
+                           COUNT(DISTINCT agent_id) AS nb_agents
+                    FROM agent_kpi_daily
+                    WHERE store_id = $1 AND kpi_date >= CURRENT_DATE - INTERVAL '7 days'
+                    GROUP BY kpi_date ORDER BY kpi_date DESC
+                """, store_id)
+                if kpi_rows:
+                    ca_list = [float(r["ca"] or 0) for r in kpi_rows]
+                    result["agent_kpi_trend"] = {
+                        "ca_7j_avg":    round(sum(ca_list) / len(ca_list), 2),
+                        "ca_7j_max":    round(max(ca_list), 2),
+                        "ca_7j_min":    round(min(ca_list), 2),
+                        "forfaits_7j":  int(sum(r["forfaits"] or 0 for r in kpi_rows)),
+                        "terminaux_7j": int(sum(r["terminaux"] or 0 for r in kpi_rows)),
+                        "postpaye_7j":  int(sum(r["postpaye"] or 0 for r in kpi_rows)),
+                        "nb_jours":     len(kpi_rows),
+                    }
+
+            logger.info(
+                f"[STRATEGE-PG] {len(result['events_actifs'])} events, "
+                f"{len(result['competitors'])} concurrents, "
+                f"MNP bilan={result['mnp_net'].get('bilan', 0)}"
+            )
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"[STRATEGE-PG] market_intelligence_pg failed: {e}")
+        result["source"] = "fallback"
+
+    return result
+
+
+# ── Heatmap horaire ───────────────────────────────────────────────────────────
 
 def build_heatmap(urgency: str, weather_effect: float) -> dict:
-    """Construit la heatmap de risque horaire."""
     is_rainy = weather_effect <= -0.10
     if urgency == "HIGH":
-        traffic = ["med","high","high","crit","crit","high","med","low"]
-        risk    = ["low","med","high","high","crit","crit","high","med"]
+        traffic = ["med", "high", "high", "crit", "crit", "high", "med", "low"]
+        risk    = ["low", "med", "high", "high", "crit", "crit", "high", "med"]
     elif urgency == "MEDIUM":
-        traffic = ["low","med","med","high","high","med","med","low"]
-        risk    = ["low","low","med","med","high","med","med","low"]
+        traffic = ["low", "med", "med", "high", "high", "med", "med", "low"]
+        risk    = ["low", "low", "med", "med", "high", "med", "med", "low"]
     else:
-        traffic = ["low","low","med","med","med","low","low","low"]
-        risk    = ["low","low","low","med","med","low","low","low"]
-
+        traffic = ["low", "low", "med", "med", "med", "low", "low", "low"]
+        risk    = ["low", "low", "low", "med", "med", "low", "low", "low"]
     return {
-        "hours":   ["11AM","12PM","1PM","2PM","3PM","4PM","5PM","6PM"],
+        "hours":   ["11AM", "12PM", "1PM", "2PM", "3PM", "4PM", "5PM", "6PM"],
         "traffic": traffic,
         "weather": (
-            ["high","high","high","high","high","high","high","high"]
-            if is_rainy else
-            ["low","low","low","low","low","low","low","low"]
+            ["high"] * 8 if is_rainy else ["low"] * 8
         ),
-        "stock":   ["low","low","med","high","high","crit","crit","high"],
-        "event":   ["low","low","low","low","med","med","high","high"],
+        "stock":   ["low", "low", "med", "high", "high", "crit", "crit", "high"],
+        "event":   ["low", "low", "low", "low", "med", "med", "high", "high"],
         "risk":    risk,
     }
 
 
+# ── Point d'entrée principal ──────────────────────────────────────────────────
+
 async def fetch_full_context(store_id: str) -> dict:
     """
-    Récupère le contexte externe complet pour l'Agent Stratège.
-    - Météo Open-Meteo (async, 5s timeout)
-    - Fériés Nager.Date (async, 5s timeout)
-    - Promotions statiques (instantané)
-    Pas de scraping web → pas de timeout de 30s.
+    Contexte complet Agent Stratège :
+    - Météo Open-Meteo
+    - Fériés Nager.Date
+    - Market intelligence 100% PostgreSQL (events, seasonalité, concurrents, MNP, KPIs)
     """
-    logger.info(f"[STRATEGE] Fetch contexte complet pour {store_id}...")
+    logger.info(f"[STRATEGE] fetch_full_context pour {store_id}...")
 
-    # Lancer météo et fériés en parallèle
     weather_task  = asyncio.create_task(fetch_weather(store_id))
     holidays_task = asyncio.create_task(fetch_holidays())
+    market_task   = asyncio.create_task(fetch_market_intelligence_pg(store_id))
 
     try:
-        weather, holidays = await asyncio.gather(
-            weather_task, holidays_task,
-            return_exceptions=False,
+        weather, holidays, market = await asyncio.gather(
+            weather_task, holidays_task, market_task, return_exceptions=False
         )
     except Exception as e:
         logger.warning(f"[STRATEGE] fetch_full_context gather: {e}")
         weather  = await fetch_weather(store_id)
         holidays = {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}
+        market   = {}
 
-    events  = get_static_events()
     summary = weather.get("summary", {})
-
-    # Enrichir le summary avec les fériés
     if holidays.get("is_holiday_today"):
         summary["is_holiday"]   = True
         summary["holiday_name"] = (holidays.get("today_holiday") or {}).get("name", "")
@@ -303,38 +394,30 @@ async def fetch_full_context(store_id: str) -> dict:
         summary["is_holiday"]   = False
         summary["holiday_name"] = ""
 
-    summary["active_promos"] = len(events.get("promotions", []))
+    events_actifs = market.get("events_actifs", [])
+    summary["active_promos"] = len(events_actifs)
 
-    # Effet total : météo + ferié
     total_effect = summary.get("weather_effect", 0)
     if holidays.get("is_holiday_today"):
-        total_effect += 0.30  # +30% trafic jour férié
+        total_effect += 0.30
+    if events_actifs:
+        intensite = events_actifs[0].get("intensite", "LOW")
+        total_effect += {"LOW": 0.05, "MEDIUM": 0.15, "HIGH": 0.30, "EXTREME": 0.50}.get(intensite, 0)
     summary["total_effect"] = round(total_effect, 2)
 
-    # Log
-    next_hol = (holidays.get("next_holiday") or {})
-    if next_hol:
-        logger.info(
-            f"[STRATEGE] Prochain férié: "
-            f"{next_hol.get('name','')} dans {next_hol.get('days_until',0)} jour(s)"
-        )
-
-    logger.info(
-        f"[STRATEGE] Contexte {store_id} — "
-        f"Météo: {summary.get('weather_icon','')} | "
-        f"Férié: {'oui' if summary['is_holiday'] else 'non'} | "
-        f"Promos: {summary['active_promos']} | "
-        f"Effet total: {total_effect:+.0%}"
-    )
-
-    urgency   = "MEDIUM"  # sera mis à jour depuis le state
-    heatmap   = build_heatmap(urgency, summary.get("weather_effect", 0))
+    heatmap = build_heatmap("MEDIUM", summary.get("weather_effect", 0))
 
     return {
-        "summary":  summary,
-        "weather":  weather.get("current", {}),
-        "hourly":   weather.get("hourly", {}),
-        "holidays": holidays,
-        "events":   events,
-        "heatmap":  heatmap,
+        "summary":            summary,
+        "weather":            weather.get("current", {}),
+        "hourly":             weather.get("hourly", {}),
+        "holidays":           holidays,
+        "market":             market,
+        "events_actifs":      events_actifs,
+        "seasonal_factors":   market.get("seasonal_factors", {}),
+        "competitors":        market.get("competitors", []),
+        "competitor_pricing": market.get("competitor_pricing", []),
+        "mnp_net":            market.get("mnp_net", {}),
+        "agent_kpi_trend":    market.get("agent_kpi_trend", {}),
+        "heatmap":            heatmap,
     }

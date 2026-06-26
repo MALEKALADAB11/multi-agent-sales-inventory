@@ -46,6 +46,38 @@ class SalesModuleConfig(BaseSettings):
     langgraph_checkpointer: str = "memory"
     max_analyst_retries: int = 3
 
+    # ── Feature Flags v5 ─────────────────────────────────────────────────────
+    # Phase 1 — State Bus
+    enable_state_bus:        bool = False
+    enable_circuit_breaker:  bool = False
+
+    # Phase 2 — Inventory Cross-Reference
+    enable_inventory_sync:   bool = False
+    inv_snapshot_ttl_s:      int  = 600   # 10 min
+
+    # Phase 3 — Critique Agent
+    enable_critique_agent:   bool = False
+    critique_min_score:      float = 0.80  # seuil passage Coach
+    critique_max_cycles:     int   = 2     # nb révisions max
+
+    # Phase 4 — Supervisor
+    enable_supervisor:       bool = False
+    hitl_gap_threshold:      float = 0.70  # gap > 70% → HITL
+    hitl_timeout_s:          int   = 120
+
+    # Phase 5 — Feedback Loop
+    enable_feedback_loop:    bool = False
+    feedback_cron_hour:      int  = 21     # 21h chaque soir
+
+    # Phase 6 — Multi-Store + Checkpointing
+    enable_multi_store:      bool = False
+    max_concurrent_stores:   int  = 5
+    enable_pg_checkpointing: bool = False
+    pg_checkpointer_url:     str  = "postgresql://postgres:admin@localhost:5432/ooredoo_sales"
+
+    # ── Inventory module connection ──────────────────────────────────────────
+    inventory_api_url:       str  = "http://localhost:8001"
+
 
 @lru_cache()
 def get_config() -> SalesModuleConfig:

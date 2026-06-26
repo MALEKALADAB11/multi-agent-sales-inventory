@@ -21,13 +21,23 @@ WHAT WAS SLOW AND WHY:
 3. 330+ DB connections per run (fixed in routes.py + inventory_repo.py)
    get_active_objective / get_stock_level / get_product called per SKU.
    Now pre-fetched once before the pool starts.
+
+4. Analysis + Context ran sequentially within each SKU pipeline.
+   These two agents are independent — neither needs the other's output.
+   FIX: _run_pipeline now runs analysis_agent and context_agent in
+   parallel using a 2-thread inner pool, then feeds both results to
+   decision_agent. This cuts per-SKU wall time roughly in half for
+   LLM-enabled runs.
+
+5. Redis Alert Bus: CRITICAL/EXPEDITE decisions now dispatched async
+   via dispatch_alerts_sync() without blocking the pipeline.
 """
 
 import sys
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
@@ -39,11 +49,29 @@ from src.agents.decision.agent import create_decision_agent
 from config.settings import settings
 
 try:
+    from src.utils.langfuse_inventory import (
+        InventoryPipelineTrace,
+        log_batch_start,
+        log_batch_end,
+    )
+    _LF_AVAILABLE = True
+except Exception:
+    _LF_AVAILABLE = False
+    logger.debug("langfuse_inventory not available — Langfuse tracing disabled.")
+
+try:
     from db.repositories.inventory_repo import SyncInventoryRepo
     _DB_AVAILABLE = True
 except Exception:
     _DB_AVAILABLE = False
     logger.warning("SyncInventoryRepo not importable — agent_run logging disabled.")
+
+try:
+    from src.services.redis_alert_bus import dispatch_alerts_sync
+    _REDIS_ALERTS = True
+except Exception:
+    _REDIS_ALERTS = False
+    logger.debug("redis_alert_bus not available — critical alerts not dispatched.")
 
 _BATCH_WORKERS = 8
 
@@ -137,6 +165,10 @@ class InventoryOrchestrator:
             store_id, len(skus), business_objective, n_workers,
         )
 
+        import time as _time
+        _batch_t0 = _time.time()
+        batch_id = log_batch_start(store_id, len(skus), business_objective) if _LF_AVAILABLE else f"batch-{store_id}"
+
         agent_run_id = None
         if _DB_AVAILABLE:
             try:
@@ -200,7 +232,7 @@ class InventoryOrchestrator:
                 prod_batch = SyncInventoryRepo.get_products_batch(skus)
                 if prod_batch:
                     # Inject service_level_target from the active objective into every
-                    # product dict. The column was removed from inv.products (it belongs
+                    # product dict. The column was removed from inventory.products (it belongs
                     # on the objective, not the product). The analysis agent's compute_node
                     # reads product.get("service_level_target", 0.95) — this keeps it working.
                     for product in prod_batch.values():
@@ -231,7 +263,7 @@ class InventoryOrchestrator:
                     decision_agent=decision_agent,
                     preloaded_stock=preloaded_stock,
                     preloaded_products=preloaded_products,
-    
+                    batch_id=batch_id,
                 )
             except Exception as exc:
                 logger.error("[Orchestrator] SKU %s worker error: %s", sku, exc)
@@ -253,10 +285,13 @@ class InventoryOrchestrator:
         high     = sum(1 for r in results if r.get("analysis_report", {}).get("risk_assessment", {}).get("level") == "HIGH")
         errors   = sum(1 for r in results if "error" in r)
 
+        _batch_ms = int((_time.time() - _batch_t0) * 1000)
         logger.info(
-            "[Orchestrator] Batch done — CRITICAL:%d HIGH:%d Errors:%d / %d SKUs",
-            critical, high, errors, len(skus),
+            "[Orchestrator] Batch done — CRITICAL:%d HIGH:%d Errors:%d / %d SKUs (%dms)",
+            critical, high, errors, len(skus), _batch_ms,
         )
+        if _LF_AVAILABLE:
+            log_batch_end(batch_id, store_id, critical, high, errors, _batch_ms)
 
         if _DB_AVAILABLE and agent_run_id:
             try:
@@ -287,6 +322,7 @@ class InventoryOrchestrator:
         preloaded_stock:      Dict[str, Any] = None,
         preloaded_products:   Dict[str, Any] = None,
         service_level_target: float = 0.95,
+        batch_id:             str = None,
     ) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "sku":                sku,
@@ -294,51 +330,146 @@ class InventoryOrchestrator:
             "business_objective": business_objective,
         }
 
-        # Step 1: Analysis
+        # ── Langfuse root trace for this SKU ──────────────────────────────────
+        lf_trace = None
+        if _LF_AVAILABLE:
+            lf_trace = InventoryPipelineTrace(sku, store_id, business_objective, batch_id)
+            lf_trace.start()
+
+        # ── Phase 1: Analysis + Context en PARALLÈLE ──────────────────────────
+        # Ces deux agents sont indépendants — aucun n'a besoin de la sortie
+        # de l'autre. Les exécuter en parallèle coupe le temps par SKU ~2×
+        # pour les runs LLM-enabled.
+
+        analysis_span = lf_trace.agent_span(
+            "analysis",
+            input_data={"sku": sku, "store_id": store_id, "objective": business_objective},
+        ) if lf_trace else None
+        context_span = lf_trace.agent_span(
+            "context",
+            input_data={"sku": sku, "store_id": store_id},
+        ) if lf_trace else None
+
         analysis_report: Dict[str, Any] = {}
-        try:
-            raw = analysis_agent.run(
+        context_report:  Dict[str, Any] = {}
+
+        with ThreadPoolExecutor(max_workers=2) as inner_pool:
+            analysis_future: Future = inner_pool.submit(
+                analysis_agent.run,
                 sku, store_id, business_objective, agent_run_id,
                 preloaded_stock=preloaded_stock,
-                preloaded_product=preloaded_products.get(sku) if preloaded_products else None,
-
+                preloaded_product=(
+                    preloaded_products.get(sku) if preloaded_products else None
+                ),
+                lf_span=analysis_span,
             )
-            result["analysis_report"] = raw.get("analysis_report", {})
-            analysis_report           = result["analysis_report"]
-        except Exception as exc:
-            logger.error("[Orchestrator] analysis_agent failed SKU=%s: %s", sku, exc)
-            result["analysis_error"] = str(exc)
+            context_future: Future = inner_pool.submit(
+                context_agent.run,
+                sku, store_id, agent_run_id,
+                lf_span=context_span,
+            )
+
+            # Collect analysis result
+            try:
+                raw                       = analysis_future.result()
+                result["analysis_report"] = raw.get("analysis_report", {})
+                analysis_report           = result["analysis_report"]
+                if analysis_span:
+                    risk = analysis_report.get("risk_assessment", {})
+                    analysis_span.end(output={
+                        "risk_level":       risk.get("level"),
+                        "days_of_stock":    analysis_report.get("metrics", {}).get("days_of_stock_remaining"),
+                        "reasoning_source": analysis_report.get("reasoning_source"),
+                    })
+            except Exception as exc:
+                logger.error("[Orchestrator] analysis_agent failed SKU=%s: %s", sku, exc)
+                result["analysis_error"] = str(exc)
+                if analysis_span:
+                    analysis_span.end(error=str(exc))
+
+            # Collect context result (non-blocking for decision pipeline)
+            try:
+                ctx_raw                  = context_future.result()
+                result["context_result"] = ctx_raw
+                context_report           = ctx_raw.get("context_report", {})
+                if context_span:
+                    context_span.end(output={
+                        "demand_uplift_pct": context_report.get("demand_uplift_pct"),
+                        "dominant_signal":   context_report.get("dominant_signal"),
+                        "confidence":        context_report.get("confidence"),
+                    })
+            except Exception as exc:
+                logger.warning("[Orchestrator] context_agent failed SKU=%s: %s", sku, exc)
+                result["context_result"] = {"sku": sku, "store_id": store_id, "error": str(exc)}
+                if context_span:
+                    context_span.end(error=str(exc))
 
         if not analysis_report:
             result["decision_result"] = {
                 "sku": sku, "store_id": store_id,
                 "error": "analysis_report unavailable — pipeline aborted",
             }
+            if lf_trace:
+                lf_trace.finish(error="analysis_report unavailable")
             self._log_result(sku, result)
             return result
 
-        # Step 2: Context
-        context_report: Dict[str, Any] = {}
-        try:
-            ctx_raw                  = context_agent.run(sku, store_id, agent_run_id)
-            result["context_result"] = ctx_raw
-            context_report           = ctx_raw.get("context_report", {})
-        except Exception as exc:
-            logger.warning("[Orchestrator] context_agent failed SKU=%s: %s", sku, exc)
-            result["context_result"] = {"sku": sku, "store_id": store_id, "error": str(exc)}
-
-        # Step 3: Decision
+        # ── Phase 2: Decision (séquentiel — dépend de analysis + context) ─────
+        decision_span = lf_trace.agent_span(
+            "decision",
+            input_data={
+                "sku": sku,
+                "risk_level": analysis_report.get("risk_assessment", {}).get("level"),
+                "demand_uplift_pct": context_report.get("demand_uplift_pct"),
+            },
+        ) if lf_trace else None
         try:
             dec_raw                   = decision_agent.run(
                 sku=sku, store_id=store_id, business_objective=business_objective,
                 analysis_report=analysis_report, context_report=context_report,
                 agent_run_id=agent_run_id,
+                lf_span=decision_span,
             )
             result["decision_result"] = dec_raw
+            if decision_span:
+                decision = dec_raw.get("decision", {})
+                decision_span.end(output={
+                    "action":     decision.get("action"),
+                    "order_qty":  decision.get("order_qty"),
+                    "urgency":    decision.get("urgency"),
+                    "confidence": decision.get("confidence"),
+                    "escalate":   decision.get("escalate_to_human"),
+                })
         except Exception as exc:
             logger.error("[Orchestrator] decision_agent failed SKU=%s: %s", sku, exc)
             result["decision_result"] = {"sku": sku, "store_id": store_id, "error": str(exc)}
+            if decision_span:
+                decision_span.end(error=str(exc))
 
+        # ── Redis Alert Bus: dispatch alertes CRITICAL/EXPEDITE ───────────────
+        if _REDIS_ALERTS:
+            decision_dict = result.get("decision_result", {}).get("decision", {})
+            if decision_dict:
+                adjusted = result.get("decision_result", {}).get("adjusted_metrics", {})
+                risk_in_dec = adjusted.get("risk_assessment", {}).get("level", "")
+                days_adj    = adjusted.get("metrics", {}).get("days_of_stock_remaining")
+                dispatch_record = {
+                    "sku":                    sku,
+                    "action":                 decision_dict.get("action"),
+                    "risk_level":             risk_in_dec,
+                    "days_of_stock_remaining": days_adj,
+                    "order_qty":              decision_dict.get("order_qty"),
+                    "urgency":                decision_dict.get("urgency"),
+                    "escalate_to_human":      decision_dict.get("escalate_to_human"),
+                    "confidence":             decision_dict.get("confidence"),
+                }
+                try:
+                    dispatch_alerts_sync([dispatch_record], store_id)
+                except Exception as exc:
+                    logger.debug("[Orchestrator] Redis alert dispatch skipped: %s", exc)
+
+        if lf_trace:
+            lf_trace.finish(result=result)
         self._log_result(sku, result)
         return result
 

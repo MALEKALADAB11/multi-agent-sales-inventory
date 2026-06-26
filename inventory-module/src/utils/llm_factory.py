@@ -1,132 +1,156 @@
 """
-LLM Factory
-===========
-Centralized LLM provider initialization with support for multiple backends.
+LLM Factory — OpenRouter + providers locaux.
+=============================================
 
-Usage:
-    from src.utils.llm_factory import get_llm
-    
-    # Uses LLM_PROVIDER from .env
-    llm = get_llm()
-    
-    # Override provider
-    llm = get_llm(provider="groq")
-    
-    # Override specific settings
-    llm = get_llm(provider="ollama", temperature=0.5)
+Fournisseurs supportés :
+  openrouter   ← RECOMMANDÉ — accès unifié Claude/Gemini/Llama via une seule API
+  groq         — inference ultra-rapide (Llama 3.3 70B)
+  ollama       — modèles locaux (pas d'API key)
+  openai       — GPT-4o
+  anthropic    — Claude direct
 
-Supported Providers:
-    - groq: Fast inference via Groq Cloud
-    - ollama: Local models via Ollama
-    - openai: OpenAI API (GPT-4, etc.)
-    - anthropic: Anthropic API (Claude, etc.)
+Sélection tiérée OpenRouter (role= param) :
+  "fast"     → gemini-flash-1.5         — analyse, contexte, signals
+  "smart"    → claude-3.5-sonnet        — décision, coach, synthèse
+  "guardian" → llama-3.1-70b-instruct  — guardrail, critique, validation
 
-Adding a New Provider:
-    1. Add settings to Settings class in config/settings.py
-    2. Add provider to Literal type hint in settings.llm_provider
-    3. Add elif block in get_llm() function below
-    4. Update .env.example with new provider's variables
+Usage :
+  from src.utils.llm_factory import get_llm
+  llm = get_llm()                              # provider par défaut (.env)
+  llm = get_llm(provider="openrouter", role="smart")  # Claude pour décision
+  llm = get_llm(provider="openrouter", role="fast")   # Gemini Flash pour analyse
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional, Any
+from typing import Literal, Optional
+
 from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
+# Rôles possibles pour OpenRouter
+LLMRole = Literal["fast", "smart", "guardian"]
+
 
 def get_llm(
-    provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    model: Optional[str] = None,
-    api_key: Optional[str] = None,
-    **kwargs
+    provider:    Optional[str]     = None,
+    temperature: Optional[float]   = None,
+    model:       Optional[str]     = None,
+    api_key:     Optional[str]     = None,
+    role:        Optional[LLMRole] = None,
+    **kwargs,
 ) -> BaseChatModel:
     """
-    Factory function to create LLM instances based on provider.
-    
+    Factory LLM centralisée.
+
     Args:
-        provider: LLM provider ("groq", "ollama", "openai", "anthropic")
-                 If None, reads from settings.llm_provider
-        temperature: Model temperature (0.0-1.0). If None, uses settings default
-        model: Model name. If None, uses provider's default from settings
-        api_key: API key for the provider. If None, uses settings default
-        **kwargs: Additional provider-specific arguments
-    
+        provider:    "openrouter" | "groq" | "ollama" | "openai" | "anthropic"
+                     Si None → lit LLM_PROVIDER depuis .env
+        temperature: 0.0-1.0. Si None → lit LLM_TEMPERATURE depuis .env
+        model:       Nom du modèle. Si None → défaut du provider
+        api_key:     Clé API. Si None → lit depuis .env
+        role:        "fast" | "smart" | "guardian"
+                     Sélectionne le modèle tiéré OpenRouter.
+                     Ignoré pour les autres providers.
+        **kwargs:    Args supplémentaires passés au constructeur
+
     Returns:
-        Configured LLM instance
-    
+        BaseChatModel configuré
+
     Raises:
-        ValueError: If provider is unsupported or required credentials are missing
-        ImportError: If required provider package is not installed
-    
-    Examples:
-        >>> # Use default provider from .env
-        >>> llm = get_llm()
-        
-        >>> # Override provider
-        >>> llm = get_llm(provider="groq", temperature=0.0)
-        
-        >>> # Override model
-        >>> llm = get_llm(provider="openai", model="gpt-4o")
+        ValueError:  Provider non supporté ou clé manquante
+        ImportError: Package provider non installé
     """
     from config.settings import settings
-    
-    # Use settings defaults if not overridden
-    provider = provider or settings.llm_provider
+
+    provider    = provider    or settings.llm_provider
     temperature = temperature if temperature is not None else settings.llm_temperature
-    
-    logger.info(f"Initializing LLM: provider={provider}, temperature={temperature}")
-    
+
+    logger.info("[LLMFactory] provider=%s role=%s temperature=%s", provider, role, temperature)
+
     # ══════════════════════════════════════════════════════════════════════════
-    # GROQ
+    # OPENROUTER — recommandé (accès unifié Claude/Gemini/Llama)
     # ══════════════════════════════════════════════════════════════════════════
-    if provider == "groq":
+    if provider == "openrouter":
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError("langchain-openai requis: pip install langchain-openai")
+
+        resolved_key = api_key or settings.openrouter_api_key
+        if not resolved_key:
+            raise ValueError(
+                "OPENROUTER_API_KEY manquante dans .env\n"
+                "  → Crée un compte sur https://openrouter.ai et ajoute :\n"
+                "    OPENROUTER_API_KEY=sk-or-v1-..."
+            )
+
+        # Sélection du modèle par rôle
+        if model:
+            resolved_model = model
+        elif role == "fast":
+            resolved_model = settings.openrouter_model_fast
+        elif role == "smart":
+            resolved_model = settings.openrouter_model_smart
+        elif role == "guardian":
+            resolved_model = settings.openrouter_model_guardian
+        else:
+            # Défaut : smart si pas de rôle précisé
+            resolved_model = settings.openrouter_model_smart
+
+        logger.info("[LLMFactory] OpenRouter model=%s", resolved_model)
+
+        return ChatOpenAI(
+            api_key=resolved_key,
+            model=resolved_model,
+            base_url=settings.openrouter_base_url,
+            temperature=temperature,
+            default_headers={
+                "HTTP-Referer": settings.openrouter_site_url,
+                "X-Title":      settings.openrouter_app_name,
+            },
+            **kwargs,
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # GROQ — inference ultra-rapide
+    # ══════════════════════════════════════════════════════════════════════════
+    elif provider == "groq":
         try:
             from langchain_groq import ChatGroq
         except ImportError:
-            raise ImportError(
-                "langchain-groq is not installed. "
-                "Install it with: pip install langchain-groq"
-            )
-        
-        resolved_api_key = api_key or settings.groq_api_key
-        if not resolved_api_key:
-            raise ValueError(
-                "Groq API key not found. Set GROQ_API_KEY in .env or pass api_key parameter"
-            )
-        
-        resolved_model = model or settings.groq_model
-        
+            raise ImportError("langchain-groq requis: pip install langchain-groq")
+
+        resolved_key = api_key or settings.groq_api_key
+        if not resolved_key:
+            raise ValueError("GROQ_API_KEY manquante dans .env")
+
         return ChatGroq(
-            api_key=resolved_api_key,
-            model_name=resolved_model,
+            api_key=resolved_key,
+            model_name=model or settings.groq_model,
             temperature=temperature,
-            **kwargs
+            **kwargs,
         )
-    
+
     # ══════════════════════════════════════════════════════════════════════════
-    # OLLAMA
+    # OLLAMA — modèles locaux (développement)
     # ══════════════════════════════════════════════════════════════════════════
     elif provider == "ollama":
         try:
             from langchain_ollama import ChatOllama
         except ImportError:
-            raise ImportError(
-                "langchain-ollama is not installed. "
-                "Install it with: pip install langchain-ollama"
-            )
-        
-        resolved_model = model or settings.ollama_model
+            raise ImportError("langchain-ollama requis: pip install langchain-ollama")
+
         base_url = kwargs.pop("base_url", settings.ollama_base_url)
-        
         return ChatOllama(
-            model=resolved_model,
+            model=model or settings.ollama_model,
             base_url=base_url,
             temperature=temperature,
-            **kwargs
+            **kwargs,
         )
-    
+
     # ══════════════════════════════════════════════════════════════════════════
     # OPENAI
     # ══════════════════════════════════════════════════════════════════════════
@@ -134,28 +158,21 @@ def get_llm(
         try:
             from langchain_openai import ChatOpenAI
         except ImportError:
-            raise ImportError(
-                "langchain-openai is not installed. "
-                "Install it with: pip install langchain-openai"
-            )
-        
-        resolved_api_key = api_key or settings.openai_api_key
-        if not resolved_api_key:
-            raise ValueError(
-                "OpenAI API key not found. Set OPENAI_API_KEY in .env or pass api_key parameter"
-            )
-        
-        resolved_model = model or settings.openai_model
+            raise ImportError("langchain-openai requis: pip install langchain-openai")
+
+        resolved_key = api_key or settings.openai_api_key
+        if not resolved_key:
+            raise ValueError("OPENAI_API_KEY manquante dans .env")
+
         base_url = kwargs.pop("base_url", settings.openai_base_url)
-        
         return ChatOpenAI(
-            api_key=resolved_api_key,
-            model=resolved_model,
+            api_key=resolved_key,
+            model=model or settings.openai_model,
             base_url=base_url,
             temperature=temperature,
-            **kwargs
+            **kwargs,
         )
-    
+
     # ══════════════════════════════════════════════════════════════════════════
     # ANTHROPIC
     # ══════════════════════════════════════════════════════════════════════════
@@ -163,48 +180,55 @@ def get_llm(
         try:
             from langchain_anthropic import ChatAnthropic
         except ImportError:
-            raise ImportError(
-                "langchain-anthropic is not installed. "
-                "Install it with: pip install langchain-anthropic"
-            )
-        
-        resolved_api_key = api_key or settings.anthropic_api_key
-        if not resolved_api_key:
-            raise ValueError(
-                "Anthropic API key not found. Set ANTHROPIC_API_KEY in .env or pass api_key parameter"
-            )
-        
-        resolved_model = model or settings.anthropic_model
-        
+            raise ImportError("langchain-anthropic requis: pip install langchain-anthropic")
+
+        resolved_key = api_key or settings.anthropic_api_key
+        if not resolved_key:
+            raise ValueError("ANTHROPIC_API_KEY manquante dans .env")
+
         return ChatAnthropic(
-            api_key=resolved_api_key,
-            model=resolved_model,
+            api_key=resolved_key,
+            model=model or settings.anthropic_model,
             temperature=temperature,
-            **kwargs
+            **kwargs,
         )
-    
-    # ══════════════════════════════════════════════════════════════════════════
-    # UNSUPPORTED PROVIDER
-    # ══════════════════════════════════════════════════════════════════════════
+
     else:
         raise ValueError(
-            f"Unsupported LLM provider: {provider}. "
-            f"Supported: groq, ollama, openai, anthropic"
+            f"Provider '{provider}' non supporté. "
+            "Valeurs valides: openrouter, groq, ollama, openai, anthropic"
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Convenience aliases for backward compatibility
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Helpers tiérés — utilisés directement par les agents ─────────────────────
+
+def get_fast_llm(**kwargs) -> BaseChatModel:
+    """LLM FAST — pour analyse/contexte/signals (rapide, économique)."""
+    from config.settings import settings
+    if settings.llm_provider == "openrouter":
+        return get_llm(provider="openrouter", role="fast", **kwargs)
+    return get_llm(**kwargs)
+
+
+def get_smart_llm(**kwargs) -> BaseChatModel:
+    """LLM SMART — pour décision/coach/synthèse (précis, raisonnement fort)."""
+    from config.settings import settings
+    if settings.llm_provider == "openrouter":
+        return get_llm(provider="openrouter", role="smart", **kwargs)
+    return get_llm(**kwargs)
+
+
+def get_guardian_llm(**kwargs) -> BaseChatModel:
+    """LLM GUARDIAN — pour guardrail/critique/validation (fiable, structuré)."""
+    from config.settings import settings
+    if settings.llm_provider == "openrouter":
+        return get_llm(provider="openrouter", role="guardian", **kwargs)
+    return get_llm(**kwargs)
+
+
+# ── Backward compat ───────────────────────────────────────────────────────────
 
 def create_llm(api_key: Optional[str] = None, **kwargs) -> BaseChatModel:
-    """
-    Legacy function for backward compatibility.
-    Defaults to Groq provider with api_key parameter.
-    
-    Deprecated: Use get_llm() instead for explicit provider selection.
-    """
-    logger.warning(
-        "create_llm() is deprecated. Use get_llm(provider='groq', api_key=...) instead"
-    )
-    return get_llm(provider="groq", api_key=api_key, **kwargs)
+    """Deprecated: utiliser get_llm() directement."""
+    logger.warning("create_llm() deprecated — utiliser get_llm()")
+    return get_llm(api_key=api_key, **kwargs)

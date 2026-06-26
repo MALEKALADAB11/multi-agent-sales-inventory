@@ -37,6 +37,7 @@ services:
     container_name: milvus-standalone
     image: milvusdb/milvus:v2.4.9
     command: ["milvus", "run", "standalone"]
+    restart: unless-stopped
     security_opt:
       - seccomp:unconfined
     environment:
@@ -56,6 +57,25 @@ services:
     depends_on:
       - "etcd"
       - "minio"
+
+  # ── Redis Alert Bus — Pub/Sub alertes critiques stock ─────────────────────
+  redis:
+    container_name: retail-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ── Langfuse v2 (autonome — pas besoin de ClickHouse) ──────────────────────
   langfuse-db:

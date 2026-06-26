@@ -4,7 +4,7 @@ Decision Agent Tools
 Data access for the decision agent.
 
 Two responsibilities:
-  1. get_active_objective()          — reads inv.business_objectives
+  1. get_active_objective()          — reads inventory.business_objectives
   2. action_to_recommendation_type() — maps ORDER/EXPEDITE → 'reorder',
                                        HOLD/MONITOR → None (no DB row written)
 
@@ -57,7 +57,7 @@ def get_active_objective() -> Optional[dict]:
 
 def action_to_recommendation_type(action: str) -> Optional[str]:
     """
-    Map internal action string to inv.recommendations.recommendation_type.
+    Map internal action string to inventory.recommendations.recommendation_type.
     Returns None for HOLD / MONITOR — those produce no DB row.
     """
     return _ACTION_TO_RECO_TYPE.get(action.upper())

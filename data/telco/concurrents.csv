@@ -1,0 +1,4 @@
+concurrent_id,nom,code_operateur,pays,part_marche_pct,nb_abonnes,positionnement,date_entree_marche,points_forts,points_faibles
+TT,Tunisie Telecom,TT,Tunisia,45.2,8200000,STATE,1996-01-01,"[""couverture nationale"",""prix bas prepaye"",""réseau fixe"",""image institutionnelle""]","[""digital UX faible"",""réactivité promotions"",""innovation services""]"
+ORANGE,Orange Tunisie,OT,Tunisia,21.5,3900000,PREMIUM,2010-07-01,"[""marque internationale"",""premium 4G/5G"",""service client"",""digital app""]","[""prix élevés"",""couverture zones rurales"",""part marché limitée""]"
+FREE_TN,Free (anciennement Tunisiana),FT,Tunisia,0.5,90000,LOW_COST,2023-01-01,"[""prix très bas"",""jeune marque agressive""]","[""réseau limité"",""image"",""distribution""]"

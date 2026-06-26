@@ -68,7 +68,7 @@ except Exception as e:
 print("\n── 2. SyncInventoryRepo reads ───────────────────────────────────")
 from db.repositories.inventory_repo import SyncInventoryRepo
 
-# Pick the first available SKU from inv.products
+# Pick the first available SKU from inventory.products
 import psycopg2, psycopg2.extras, os
 conn = psycopg2.connect(
         host    = os.getenv("DOCKER_DB_HOST"),
@@ -80,15 +80,15 @@ conn = psycopg2.connect(
 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
     cur.execute("""
         SELECT sl.sku, sl.store_id
-        FROM inv.stock_levels sl
-        JOIN inv.products p ON p.sku = sl.sku
+        FROM inventory.stock_levels sl
+        JOIN inventory.products p ON p.sku = sl.sku
         LIMIT 1
     """)
     row = cur.fetchone()
 conn.close()
 
 if not row:
-    fail("No rows in inv.stock_levels — did you run init_stock_levels.py?")
+    fail("No rows in inventory.stock_levels — did you run init_stock_levels.py?")
     sys.exit(1)
 
 TEST_SKU      = row["sku"]
@@ -122,7 +122,7 @@ run_id = SyncInventoryRepo.start_agent_run("analysis_agent", TEST_STORE_ID)
 if run_id:
     ok(f"start_agent_run: id={run_id}")
 else:
-    fail("start_agent_run returned None — check inv.agent_runs table exists")
+    fail("start_agent_run returned None — check inventory.agent_runs table exists")
 
 SyncInventoryRepo.complete_agent_run(
     run_id=run_id, status="completed",
@@ -140,7 +140,7 @@ conn = psycopg2.connect(
         password= os.getenv("DOCKER_DB_PASSWORD"),
 )
 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-    cur.execute("SELECT * FROM inv.agent_runs WHERE id = %s", (run_id,))
+    cur.execute("SELECT * FROM inventory.agent_runs WHERE id = %s", (run_id,))
     db_run = dict(cur.fetchone() or {})
 conn.close()
 
@@ -191,7 +191,7 @@ conn = psycopg2.connect(
 )
 with conn.cursor() as cur:
     cur.execute(
-        "DELETE FROM inv.alerts WHERE sku=%s AND store_id=%s AND recommended_action LIKE '%%TEST%%'",
+        "DELETE FROM inventory.alerts WHERE sku=%s AND store_id=%s AND recommended_action LIKE '%%TEST%%'",
         (TEST_SKU, TEST_STORE_ID)
     )
     conn.commit()
@@ -253,6 +253,6 @@ except Exception as e:
 # =============================================================================
 print("\n── Done ─────────────────────────────────────────────────────────")
 print("Check your DB with:")
-print(f"  SELECT * FROM inv.agent_runs ORDER BY created_at DESC LIMIT 5;")
-print(f"  SELECT * FROM inv.alerts WHERE sku = '{TEST_SKU}';")
-print(f"  SELECT stock_current, remaining_days_of_stock FROM inv.stock_levels WHERE sku = '{TEST_SKU}' AND store_id = '{TEST_STORE_ID}';")
+print(f"  SELECT * FROM inventory.agent_runs ORDER BY created_at DESC LIMIT 5;")
+print(f"  SELECT * FROM inventory.alerts WHERE sku = '{TEST_SKU}';")
+print(f"  SELECT stock_current, remaining_days_of_stock FROM inventory.stock_levels WHERE sku = '{TEST_SKU}' AND store_id = '{TEST_STORE_ID}';")

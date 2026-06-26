@@ -202,7 +202,7 @@ _db_sku_cache: Optional[set] = None
 
 def _get_db_skus() -> Optional[set]:
     """
-    Returns the set of SKUs present in inv.products (DB).
+    Returns the set of SKUs present in inventory.products (DB).
     Cached after first call — only queries DB once.
     Returns None if DB is unavailable (fallback to CSV).
     """
@@ -217,10 +217,10 @@ def _get_db_skus() -> Optional[set]:
         try:
             import psycopg2.extras
             with conn.cursor() as cur:
-                cur.execute("SELECT sku FROM inv.products")
+                cur.execute("SELECT sku FROM inventory.products")
                 rows = cur.fetchall()
                 _db_sku_cache = {str(r[0]) for r in rows}
-                logger.info("DB SKU cache: %d SKUs in inv.products", len(_db_sku_cache))
+                logger.info("DB SKU cache: %d SKUs in inventory.products", len(_db_sku_cache))
                 return _db_sku_cache
         finally:
             conn.close()
@@ -231,22 +231,22 @@ def _get_db_skus() -> Optional[set]:
 
 def _filter_quality_skus(skus: List[str], store_id: str) -> List[str]:
     """
-    Keep only SKUs that exist in inv.products (DB).
+    Keep only SKUs that exist in inventory.products (DB).
     This guarantees:
-      - inv.stock_levels has a row for each SKU (seeded by init_stock_levels.py)
-      - inv.alerts FK constraint is satisfied on insert
+      - inventory.stock_levels has a row for each SKU (seeded by init_stock_levels.py)
+      - inventory.alerts FK constraint is satisfied on insert
       - DB stock reads work in _to_inventory_item
 
     Falls back to CSV-based filter (product_master.csv) if DB is unavailable,
     which also drops Unknown-named products.
     """
-    # ── Primary: intersect with inv.products ─────────────────────────────────────────────
+    # ── Primary: intersect with inventory.products ─────────────────────────────────────────────
     db_skus = _get_db_skus()
     if db_skus:
         good = [s for s in skus if s in db_skus]
         removed = len(skus) - len(good)
         logger.info(
-            "Quality filter (DB): %d SKUs in inv.products for %s | dropped %d absent",
+            "Quality filter (DB): %d SKUs in inventory.products for %s | dropped %d absent",
             len(good), store_id, removed,
         )
         if good:
@@ -725,7 +725,7 @@ def _to_inventory_item(
         # dec falls back to {} so every .get() below is safe.
         "recommendation":         None,
         "recommendationDetail":   None,
-        "recommendationId":       None,   # inv.recommendations UUID — used by PATCH /recommendations/{id}
+        "recommendationId":       None,   # inventory.recommendations UUID — used by PATCH /recommendations/{id}
         "recommendationStatus":   "pending",  # current DB status — used by frontend to rehydrate UI state
         "finalOrderQty":          None,
         "orderTiming":            None,
@@ -776,7 +776,7 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
     'overstock'.  The frontend receives these mapped back to its own vocabulary
     ('rupture', 'redistribution', 'overstock') by get_store_alerts().
 
-    If store_id is provided, all alerts are upserted to inv.alerts in a single
+    If store_id is provided, all alerts are upserted to inventory.alerts in a single
     batched DB call (one connection, one transaction) so the frontend PATCH call
     gets real UUIDs.  Falls back to fake ids if the DB is unavailable.
 
@@ -1146,7 +1146,7 @@ def clear_cache() -> Dict[str, Any]:
     count = len(_store_cache)
     _store_cache.clear()
     _DataCache.invalidate()
-    _db_sku_cache = None   # force re-query inv.products on next resolve
+    _db_sku_cache = None   # force re-query inventory.products on next resolve
     logger.info("Cache cleared (%d store entries + CSV + DB SKU cache)", count)
     return {
         "cleared": count,
@@ -1467,7 +1467,7 @@ async def update_recommendation(
     Update a recommendation's status.
 
     {recommendation_id} must be the UUID returned in the 'recommendationId'
-    field of each inventory item (written by the decision agent to inv.recommendations).
+    field of each inventory item (written by the decision agent to inventory.recommendations).
 
     Valid statuses:
         approved — operator confirmed and will place the order
@@ -1523,7 +1523,7 @@ async def update_recommendation(
 @router.post("/alerts/sync/{store_id}")
 def sync_alerts_to_db(store_id: str) -> Dict[str, Any]:
     """
-    Force-write all current critical/high items from the cache into inv.alerts.
+    Force-write all current critical/high items from the cache into inventory.alerts.
     Call this once before the demo so every alert has a real UUID.
     Returns how many were written vs already existed.
     """

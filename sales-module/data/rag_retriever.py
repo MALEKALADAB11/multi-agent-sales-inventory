@@ -25,18 +25,48 @@ OLLAMA_URL  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 _milvus_client = None
 
 
+def _ensure_collection(client) -> bool:
+    """Create coaching_scripts collection if it doesn't exist. Returns True if ready."""
+    try:
+        if client.has_collection(COLLECTION):
+            return True
+        from pymilvus import DataType
+        schema = client.create_schema(auto_id=True, enable_dynamic_field=True)
+        schema.add_field("id",           DataType.INT64,         is_primary=True, auto_id=True)
+        schema.add_field("vector",       DataType.FLOAT_VECTOR,  dim=EMBED_DIM)
+        schema.add_field("pg_id",        DataType.INT64)
+        schema.add_field("categorie",    DataType.VARCHAR,        max_length=100)
+        schema.add_field("situation",    DataType.VARCHAR,        max_length=200)
+        schema.add_field("action",       DataType.VARCHAR,        max_length=200)
+        schema.add_field("produit",      DataType.VARCHAR,        max_length=100)
+        schema.add_field("argument",     DataType.VARCHAR,        max_length=200)
+        schema.add_field("impact",       DataType.VARCHAR,        max_length=100)
+        schema.add_field("heure_min",    DataType.INT64)
+        schema.add_field("heure_max",    DataType.INT64)
+        schema.add_field("jour_semaine", DataType.INT64)
+        schema.add_field("store_id",     DataType.VARCHAR,        max_length=20)
+        idx = client.prepare_index_params()
+        idx.add_index("vector", index_type="FLAT", metric_type="COSINE")
+        client.create_collection(COLLECTION, schema=schema, index_params=idx)
+        logger.info(f"[RAG] Collection '{COLLECTION}' créée (vide — sera peuplée par les cycles)")
+        return True
+    except Exception as e:
+        logger.warning(f"[RAG] ensure_collection: {e}")
+        return False
+
+
 def _get_client():
     global _milvus_client
     if _milvus_client is None:
         try:
             from pymilvus import MilvusClient
-            if True:
-                _milvus_client = MilvusClient(uri="http://localhost:19530")
-                logger.info(f"[RAG] Milvus connecté: {MILVUS_URI}")
-            else:
-                logger.warning(f"[RAG] Milvus DB non trouvée: {MILVUS_DB} — RAG désactivé")
+            _milvus_client = MilvusClient(uri=MILVUS_URI)
+            _ensure_collection(_milvus_client)
+            logger.info(f"[RAG] Milvus connecté: {MILVUS_URI}")
         except ImportError:
             logger.warning("[RAG] pymilvus non installé — RAG désactivé")
+        except Exception as e:
+            logger.warning(f"[RAG] Milvus connexion échouée: {e}")
     return _milvus_client
 
 

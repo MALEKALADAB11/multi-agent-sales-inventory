@@ -1,7 +1,7 @@
 """
-Agent Stratège — Graphe LangGraph v2.
+Agent Stratège — Graphe LangGraph v3.
 ======================================
-Flow :
+Flow avec self-critique (Reflexion pattern) :
     fetch_context       → météo + fériés + événements
         ↓
     rag_search          → recherche Milvus scripts similaires
@@ -11,6 +11,8 @@ Flow :
     generate_strategy   → LLM + RAG → actions concrètes
         ↓
     build_output        → formatage final pour le frontend
+        ↓
+    self_critique       → auto-évalue cohérence + complétude actions
         ↓
        END
 """
@@ -23,6 +25,7 @@ from .nodes import (
     node_analyze_context,
     node_generate_strategy,
     node_build_output,
+    node_self_critique_stratege,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,7 @@ def build_stratege_graph() -> StateGraph:
     graph.add_node("analyze_context",   node_analyze_context)
     graph.add_node("generate_strategy", node_generate_strategy)
     graph.add_node("build_output",      node_build_output)
+    graph.add_node("self_critique",     node_self_critique_stratege)
 
     # ── Edges ──────────────────────────────────────────────
     graph.set_entry_point("fetch_context")
@@ -44,9 +48,10 @@ def build_stratege_graph() -> StateGraph:
     graph.add_edge("rag_search",        "analyze_context")
     graph.add_edge("analyze_context",   "generate_strategy")
     graph.add_edge("generate_strategy", "build_output")
-    graph.add_edge("build_output",      END)
+    graph.add_edge("build_output",      "self_critique")
+    graph.add_edge("self_critique",     END)
 
-    logger.info("[STRATEGE] Graphe LangGraph construit — 5 nodes.")
+    logger.info("[STRATEGE] Graphe LangGraph v3 — 6 nodes (+ self_critique).")
     return graph
 
 

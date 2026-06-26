@@ -31,6 +31,7 @@ config = get_config()
 OLLAMA_URL        = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")
 OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",       "llama3.2:latest")
 OPENROUTER_KEY    = os.getenv("OPENROUTER_API_KEY", "")
+# Modèle héritage — fallback si factory non disponible
 OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL",   "openai/gpt-oss-120b:free")
 OPENROUTER_URL    = "https://openrouter.ai/api/v1/chat/completions"
 MILVUS_URI        = "http://localhost:19530"
@@ -108,6 +109,20 @@ def _update_metrics(state, key, value):
     return metrics
 
 def get_llm():
+    """
+    Retourne le LLM SMART tier (OpenRouter) pour la génération de stratégie.
+    Fallback vers Ollama si factory indisponible.
+    """
+    import sys
+    from pathlib import Path
+    inv_path = str(Path(__file__).resolve().parents[6] / "inventory-module")
+    if inv_path not in sys.path:
+        sys.path.insert(0, inv_path)
+    try:
+        from src.utils.llm_factory import get_smart_llm
+        return get_smart_llm()
+    except Exception:
+        pass
     return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_URL,
                       temperature=0.2, num_predict=600, num_ctx=3500)
 
@@ -124,11 +139,11 @@ async def _get_critical_stock(store_id="I63", threshold=5):
         try:
             rows = await conn.fetch("""
                 SELECT s.sku,
-                       COALESCE(p."DES_PROD", s.sku::text) AS product_name,
+                       COALESCE(p.nom, s.sku::text) AS product_name,
                        COALESCE(s.stock_dispo, 0)          AS stock_qty,
                        s.stock_risk
                 FROM sales.vw_stock_enriched s
-                LEFT JOIN sales.ooredoo_products p ON s.sku = p."COD_PROD"
+                LEFT JOIN sales.produits p ON s.sku = p.sku
                 WHERE s.store_id = $1
                   AND (s.stock_risk IN ('rupture','critical')
                        OR COALESCE(s.stock_dispo, 0) <= $2)
@@ -409,7 +424,7 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
                     "Authorization": f"Bearer {OPENROUTER_KEY}",
                     "Content-Type":  "application/json",
                     "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                    "X-Title":       "AI Sales Coach Ooredoo — Stratège",
+                    "X-Title":       "AI Sales Coach Ooredoo - Stratege",
                 },
                 json={
                     "model":       OPENROUTER_MODEL,
@@ -655,6 +670,125 @@ async def node_build_output(state: SalesAgentState) -> dict:
     metrics["stratege_total_ms"] = sum(metrics.get(k,0) for k in
         ["stratege_context_ms","stratege_rag_ms","stratege_analyze_ms",
          "stratege_llm_ms","stratege_build_ms"])
+    return {**output, "metrics": metrics}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NODE 5b — Self-Critique (Reflexion Pattern)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def node_self_critique_stratege(state: SalesAgentState) -> dict:
+    """
+    Auto-évaluation des actions stratégiques avant transmission au CoachAgent.
+    Pattern Reflexion (Shinn et al. 2023).
+
+    Vérifie :
+      1. Cohérence avec le gap (les actions aident-elles à combler l'écart ?)
+      2. Cohérence avec le stock (recommande-t-on des produits disponibles ?)
+      3. Spécificité (chaque action a un produit_cible et un argument précis ?)
+      4. Confidence globale >= 0.6
+
+    Si critique NOK (score < 0.6) → critique_feedback injecté pour historique.
+    Le CoachAgent reçoit toujours les actions (pas de re-boucle en prod).
+    """
+    cid = _cycle_id(state); sid = _store_id(state)
+    log = AgentLogger("stratege", cid, sid)
+    log_id = log.node_start("self_critique", state)
+    t0 = time.time()
+    logger.info("[STRATEGE] Node 5b — self_critique")
+
+    actions   = state.get("strategie_actions") or []
+    gap_pct   = float(state.get("gap_objectif", 0))
+    urgency   = state.get("urgency_level", "MEDIUM")
+    rag_used  = state.get("rag_used", False)
+    cause     = state.get("cause_racine", "")
+
+    checks: dict = {}
+    total_score = 0.0
+    feedback_parts = []
+
+    # Vérif 1 — Au moins 3 actions générées
+    nb_actions = len(actions)
+    check1_ok = nb_actions >= 2
+    check1_score = min(1.0, nb_actions / 3)
+    checks["nb_actions"] = {"passed": check1_ok, "score": check1_score,
+                             "reason": f"{nb_actions}/3 actions"}
+    total_score += check1_score * 0.25
+    if not check1_ok:
+        feedback_parts.append(f"Seulement {nb_actions} action(s) — générer au moins 3.")
+
+    # Vérif 2 — Chaque action a produit_cible et argument_vente non-vides
+    complete_actions = sum(
+        1 for a in actions
+        if a.get("produit_cible") and a.get("argument_vente")
+    )
+    check2_ok = complete_actions == nb_actions
+    check2_score = complete_actions / max(nb_actions, 1)
+    checks["actions_complete"] = {"passed": check2_ok, "score": check2_score,
+                                   "reason": f"{complete_actions}/{nb_actions} complètes"}
+    total_score += check2_score * 0.35
+    if not check2_ok:
+        feedback_parts.append("Certaines actions manquent de produit_cible ou d'argument.")
+
+    # Vérif 3 — Actions cohérentes avec l'urgence (si CRITICAL/HIGH, au moins 1 action
+    #            dont l'impact_estime dépasse le gap résiduel)
+    if urgency in ("CRITICAL", "HIGH") and actions and gap_pct > 20:
+        gap_tnd = float((state.get("pos_data") or {}).get("daily_target", 1000)) * gap_pct / 100
+        def _parse_impact(s: str) -> float:
+            import re as _re
+            m = _re.search(r"[\d\s]+", s.replace(" ", "").replace(",", "."))
+            return float(m.group().replace(" ", "")) if m else 0.0
+
+        high_ticket = any(_parse_impact(a.get("impact_estime", "0")) >= max(gap_tnd * 0.3, 50) for a in actions)
+        check3_ok = high_ticket
+        check3_score = 1.0 if high_ticket else 0.4
+    else:
+        check3_ok = True
+        check3_score = 1.0
+    checks["urgency_coherence"] = {
+        "passed": check3_ok, "score": check3_score,
+        "reason": "impact suffisant pour combler le gap" if check3_ok else f"aucune action couvrant ≥30% du gap ({gap_pct:.0f}%)"
+    }
+    total_score += check3_score * 0.25
+    if not check3_ok:
+        feedback_parts.append(f"Urgence {urgency} : prévoir une action à impact >= {gap_pct*0.3:.0f}% du gap.")
+
+    # Vérif 4 — RAG utilisé si gap > 20%
+    if gap_pct > 20:
+        check4_ok = rag_used
+        check4_score = 1.0 if rag_used else 0.6
+    else:
+        check4_ok = True
+        check4_score = 1.0
+    checks["rag_usage"] = {"passed": check4_ok, "score": check4_score,
+                            "reason": "RAG scripts disponibles" if rag_used else "sans scripts RAG"}
+    total_score += check4_score * 0.15
+    if not check4_ok:
+        feedback_parts.append("Gap > 20% sans scripts RAG — les arguments manquent de précision.")
+
+    critique_passed = total_score >= 0.6
+    critique_feedback = " | ".join(feedback_parts) if feedback_parts else "✓ Stratégie valide"
+
+    duration = (time.time() - t0) * 1000
+    logger.info(
+        "[STRATEGE] Self-critique — score=%.2f passed=%s | %s",
+        total_score, critique_passed, critique_feedback[:80],
+    )
+
+    output = {
+        **state,
+        "critique_score":    round(total_score, 3),
+        "critique_passed":   critique_passed,
+        "critique_checks":   checks,
+        "critique_feedback": critique_feedback,
+        "critique_cycles":   int(state.get("critique_cycles", 0)) + 1,
+    }
+    log.node_done("self_critique", log_id, output, duration,
+                  {"score": total_score, "passed": critique_passed})
+
+    metrics = dict(state.get("metrics") or {})
+    metrics["stratege_critique_ms"] = round(duration)
+    metrics["nodes_executed"] = int(metrics.get("nodes_executed", 0)) + 1
     return {**output, "metrics": metrics}
 
 

@@ -34,7 +34,7 @@ def _get_svc(store_id: str) -> JsonDataService:
 @router.get("/eod/{store_id}")
 async def get_eod_forecast(store_id: str):
     """Forecast EOD depuis PostgreSQL + TimesFM/Prophet."""
-    from data.mock_provider import get_data_provider
+    from data.postgres_provider import get_data_provider
 
     cd       = _STORE_MAP.get(store_id, "I63")
     provider = get_data_provider()
@@ -131,9 +131,9 @@ async def get_product_mix(store_id: str):
             COALESCE(p.categorie, 'Autre') AS categorie,
             SUM(t.lig_ttc)     AS ca_mensuel,
             COUNT(*)           AS nb_tx,
-            SUM(t.qte_produit) AS nb_unites
-        FROM transactions t
-        LEFT JOIN produits p ON t.cod_prod = p.cod_prod
+            SUM(t.quantity) AS nb_unites
+        FROM sales.transactions t
+        LEFT JOIN sales.produits p ON t.sku = p.sku
         WHERE t.store_id = %s
           AND t.date_only >= CURRENT_DATE - INTERVAL '30 days'
           AND t.lig_ttc > 0
@@ -168,18 +168,18 @@ async def get_top_products(store_id: str, limit: int = 10):
 
     rows = _query("""
         SELECT
-            t.cod_prod,
+            t.sku,
             t.des_produit,
             COALESCE(p.categorie, 'Autre') AS categorie,
             p.pv_ttc,
             SUM(t.lig_ttc)     AS ca,
-            SUM(t.qte_produit) AS nb_unites
-        FROM transactions t
-        LEFT JOIN produits p ON t.cod_prod = p.cod_prod
+            SUM(t.quantity) AS nb_unites
+        FROM sales.transactions t
+        LEFT JOIN sales.produits p ON t.sku = p.sku
         WHERE t.store_id = %s
           AND t.date_only >= CURRENT_DATE - INTERVAL '30 days'
           AND t.lig_ttc > 0
-        GROUP BY t.cod_prod, t.des_produit, p.categorie, p.pv_ttc
+        GROUP BY t.sku, t.des_produit, p.categorie, p.pv_ttc
         ORDER BY ca DESC
         LIMIT %s
     """, (cd, limit))

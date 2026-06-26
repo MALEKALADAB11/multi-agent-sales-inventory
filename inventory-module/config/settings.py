@@ -89,6 +89,22 @@ class Settings:
     anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
+    # ── OpenRouter (accès unifié à tous les modèles) ──────────────────────
+    openrouter_api_key:   Optional[str] = os.getenv("OPENROUTER_API_KEY")
+    openrouter_base_url:  str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_site_url:  str = os.getenv("OPENROUTER_SITE_URL", "https://ooredoo.tn")
+    openrouter_app_name:  str = os.getenv("OPENROUTER_APP_NAME", "Ooredoo Retail Coach")
+
+    # Modèles tiérés OpenRouter
+    # Fallback : OPENROUTER_MODEL (défini dans .env) si la var spécifique est absente
+    _or_default: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    # FAST  — analyse/contexte (rapide + économique)
+    openrouter_model_fast:     str = os.getenv("OPENROUTER_MODEL_FAST",     _or_default)
+    # SMART — décision/coach (précis + raisonnement)
+    openrouter_model_smart:    str = os.getenv("OPENROUTER_MODEL_SMART",    _or_default)
+    # GUARDIAN — guardrail/critique (fiable + structuré)
+    openrouter_model_guardian: str = os.getenv("OPENROUTER_MODEL_GUARDIAN", _or_default)
+
     # Legacy
     llm_model: Optional[str] = None
     llm_base_url: Optional[str] = None

@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent.parent))
 
 from src.agents.analysis.nodes import fetch_node, compute_node, create_reason_node
-from src.utils.llm_factory import get_llm
+from src.utils.llm_factory import get_llm, get_fast_llm
 
 try:
     from db.repositories.inventory_repo import SyncInventoryRepo
@@ -82,7 +82,12 @@ class InventoryAnalysisAgent:
         self.use_llm = use_llm
 
         if use_llm:
-            self.llm = get_llm(provider=provider, api_key=api_key)
+            # FAST tier (OpenRouter) — analyse/évaluation de risque
+            # Fallback sur le provider configuré si OpenRouter non disponible
+            try:
+                self.llm = get_fast_llm(api_key=api_key) if not provider else get_llm(provider=provider, api_key=api_key)
+            except Exception:
+                self.llm = get_llm(provider=provider, api_key=api_key)
         else:
             self.llm = None
 
@@ -119,6 +124,7 @@ class InventoryAnalysisAgent:
         agent_run_id:       Optional[str] = None,
         preloaded_stock:    Optional[Dict[str, Any]] = None,
         preloaded_product:  Optional[Dict[str, Any]] = None,
+        lf_span=None,
     ) -> Dict[str, Any]:
         """
         Run analysis for a single SKU.
@@ -126,6 +132,9 @@ class InventoryAnalysisAgent:
         preloaded_stock:   {sku: stock_current} dict pre-fetched by orchestrator
                            batch run. fetch_node reads this instead of hitting DB.
         preloaded_product: product master row for this SKU, pre-fetched in batch.
+        lf_span:           optional AgentSpan from InventoryPipelineTrace — when
+                           provided, LangGraph nodes and LLM calls are auto-traced
+                           in Langfuse via CallbackHandler.
 
         Returns:
             {
@@ -139,16 +148,20 @@ class InventoryAnalysisAgent:
             }
         """
         try:
-            result = self.graph.invoke({
-                "messages":           [],
-                "sku":                sku,
-                "store_id":           store_id,
-                "business_objective": business_objective,
-                "fetch_data":         {},
-                "computed_metrics":   {},
-                "preloaded_stock":    preloaded_stock or {},
-                "preloaded_product":  preloaded_product or {},
-            })
+            _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
+            result = self.graph.invoke(
+                {
+                    "messages":           [],
+                    "sku":                sku,
+                    "store_id":           store_id,
+                    "business_objective": business_objective,
+                    "fetch_data":         {},
+                    "computed_metrics":   {},
+                    "preloaded_stock":    preloaded_stock or {},
+                    "preloaded_product":  preloaded_product or {},
+                },
+                config={"callbacks": _callbacks} if _callbacks else {},
+            )
 
             metrics = result["computed_metrics"]
 
@@ -192,7 +205,7 @@ class InventoryAnalysisAgent:
         Persist analysis results to DB.
 
         Updates:
-          inv.stock_levels → remaining_days_of_stock
+          inventory.stock_levels → remaining_days_of_stock
 
         Note: Alert creation is handled by routes.py _build_alerts() to avoid
         duplicate write paths and ensure frontend has correct alert IDs.

@@ -13,8 +13,8 @@ gracefully using whatever it has. A missing context report means uplift=0.
 A missing analysis report means the agent cannot run and returns an error.
 
 Writes to:
-  inv.recommendations  — one row per actionable decision (reorder only)
-  inv.agent_runs       — own row opened/closed around the graph run
+  inventory.recommendations  — one row per actionable decision (reorder only)
+  inventory.agent_runs       — own row opened/closed around the graph run
 """
 
 import logging
@@ -36,7 +36,7 @@ from src.agents.decision.tools import (
     action_to_recommendation_type,
     confidence_to_float,
 )
-from src.utils.llm_factory import get_llm
+from src.utils.llm_factory import get_llm, get_smart_llm
 
 try:
     from db.repositories.inventory_repo import SyncInventoryRepo
@@ -75,7 +75,14 @@ class InventoryDecisionAgent:
     Graceful degradation:
       - context_report missing / errored → demand_uplift_pct = 0 (baseline used)
       - analysis_report missing → cannot run, returns error dict
+
+    Class-level compiled graph cache (same pattern as InventoryAnalysisAgent):
+      Compiled once per process per use_llm mode, reused across all SKUs.
+      LangGraph compiled graphs are stateless — sharing is safe.
     """
+
+    _compiled_graphs: Dict[bool, Any] = {}
+    _graph_lock = __import__("threading").Lock()
 
     def __init__(
         self,
@@ -84,7 +91,15 @@ class InventoryDecisionAgent:
         use_llm:  bool = True,
     ):
         self.use_llm = use_llm
-        self.llm     = get_llm(provider=provider, api_key=api_key) if use_llm else None
+        if use_llm:
+            # SMART tier (OpenRouter) — décision critique, raisonnement fort requis
+            # Fallback sur provider configuré si OpenRouter non disponible
+            try:
+                self.llm = get_smart_llm(api_key=api_key) if not provider else get_llm(provider=provider, api_key=api_key)
+            except Exception:
+                self.llm = get_llm(provider=provider, api_key=api_key)
+        else:
+            self.llm = None
 
         llm_class = self.llm.__class__.__name__ if self.llm else "None"
         logger.info(
@@ -92,11 +107,22 @@ class InventoryDecisionAgent:
             provider or "default", llm_class, use_llm,
         )
 
-        workflow = StateGraph(DecisionAgentState)
-        workflow.add_node("decide", create_decide_node(self.llm, use_llm))
-        workflow.set_entry_point("decide")
-        workflow.add_edge("decide", END)
-        self.graph = workflow.compile()
+        if use_llm not in InventoryDecisionAgent._compiled_graphs:
+            with InventoryDecisionAgent._graph_lock:
+                if use_llm not in InventoryDecisionAgent._compiled_graphs:
+                    logger.info(
+                        "[DecisionAgent] Compiling graph (use_llm=%s) — once per process", use_llm
+                    )
+                    workflow = StateGraph(DecisionAgentState)
+                    workflow.add_node("decide", create_decide_node(self.llm, use_llm))
+                    workflow.set_entry_point("decide")
+                    workflow.add_edge("decide", END)
+                    InventoryDecisionAgent._compiled_graphs[use_llm] = workflow.compile()
+                    logger.info(
+                        "[DecisionAgent] Graph compiled and cached (use_llm=%s)", use_llm
+                    )
+
+        self.graph = InventoryDecisionAgent._compiled_graphs[use_llm]
 
     def run(
         self,
@@ -106,6 +132,7 @@ class InventoryDecisionAgent:
         analysis_report:    Dict[str, Any],
         context_report:     Dict[str, Any],
         agent_run_id:       Optional[str] = None,
+        lf_span=None,
     ) -> Dict[str, Any]:
         """
         Produce a recommendation for one SKU.
@@ -133,7 +160,7 @@ class InventoryDecisionAgent:
                     "reasoning_source":   "llm"|"rule_based_fallback",
                 },
                 "adjusted_metrics": { metrics, risk_assessment, ... },
-                "recommendation_id": str | None,  # inv.recommendations UUID if written
+                "recommendation_id": str | None,  # inventory.recommendations UUID if written
             }
         """
         if not analysis_report:
@@ -160,20 +187,24 @@ class InventoryDecisionAgent:
 
             adjusted_metrics = self._compute_adjusted_metrics(analysis_report, ctx)
 
-            result = self.graph.invoke({
-                "messages":           [],
-                "sku":                sku,
-                "store_id":           store_id,
-                "business_objective": business_objective,
-                "baseline_report":    analysis_report,
-                "context_report":     ctx,
-                "adjusted_metrics":   adjusted_metrics,
-                "decision":           {},
-            })
+            _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
+            result = self.graph.invoke(
+                {
+                    "messages":           [],
+                    "sku":                sku,
+                    "store_id":           store_id,
+                    "business_objective": business_objective,
+                    "baseline_report":    analysis_report,
+                    "context_report":     ctx,
+                    "adjusted_metrics":   adjusted_metrics,
+                    "decision":           {},
+                },
+                config={"callbacks": _callbacks} if _callbacks else {},
+            )
 
             decision = result["decision"]
 
-            # Persist to inv.recommendations (reorder actions only)
+            # Persist to inventory.recommendations (reorder actions only)
             recommendation_id = self._persist_recommendation(
                 sku=sku,
                 store_id=store_id,
@@ -293,7 +324,7 @@ class InventoryDecisionAgent:
         agent_run_id: Optional[str],
     ) -> Optional[str]:
         """
-        Write to inv.recommendations if the action is actionable (ORDER/EXPEDITE).
+        Write to inventory.recommendations if the action is actionable (ORDER/EXPEDITE).
         HOLD and MONITOR produce no DB row — they are not recommendations.
 
         recommendation_text comes directly from the decision dict — it was written

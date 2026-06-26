@@ -1,3 +1,4 @@
+
 """
 SETUP CHECKLIST — Coach Chat ↔ Stratège Robuste
 

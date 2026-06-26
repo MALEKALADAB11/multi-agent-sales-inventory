@@ -27,6 +27,7 @@ from mcp_servers.timefm.tools import TimesFMTools
 from orchestration.graph import CycleOrchestrator
 from orchestration.trigger import CronTrigger
 from api.routers import stores, forecast, cycle as cycle_router
+from api.routers import monitoring as monitoring_router
 
 logging.basicConfig(level=logging.INFO)
 logger   = logging.getLogger(__name__)
@@ -46,8 +47,17 @@ async def lifespan(app: FastAPI):
     stores.set_json_svc(json_svc)
     forecast.set_json_svc(json_svc)
     cycle_router.set_orchestrator(orchestrator, cron_trigger)
+    monitoring_router.set_cron_trigger(cron_trigger)
     simulator.start()
     cron_trigger.start()
+
+    # Orchestrateur Coach-Stratège (cache LRU + retry + fallback)
+    try:
+        from modules.coaching.orchestrator.bootstrap import initialize_coach_stratege_orchestrator
+        await initialize_coach_stratege_orchestrator()
+    except Exception as e:
+        logger.warning("[MAIN] Coach-Stratège orchestrator init failed (non-fatal): %s", e)
+
     logger.info("All systems started")
     yield
     simulator.stop()
@@ -68,6 +78,7 @@ app.add_middleware(
 app.include_router(stores.router)
 app.include_router(forecast.router)
 app.include_router(cycle_router.router)
+app.include_router(monitoring_router.router)
 
 # ── Route POST /api/v1/coach/chat ─────────────────────────────────────────────
 # Définie dans websocket_endpoint.py mais jamais montée dans main.py → 404.
@@ -103,48 +114,23 @@ async def health():
     }
 
 
-# ── GET /api/monitoring/kpis ──────────────────────────────────────────────────
-@app.get("/api/monitoring/kpis")
-async def get_monitoring_kpis():
-    """
-    KPIs temps réel pour l'onglet Monitoring Angular.
-    Données depuis le state LangGraph (last_result) + PostgreSQL.
-    """
+# ── GET /api/v1/sales/kpis — KPIs ventes (différent du monitoring agents) ────
+@app.get("/api/v1/sales/kpis")
+async def get_sales_kpis():
+    """KPIs ventes depuis JsonDataService + last_result LangGraph."""
     last    = cron_trigger.last_result or {}
     metrics = json_svc.get_store_metrics()
-
-    agents_status = {
-        "analyste": "LIVE" if last.get("analyst_summary")   else "IDLE",
-        "stratege": "LIVE" if last.get("strategie_actions") else "IDLE",
-        "coach":    "LIVE" if last.get("conseil_final")     else "IDLE",
-        "rag":      "DONE" if last.get("rag_used")          else "IDLE",
-    }
-
     return JSONResponse({
         "ca_today":        metrics.get("ca_today",        0),
         "ca_target":       metrics.get("ca_target",       0),
         "attainment_pct":  metrics.get("attainment_pct",  0),
         "nb_transactions": metrics.get("nb_transactions", 0),
-        "agents_live":     metrics.get("agents_live",     0),
-        "cycle_id":        last.get("cycle_id",      ""),
-        "store_id":        last.get("store_id",      ""),
         "urgency_level":   last.get("urgency_level", "LOW"),
-        "urgency_score":   last.get("urgency_score", 0),
         "gap_pct":         last.get("gap_objectif",  0),
-        "gap_amount":      last.get("gap_amount",    0),
         "forecast_eod":    last.get("forecast_eod",  0),
-        "rag_used":        last.get("rag_used",       False),
-        "nb_rag_scripts":  last.get("nb_rag_scripts", 0),
-        "nb_actions":      len(last.get("strategie_actions") or []),
         "analyst_summary": last.get("analyst_summary", ""),
         "cause_racine":    last.get("cause_racine",    ""),
-        "total_ms":        (last.get("metrics") or {}).get("total_ms",       0),
-        "nodes_executed":  (last.get("metrics") or {}).get("nodes_executed", 0),
-        "llm_calls":       (last.get("metrics") or {}).get("llm_calls",      0),
-        "completed_at":    (last.get("metrics") or {}).get("completed_at",   ""),
-        "agents_status":   agents_status,
         "updated_at":      datetime.utcnow().isoformat(),
-        "source":          "postgresql+langgraph",
     })
 
 

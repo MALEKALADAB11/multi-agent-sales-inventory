@@ -1,4 +1,4 @@
-"""
+﻿"""
 WebSocket FastAPI — Agent Analyste + Stratège toutes les 2 minutes.
 Une seule connexion par store — double connexion bloquée.
 """
@@ -15,7 +15,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.mock_provider import get_data_provider
+# Charge le .env racine (multi-agent-sales-inventory/.env)
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env", encoding="utf-8")
+
+from data.postgres_provider import get_data_provider
 from modules.coaching.agents.analyst.agent import get_analyst_agent
 from modules.coaching.agents.stratege.agent import get_stratege_agent
 
@@ -703,16 +707,58 @@ def _compute_heatmap(urgency: str) -> dict:
 # COACH AGENT — LLM + Fallback
 # ─────────────────────────────────────────────────────────
 
-def _get_coach_llm():
-    from langchain_ollama import ChatOllama
+import os as _os
+_OPENROUTER_KEY   = _os.getenv("OPENROUTER_API_KEY", "")
+_OPENROUTER_MODEL = _os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+_OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
+_USE_OPENROUTER   = bool(_OPENROUTER_KEY)
+
+
+async def _get_coach_reply(system_prompt: str, message: str) -> tuple[str, str]:
+    """OpenRouter en priorité, Ollama en fallback. Retourne (reply, source)."""
     import os
-    return ChatOllama(
+    if _USE_OPENROUTER:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=25) as client:
+                resp = await client.post(
+                    _OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {_OPENROUTER_KEY}",
+                        "Content-Type":  "application/json",
+                        "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                        "X-Title":       "AI Sales Coach Ooredoo",
+                    },
+                    json={
+                        "model":       _OPENROUTER_MODEL,
+                        "messages":    [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": message},
+                        ],
+                        "temperature": 0.25,
+                        "max_tokens":  300,
+                    },
+                )
+                data = resp.json()
+                if "error" not in data:
+                    reply = data["choices"][0]["message"]["content"].strip()
+                    if reply:
+                        return reply, "openrouter"
+        except Exception as e:
+            logger.warning("[COACH] OpenRouter failed: %s", str(e)[:60])
+
+    # Fallback Ollama
+    from langchain_ollama import ChatOllama
+    from langchain_core.messages import HumanMessage, SystemMessage
+    llm = ChatOllama(
         model=os.getenv("OLLAMA_MODEL", "llama3.2:latest"),
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         temperature=0.3,
         num_predict=250,
         num_ctx=2048,
     )
+    resp = await llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=message)])
+    return resp.content.strip(), "ollama"
 
 
 def _build_coach_system(
@@ -908,21 +954,11 @@ async def coach_chat(request: dict):
     )
 
     try:
-        from langchain_ollama import ChatOllama
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        llm      = _get_coach_llm()
-        response = await llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=message),
-        ])
-        reply  = response.content.strip()
-        source = "llm"
+        reply, source = await _get_coach_reply(system_prompt, message)
         logger.info(
-            f"[COACH] LLM OK ({len(reply)} chars) "
+            f"[COACH] {source} OK ({len(reply)} chars) "
             f"| {advisor_name} | {store_id}"
         )
-
     except Exception as e:
         logger.warning(f"[COACH] LLM fallback: {str(e)[:60]}")
         reply  = _coach_fallback(message, gap_pct, urgency, actions, weather)
@@ -947,7 +983,7 @@ async def store_websocket(websocket: WebSocket, store_id: str):
         return
 
     _active_stores.add(store_id)
-    print(f"\n🔌 Frontend connecté → {store_id}")
+    print(f"\n[WS] Frontend connecté → {store_id}")
     mapped_id = STORE_MAP.get(store_id, "OOR_LAC_01")
     cycle     = 0
 
@@ -1040,7 +1076,7 @@ async def store_websocket(websocket: WebSocket, store_id: str):
             await asyncio.sleep(120)
 
     except WebSocketDisconnect:
-        print(f"\n🔌 Frontend déconnecté : {store_id}")
+        print(f"\n[WS] Frontend déconnecté : {store_id}")
     except Exception as e:
         logger.error(f"[WS] Erreur cycle #{cycle}: {e}")
         import traceback

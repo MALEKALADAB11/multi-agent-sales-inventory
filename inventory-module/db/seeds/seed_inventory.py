@@ -1,16 +1,16 @@
 """
 seed_inventory.py
 Seeds the three tables that come from CSVs:
-  - inv.stores      ← union of store_id/store_name/region from
+  - inventory.stores      ← union of store_id/store_name/region from
                       sales_history.csv AND stock_history.csv
                       (both files reference stores; we must seed ALL of them
                        before init_stock_levels.py runs its FK inserts)
-  - inv.products    ← from product_master.csv
-  - inv.promotions  ← from promotions.csv
+  - inventory.products    ← from product_master.csv
+  - inventory.promotions  ← from promotions.csv
 
 sales_history.csv and stock_history.csv are NOT loaded into DB tables.
 They stay as CSV files and are read directly by init_stock_levels.py
-to initialize inv.stock_levels (live state).
+to initialize inventory.stock_levels (live state).
 
 CSV schemas
 -----------
@@ -90,12 +90,12 @@ async def seed_stores(conn: asyncpg.Connection) -> int:
     """
     Stores appear as denormalised columns in BOTH sales_history.csv and
     stock_history.csv. We union both sources so that every store_id
-    referenced by either file has a row in inv.stores before the
+    referenced by either file has a row in inventory.stores before the
     FK-constrained tables (stock_levels, etc.) are populated.
 
     Root cause of the original FK violation:
       stock_history.csv contained store_ids (e.g. 'C01') that were absent
-      from sales_history.csv, so they were never inserted into inv.stores,
+      from sales_history.csv, so they were never inserted into inventory.stores,
       and init_stock_levels.py crashed on the foreign-key check.
     """
     logger.info("    Loading stores from sales_history.csv ...")
@@ -130,7 +130,7 @@ async def seed_stores(conn: asyncpg.Connection) -> int:
 
         await conn.execute(
             """
-            INSERT INTO inv.stores (store_id, store_name, region, active)
+            INSERT INTO inventory.stores (store_id, store_name, region, active)
             VALUES ($1, $2, $3, TRUE)
             ON CONFLICT (store_id) DO UPDATE SET
                 store_name = EXCLUDED.store_name,
@@ -174,7 +174,7 @@ async def seed_products(conn: asyncpg.Connection) -> int:
 
         await conn.execute(
             """
-            INSERT INTO inv.products
+            INSERT INTO inventory.products
                 (sku, product_name, category, unit_cost, unit_price,
                  lead_time_days, lead_time_std, moq, holding_cost_pct,
                  order_cost, lifecycle_stage)
@@ -212,11 +212,11 @@ async def seed_promotions(conn: asyncpg.Connection) -> int:
     Columns: promo_id, promo_name, start_date, end_date, sku,
              product_name, category, discount_pct, promo_type, scope
 
-    product_name is in the CSV but already lives in inv.products — not stored here.
+    product_name is in the CSV but already lives in inventory.products — not stored here.
     sku may be null/absent when the promo applies to a whole category.
     """
     valid_products = {
-        r["sku"] for r in await conn.fetch("SELECT sku FROM inv.products")
+        r["sku"] for r in await conn.fetch("SELECT sku FROM inventory.products")
     }
 
     df = pd.read_csv(
@@ -247,7 +247,7 @@ async def seed_promotions(conn: asyncpg.Connection) -> int:
 
         await conn.execute(
             """
-            INSERT INTO inv.promotions
+            INSERT INTO inventory.promotions
                 (promo_id, promo_name, promo_type, start_date, end_date,
                  sku, category, discount_pct, scope, is_active)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)

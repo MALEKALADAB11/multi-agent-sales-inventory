@@ -2,9 +2,7 @@
 json_service.py — 100% PostgreSQL. Remplace tous les fichiers JSON mock.
 Interface identique à l'ancien JsonDataService.
 """
-import csv
 from pathlib import Path
-from collections import defaultdict
 import logging
 import os
 from datetime import datetime, date 
@@ -103,126 +101,6 @@ def _query_one(sql: str, params=None) -> dict:
     return rows[0] if rows else {}
 
 
-# ── Service Principal ─────────────────────────────────────────────────────────
-
-# ── Real data loaders ─────────────────────────────────────────────────────────
-
-def _find_transaction_csv() -> Path | None:
-    candidates = [
-        Path(__file__).parent / "transaction_vente_test_100500_fast.csv",
-        Path(__file__).parent.parent.parent / "shared_module" / "data" / "raw" / "transaction_vente.csv",
-        Path("shared_module") / "data" / "raw" / "transaction_vente.csv",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
-def _load_real_advisors(store_id: str) -> tuple[list[dict], list[dict]]:
-    """
-    Read the raw transaction CSV and return (advisors, targets) for store_id.
-
-    advisors: list of dicts compatible with mock advisors.json schema
-    targets:  list of dicts compatible with mock targets.json schema
-
-    Returns ([], []) if the CSV is unavailable.
-    """
-    path = _find_transaction_csv()
-    if not path:
-        return [], []
-
-    agent_revenue: dict[str, float] = defaultdict(float)
-    agent_names:   dict[str, tuple[str, str]] = {}   # id → (first, last)
-
-    try:
-        with open(path, newline="", encoding="utf-8") as f:
-            reader  = csv.DictReader(f)
-            headers = reader.fieldnames or []
-
-            if "AGENT_ID" not in headers:
-                logger.warning("Transaction CSV has no AGENT_ID column — skipping")
-                return [], []
-
-            for row in reader:
-                if (row.get("CODE_CENTRE") or "").strip() != store_id:
-                    continue
-                aid = (row.get("AGENT_ID") or "").strip()
-                if not aid:
-                    continue
-                try:
-                    amt = float(row.get("LIG_TTC") or row.get("MONTANT_PAIE") or 0)
-                except ValueError:
-                    amt = 0.0
-                agent_revenue[aid] += amt
-                if aid not in agent_names:
-                    first = (row.get("AGENT_NAME")    or "").strip()
-                    last  = (row.get("AGENT_SURNAME") or "").strip()
-                    agent_names[aid] = (first, last)
-
-    except Exception as e:
-        logger.warning("Could not read real advisor data: %s", e)
-        return [], []
-
-    if not agent_revenue:
-        logger.warning("No transactions found for store %s in %s", store_id, path.name)
-        return [], []
-
-    logger.info(
-        "Loaded %d real advisors for %s from %s (total CA %.0f DT)",
-        len(agent_revenue), store_id, path.name, sum(agent_revenue.values())
-    )
-
-    # Assign display colours round-robin
-    COLOURS = ["#6C5CE7", "#00B894", "#F9A825", "#2D9CDB",
-               "#E74C3C", "#A29BFE", "#FDCB6E", "#74B9FF"]
-
-    # Sort by revenue descending
-    sorted_agents = sorted(agent_revenue.items(), key=lambda x: -x[1])
-
-    # Estimate daily average (CSV covers multiple days — divide by 30 as proxy)
-    # A proper date-range calculation can replace this once DATE_VENTE parsing is added.
-    DAYS_ESTIMATE = 30
-
-    advisors = []
-    targets  = []
-
-    for i, (aid, total_rev) in enumerate(sorted_agents):
-        first, last = agent_names.get(aid, ("", ""))
-        name     = f"{first} {last}".strip() or aid
-        initials = ((first[:1] + last[:1]) if first or last else aid[:2]).upper()
-        daily_avg  = total_rev / DAYS_ESTIMATE
-        ca_target  = round(daily_avg * TARGET_UPLIFT, 2)
-
-        advisors.append({
-            "id":           aid,
-            "advisor_code": aid,
-            "name":         name,
-            "initials":     initials,
-            "role":         _guess_role(i),
-            "avatar_color": COLOURS[i % len(COLOURS)],
-            "ca_target":    ca_target,
-            "coach_score":  round(0.5 + (0.4 * total_rev / (sorted_agents[0][1] or 1)), 2),
-        })
-        targets.append({
-            "advisor_id": aid,
-            "ca_target":  ca_target,
-        })
-
-    return advisors, targets
-
-
-def _guess_role(rank: int) -> str:
-    """Assign a plausible role label based on revenue rank."""
-    roles = [
-        "Forfaits & Services",
-        "Postpayé & Terminaux",
-        "Smartphones & Data",
-        "Recharge & Accessoires",
-    ]
-    return roles[rank % len(roles)]
-
-
 # ── Service ───────────────────────────────────────────────────────────────────
 
 class JsonDataService:
@@ -240,7 +118,7 @@ class JsonDataService:
 
     def _objectif(self) -> float:
         row = _query_one(
-            "SELECT objectif_ca FROM objectifs WHERE store_id=%s AND agent_id IS NULL AND date_objectif=CURRENT_DATE",
+            "SELECT objectif_ca FROM sales.objectifs WHERE store_id=%s AND agent_id IS NULL AND date_objectif=CURRENT_DATE",
             (self._cd,)
         )
         val = row.get("objectif_ca")
@@ -301,7 +179,7 @@ class JsonDataService:
             return 0
 
     def get_ca_total(self) -> float:
-        """CA du jour depuis PostgreSQL. Fallback sur mock_provider si 0."""
+        """CA du jour depuis PostgreSQL. Fallback sur dernier jour disponible si aujourd'hui vide."""
         row = _query_one("""
             SELECT COALESCE(SUM(lig_ttc), 0) AS ca
             FROM sales.transactions
@@ -309,18 +187,17 @@ class JsonDataService:
         """, (self._cd,))
         ca = float(row.get("ca", 0))
 
-        # Fallback si pas de transactions aujourd'hui (données historiques)
+        # Fallback si pas de transactions aujourd'hui — dernier jour disponible en DB
         if ca == 0:
             try:
-                from data.mock_provider import (
-                    _PATTERN_HORAIRE, _OBJECTIFS, _DOW_FACTOR
-                )
-                import random
-                now_h    = datetime.now().hour
-                objectif = _OBJECTIFS.get(self._cd, 1007.0)
-                pct      = sum(_PATTERN_HORAIRE.get(h, 0) for h in range(9, now_h + 1)) / 100
-                dow      = datetime.now().weekday()
-                ca = round(objectif * pct * _DOW_FACTOR.get(dow, 1.0) * (1 + random.uniform(-0.05, 0.05)), 2)
+                row2 = _query_one("""
+                    SELECT COALESCE(SUM(lig_ttc), 0) AS ca
+                    FROM sales.transactions
+                    WHERE store_id = %s
+                      AND date_only = (SELECT MAX(date_only) FROM sales.transactions WHERE store_id = %s)
+                      AND lig_ttc > 0
+                """, (self._cd, self._cd))
+                ca = float(row2.get("ca", 0))
             except Exception:
                 pass
 
@@ -352,12 +229,12 @@ class JsonDataService:
 
     def get_units_by_sku(self) -> dict:
         rows = _query("""
-            SELECT cod_prod, SUM(qte_produit) AS units
+            SELECT sku, SUM(quantity) AS units
             FROM sales.transactions
             WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
-            GROUP BY cod_prod
+            GROUP BY sku
         """, (self._cd,))
-        return {str(r["cod_prod"]): int(r.get("units", 0)) for r in rows}
+        return {str(r["sku"]): int(r.get("units", 0)) for r in rows}
 
     # ── Transactions ──────────────────────────────────────────────────────────
 
@@ -365,13 +242,13 @@ class JsonDataService:
         rows = _query("""
             SELECT
                 t.sale_id, t.date_vente, t.agent_id,
-                t.cod_prod, t.des_produit,
-                t.lig_ttc, t.qte_produit, t.heure,
+                t.sku, t.des_produit,
+                t.lig_ttc, t.quantity, t.heure,
                 a.agent_name, a.agent_surname,
                 p.cod_famille, p.categorie
             FROM sales.transactions t
             LEFT JOIN agents   a ON t.agent_id = a.agent_id
-            LEFT JOIN produits p ON t.cod_prod  = p.cod_prod
+            LEFT JOIN sales.produits p ON t.sku  = p.sku
             WHERE t.store_id = %s
               AND t.date_only = CURRENT_DATE
               AND t.lig_ttc  > 0
@@ -389,7 +266,7 @@ class JsonDataService:
                 "sale_id":      r["sale_id"],
                 "advisor_id":   adv_id,
                 "agent_id":     aid,
-                "sku":          str(r.get("cod_prod", "")),
+                "sku":          str(r.get("sku", "")),
                 "product_name": str(r.get("des_produit", ""))[:50],
                 "category":     str(r.get("categorie", "Autre")),
                 "amount":       float(r.get("lig_ttc", 0)),
@@ -517,28 +394,28 @@ class JsonDataService:
     def get_inventory(self) -> list:
         rows = _query("""
             SELECT
-                s.cod_prod, s.qte_stk,
+                s.sku, s.quantity,
                 p.des_prod, p.cod_famille, p.pv_ttc, p.categorie
             FROM stock s
-            LEFT JOIN produits p ON s.cod_prod = p.cod_prod
+            LEFT JOIN sales.produits p ON s.sku = p.sku
             WHERE s.store_id = %s
-            ORDER BY s.qte_stk DESC
+            ORDER BY s.quantity DESC
             LIMIT 50
         """, (self._cd,))
 
         demand_rows = _query("""
-            SELECT cod_prod, SUM(qte_produit) / 30.0 AS demand_day
+            SELECT sku, SUM(quantity) / 30.0 AS demand_day
             FROM sales.transactions
             WHERE store_id=%s
               AND date_only >= CURRENT_DATE - INTERVAL '30 days'
               AND lig_ttc > 0
-            GROUP BY cod_prod
+            GROUP BY sku
         """, (self._cd,))
-        demand_map = {str(r["cod_prod"]): float(r["demand_day"]) for r in demand_rows}
+        demand_map = {str(r["sku"]): float(r["demand_day"]) for r in demand_rows}
 
         inventory = []
         for r in rows:
-            cod    = str(r["cod_prod"])
+            cod    = str(r["sku"])
             stock  = int(r.get("qte_stk", 0))
             fam    = r.get("cod_famille")
             pv     = float(r.get("pv_ttc", 0) or 0)

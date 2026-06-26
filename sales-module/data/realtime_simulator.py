@@ -1,13 +1,22 @@
 """
-realtime_simulator.py — v2.0 PostgreSQL
-=========================================
-Charge les advisors et SKUs depuis PostgreSQL au lieu des CSV.
-Plus aucune dépendance aux fichiers CSV à runtime.
+realtime_simulator.py — v2.1 PostgreSQL + Inventory API SKU Refresh
+=====================================================================
+Loads advisors and SKUs from PostgreSQL at startup.
+Phase 2: after SKU_REFRESH_DELAY seconds, fetches live SKUs from the
+inventory API (GET /api/inventory/skus?store_id=<store>) and rebuilds
+the product pool — guaranteeing every on_sale call references a SKU
+that exists in the live inventory snapshot → stock_delta carries a real
+new_stock value → UI updates correctly.
+Retries every SKU_REFRESH_RETRY seconds until the inventory pipeline is ready.
 """
 
 import asyncio
 import logging
 import random
+import urllib.request
+import urllib.error
+import json as _json
+import uuid
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -21,32 +30,76 @@ DB_CONFIG = {
     "user": "postgres", "password": "admin",
 }
 
-SKU_REFRESH_DELAY = 999999  # désactiver phase 2 inventory
+_pg_pool: Optional[asyncpg.Pool] = None
+
+
+async def _get_sim_pool() -> asyncpg.Pool:
+    global _pg_pool
+    if _pg_pool is None or _pg_pool._closed:
+        _pg_pool = await asyncpg.create_pool(
+            **DB_CONFIG, min_size=1, max_size=5, command_timeout=15, ssl=False,
+        )
+    return _pg_pool
+
+INVENTORY_API_BASE = "http://localhost:8000/api/inventory"
+SKU_REFRESH_DELAY  = 30    # seconds after start before first inventory API fetch
+SKU_REFRESH_RETRY  = 30    # retry interval if API not ready yet
+
+# ── Fallback SKUs — used if PostgreSQL AND inventory API are both unavailable ──
+FALLBACK_SKUS = [
+    {"sku": "8811364", "name": "Forfait Flexi 25 Go",        "price": 25},
+    {"sku": "8811001", "name": "Paiement Facture Postpayé",  "price": 45},
+    {"sku": "8812148", "name": "Forfait MIFI PRE 80 Go",     "price": 109},
+    {"sku": "5021240", "name": "Xiaomi Redmi Note 15 8/256", "price": 899},
+    {"sku": "8811365", "name": "Forfait Flexi 55 Go",        "price": 55},
+    {"sku": "8811546", "name": "Forfait 8 Go",               "price": 18},
+    {"sku": "8811458", "name": "Forfait 30 Go",              "price": 30},
+    {"sku": "5021214", "name": "Redmi 15C 8/256",            "price": 549},
+]
+
+FALLBACK_ADVISORS = [
+    {"id": "7296", "avg_ticket": 45, "ca_total": 0},
+    {"id": "7451", "avg_ticket": 35, "ca_total": 0},
+    {"id": "8987", "avg_ticket": 55, "ca_total": 0},
+    {"id": "8988", "avg_ticket": 40, "ca_total": 0},
+]
+
 
 class RealtimeSimulator:
     """
-    Simule des transactions POS en temps réel.
-    Charge advisors et SKUs depuis PostgreSQL (store I63).
+    Simulates real-time POS transactions.
+
+    Phase 1 (startup): loads advisors + SKUs from PostgreSQL.
+                       Falls back to FALLBACK_* constants if PG is down.
+    Phase 2 (≥30 s):   fetches live SKUs from the inventory API and
+                       rebuilds the product pool so every on_sale() call
+                       references a SKU present in the live inventory
+                       snapshot. Retries every SKU_REFRESH_RETRY seconds
+                       until the pipeline is ready, then refreshes hourly.
     """
 
     def __init__(self, store_id: str = "I63", interval: int = 15):
-        self.store_id   = store_id
-        self.interval   = interval
-        self.on_sale:   Optional[Callable] = None
-        self._running   = False
-        self._task:     Optional[asyncio.Task] = None
-        self._advisors  = []
-        self._skus      = []
+        self.store_id  = store_id
+        self.interval  = interval
+        self.on_sale:  Optional[Callable] = None
+        self._running  = False
+        self._task:    Optional[asyncio.Task] = None
+        self._sku_task: Optional[asyncio.Task] = None
+        self._advisors: list[dict] = []
+        self._skus:     list[dict] = []
         self._tx_count  = 0
+        self._skus_from_api = False  # True once phase-2 inventory API kicks in
+
+    # ── PostgreSQL loader ─────────────────────────────────────────────────────
 
     async def _load_from_postgres(self):
-        """Charger advisors et SKUs depuis PostgreSQL."""
+        """Load advisors and SKUs from PostgreSQL (phase 1)."""
         try:
-            conn = await asyncpg.connect(**DB_CONFIG, timeout=10)
+            pool = await _get_sim_pool()
+            conn = await pool.acquire()
             try:
-                # Charger les advisors réels de I63 depuis transactions_history
                 advisor_rows = await conn.fetch("""
-                    SELECT 
+                    SELECT
                         agent_id,
                         COUNT(*) AS nb_tx,
                         ROUND(AVG(lig_ttc), 2) AS avg_ticket,
@@ -54,7 +107,6 @@ class RealtimeSimulator:
                     FROM sales.transactions_history
                     WHERE store_id = $1
                       AND agent_id IS NOT NULL
-                      AND agent_id != ''
                     GROUP BY agent_id
                     ORDER BY nb_tx DESC
                     LIMIT 10
@@ -69,9 +121,8 @@ class RealtimeSimulator:
                     for r in advisor_rows
                 ] if advisor_rows else []
 
-                # Charger les SKUs réels vendus à I63
                 sku_rows = await conn.fetch("""
-                    SELECT 
+                    SELECT
                         cod_prod AS sku,
                         des_produit,
                         ROUND(AVG(lig_ttc), 2) AS avg_price,
@@ -95,62 +146,113 @@ class RealtimeSimulator:
                 ] if sku_rows else []
 
                 logger.info(
-                    f"[SIM PG] Chargé {len(self._advisors)} advisors "
-                    f"et {len(self._skus)} SKUs depuis PostgreSQL pour {self.store_id}"
+                    "[SIM PG] Loaded %d advisors and %d SKUs from PostgreSQL for %s",
+                    len(self._advisors), len(self._skus), self.store_id,
                 )
 
             finally:
-                await conn.close()
+                await pool.release(conn)
 
         except Exception as e:
-            logger.warning(f"[SIM PG] Erreur chargement: {e} — fallback hardcodé")
-            # Fallback minimal si PostgreSQL indisponible
-            self._advisors = [
-                {"id": "7296", "avg_ticket": 45, "ca_total": 0},
-                {"id": "7451", "avg_ticket": 35, "ca_total": 0},
-                {"id": "8987", "avg_ticket": 55, "ca_total": 0},
-                {"id": "8988", "avg_ticket": 40, "ca_total": 0},
-            ]
-            self._skus = [
-                {"sku": "8811364", "name": "Forfait Flexi 25 Go", "price": 25},
-                {"sku": "8811001", "name": "Paiement Facture Postpayé", "price": 45},
-                {"sku": "8812148", "name": "Forfait MIFI PRE 80 Go", "price": 109},
-                {"sku": "5021240", "name": "Xiaomi Redmi Note 15 8/256", "price": 899},
-                {"sku": "8811365", "name": "Forfait Flexi 55 Go", "price": 55},
-                {"sku": "8811546", "name": "Forfait 8 Go", "price": 18},
-                {"sku": "8811458", "name": "Forfait 30 Go", "price": 30},
-                {"sku": "5021214", "name": "Redmi 15C 8/256", "price": 549},
-            ]
+            logger.warning("[SIM PG] Load error: %s — using fallback data", e)
+            self._advisors = list(FALLBACK_ADVISORS)
+            self._skus     = list(FALLBACK_SKUS)
+
+    # ── Inventory API SKU refresh (phase 2) ───────────────────────────────────
+
+    async def _refresh_skus_loop(self):
+        """
+        Wait SKU_REFRESH_DELAY seconds, then fetch live SKUs from the inventory
+        API. Retry every SKU_REFRESH_RETRY seconds until a non-empty list is
+        returned (inventory pipeline may still be running on first attempt).
+        Once we have a live list, refresh hourly to pick up stock changes.
+        """
+        await asyncio.sleep(SKU_REFRESH_DELAY)
+
+        while self._running:
+            try:
+                skus = await asyncio.get_event_loop().run_in_executor(
+                    None, self._fetch_skus_sync
+                )
+                if skus:
+                    # Merge inventory SKU list with PG price data
+                    pg_price = {s["sku"]: s["price"] for s in self._skus}
+                    self._skus = [
+                        {
+                            "sku":   sku,
+                            "name":  sku,           # inventory API gives SKUs only
+                            "price": pg_price.get(sku, 25.0),
+                        }
+                        for sku in skus
+                    ]
+                    self._skus_from_api = True
+                    logger.info(
+                        "✅ SKU pool updated from inventory API — %d SKUs for %s (phase 2)",
+                        len(self._skus), self.store_id,
+                    )
+                    await asyncio.sleep(3600)   # refresh hourly
+                    continue
+
+                logger.info(
+                    "[SIM] Inventory API returned 0 SKUs — pipeline may still be running, "
+                    "retrying in %ds", SKU_REFRESH_RETRY,
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("[SIM] SKU refresh error: %s", e)
+
+            await asyncio.sleep(SKU_REFRESH_RETRY)
+
+    def _fetch_skus_sync(self) -> list[str]:
+        """Synchronous HTTP GET to /api/inventory/skus?store_id=<store>."""
+        url = f"{INVENTORY_API_BASE}/skus?store_id={self.store_id}"
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = _json.loads(resp.read().decode())
+                skus = body.get("skus", [])
+                logger.debug("Inventory API returned %d SKUs for %s", len(skus), self.store_id)
+                return skus
+        except urllib.error.URLError as e:
+            logger.warning("[SIM] Inventory API unreachable (%s) — will retry", e.reason)
+            return []
+        except Exception as e:
+            logger.warning("[SIM] SKU fetch failed: %s", e)
+            return []
+
+    # ── Transaction loop ──────────────────────────────────────────────────────
 
     async def _simulate_loop(self):
-        """Boucle principale de simulation."""
-        # Charger depuis PostgreSQL au démarrage
+        """Main simulation loop."""
         await self._load_from_postgres()
 
         logger.info(
-            f"RealtimeSimulator started — {len(self._skus)} SKUs | "
-            f"{len(self._advisors)} advisors | every {self.interval}s"
+            "RealtimeSimulator started — %d SKUs (phase 1, %s) | %d advisors | every %ds",
+            len(self._skus),
+            "PG" if self._skus else "fallback",
+            len(self._advisors),
+            self.interval,
         )
 
         while self._running:
             await asyncio.sleep(self.interval)
             if not self._running:
                 break
-
             try:
                 await self._generate_transaction()
             except Exception as e:
-                logger.debug(f"[SIM] TX error: {e}")
+                logger.debug("[SIM] TX error: %s", e)
 
     async def _generate_transaction(self):
-        """Générer et persister une transaction simulée."""
+        """Generate and persist one simulated transaction."""
         if not self._advisors or not self._skus:
             return
 
         advisor = random.choice(self._advisors)
         sku     = random.choice(self._skus)
 
-        # Varier le prix autour de la moyenne (±20%)
+        # Vary price ±20% around the mean
         price = round(sku["price"] * random.uniform(0.8, 1.2), 2)
         price = max(price, 1.0)
 
@@ -158,16 +260,17 @@ class RealtimeSimulator:
         now = datetime.now()
 
         logger.info(
-            f"{now.strftime('%H:%M:%S')} | TX — advisor={advisor['id']} "
-            f" sku={sku['sku']} ({sku['name']})  {price:.0f} DT  (total={self._tx_count})"
+            "%s | TX [%s] — advisor=%s  sku=%s (%s)  %.0f DT  (total=%d)",
+            now.strftime("%H:%M:%S"),
+            "API" if self._skus_from_api else "PG/fallback",
+            advisor["id"], sku["sku"], sku["name"],
+            price, self._tx_count,
         )
 
-        # Insérer dans sales.transactions_rt
+        # Persist to sales.transactions_rt
         try:
-            import asyncpg as _apg
-            import uuid
-            conn = await _apg.connect(**DB_CONFIG, timeout=3)
-            try:
+            pool = await _get_sim_pool()
+            async with pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO sales.transactions_rt
                         (sale_id, date_vente, date_only, heure,
@@ -179,40 +282,43 @@ class RealtimeSimulator:
                     str(uuid.uuid4()),
                     now, now.date(), now.hour,
                     self.store_id,
-                    advisor["id"],
-                    sku["sku"],
+                    int(advisor["id"]),
+                    int(sku["sku"]),
                     sku["name"],
                     round(price, 2),
                     round(price / 1.19, 2),
                     round(price * 0.19 / 1.19, 2),
                     1,
                 )
-                logger.info(f"[RT TX] ✅ {sku['sku']}@{self.store_id} {price:.0f} TND")
-            finally:
-                await conn.close()
+            logger.info("[RT TX] ✅ %s@%s %.0f TND", sku["sku"], self.store_id, price)
         except Exception as e:
-            logger.warning(f"[RT TX] INSERT err: {e}")
+            logger.warning("[RT TX] INSERT err: %s — %s", type(e).__name__, e)
 
-        # Appeler le callback on_sale si défini
+        # Fire inventory callback
         if self.on_sale:
             try:
                 self.on_sale(self.store_id, sku["sku"], 1)
             except Exception as e:
-                logger.debug(f"[SIM] on_sale callback: {e}")
+                logger.debug("[SIM] on_sale callback: %s", e)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self):
-        """Démarrer le simulateur."""
         if self._running:
             return
-        self._running = True
-        self._task = asyncio.create_task(self._simulate_loop())
-        logger.info(f"[SIM] Démarré pour {self.store_id}")
+        self._running  = True
+        self._task     = asyncio.create_task(self._simulate_loop())
+        self._sku_task = asyncio.create_task(self._refresh_skus_loop())
+        logger.info("[SIM] Started for %s", self.store_id)
 
     def stop(self):
-        """Arrêter le simulateur."""
         self._running = False
-        if self._task:
-            self._task.cancel()
+        for t in (self._task, self._sku_task):
+            if t:
+                t.cancel()
+        logger.info("[SIM] Stopped")
+
+    # ── Accessors ─────────────────────────────────────────────────────────────
 
     def get_tx_count(self) -> int:
         return self._tx_count

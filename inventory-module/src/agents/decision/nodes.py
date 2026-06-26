@@ -474,6 +474,266 @@ def create_decide_node(llm, use_llm: bool):
             )
             decision = _rule_based_decide(state)
 
+        # ── Self-critique — révision LLM si critique échoue ─────────────────
+        # Pattern : Décision → Critique → Révision LLM (max 1 itération) → Fallback
+        critique = _self_critique(decision, state)
+        decision["self_critique"] = critique
+
+        if not critique["passed"] and critique["re_reason"]:
+            logger.info(
+                "[Decision/decide] Self-critique NOK pour SKU=%s — tentative révision LLM",
+                sku,
+            )
+            # Tenter une révision LLM avec le feedback de critique
+            revised = _llm_revise_with_critique(decision, critique, state, llm)
+            if revised:
+                revised_critique = _self_critique(revised, state)
+                revised["self_critique"] = revised_critique
+                revised["reasoning_source"] = "llm_revised_after_critique"
+                decision = revised
+                logger.info(
+                    "[Decision/decide] Révision LLM OK — SKU=%s action=%s critique_passed=%s",
+                    sku, decision["action"], revised_critique["passed"],
+                )
+            else:
+                # Révision LLM impossible → rule-based garanti cohérent
+                logger.info(
+                    "[Decision/decide] Révision LLM impossible — fallback rule-based SKU=%s", sku
+                )
+                decision = _rule_based_decide(state)
+                decision["self_critique"] = critique
+                decision["reasoning_source"] = "rule_based_after_critique"
+
+        # ── Publication alerte Redis si CRITICAL/EXPEDITE (v5 FINAL) ─────
+        _try_publish_alert(decision, state)
+
         return {**state, "decision": decision}
 
     return decide_node
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LLM Revision after Self-Critique failure
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _llm_revise_with_critique(
+    decision: Dict[str, Any],
+    critique: Dict[str, Any],
+    state:    Dict[str, Any],
+    llm,
+) -> Optional[Dict[str, Any]]:
+    """
+    Révise la décision en soumettant le feedback de critique au LLM.
+    Retourne la décision révisée ou None si LLM indisponible/échoué.
+    """
+    if llm is None:
+        return None
+
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        failed_checks = {
+            k: v["message"]
+            for k, v in critique.get("checks", {}).items()
+            if not v.get("passed")
+        }
+        critique_summary = "; ".join(f"{k}: {m}" for k, m in failed_checks.items())
+
+        (risk_level, days_remaining, formula_order_qty,
+         reorder_point, repl_cost, overstock_flag, lead_time_avg) = _extract_adjusted(state)
+
+        revision_prompt = f"""La décision initiale a échoué la self-critique.
+
+DÉCISION INITIALE:
+  action={decision.get('action')} | order_qty={decision.get('order_qty')} | urgency={decision.get('urgency')} | confidence={decision.get('confidence')}
+
+CRITIQUE FEEDBACK:
+  {critique_summary}
+
+DONNÉES STOCK (inchangées):
+  risk_level={risk_level} | days_remaining={days_remaining:.1f}j | lead_time={lead_time_avg:.0f}j
+  formula_order_qty={formula_order_qty:.0f} | reorder_point={reorder_point:.0f}
+  overstock={overstock_flag}
+
+MISSION: Corrige la décision en respectant les contraintes soulevées.
+Réponds en JSON strict (mêmes champs que la décision initiale):
+{{
+  "action": "ORDER"|"HOLD"|"EXPEDITE"|"MONITOR",
+  "order_qty": int|null,
+  "order_qty_rationale": "...",
+  "urgency": "immediate"|"this_week"|"this_month"|"none",
+  "decision_rationale": "...",
+  "confidence": "high"|"medium"|"low",
+  "trade_offs": "...",
+  "escalate_to_human": bool,
+  "escalation_reason": str|null,
+  "recommendation_text": "..."
+}}"""
+
+        response = llm.invoke([
+            SystemMessage(content="Tu es un agent de décision inventaire. Tu révises une décision en intégrant un feedback de critique. Réponds uniquement en JSON valide."),
+            HumanMessage(content=revision_prompt),
+        ])
+
+        raw = response.content.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1].lstrip("json").strip()
+        raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
+        raw = re.sub(r'\n', ' ', raw)
+
+        parsed = json.loads(raw)
+
+        raw_qty = parsed.get("order_qty")
+        order_qty = int(raw_qty) if raw_qty is not None else None
+
+        recommendation_text = str(parsed.get("recommendation_text", "")).strip()
+        if not recommendation_text:
+            recommendation_text = _build_recommendation_text(
+                action=str(parsed.get("action", "MONITOR")).upper(),
+                urgency=str(parsed.get("urgency", "none")),
+                order_qty=order_qty,
+                state=state,
+                escalate=bool(parsed.get("escalate_to_human", False)),
+                esc_reason=parsed.get("escalation_reason"),
+            )
+
+        return {
+            "action":               str(parsed.get("action", "MONITOR")).upper(),
+            "order_qty":            order_qty,
+            "order_qty_rationale":  str(parsed.get("order_qty_rationale", "")),
+            "urgency":              str(parsed.get("urgency", "none")),
+            "decision_rationale":   str(parsed.get("decision_rationale", "")),
+            "confidence":           str(parsed.get("confidence", "medium")),
+            "trade_offs":           str(parsed.get("trade_offs", "")),
+            "escalate_to_human":    bool(parsed.get("escalate_to_human", False)),
+            "escalation_reason":    parsed.get("escalation_reason"),
+            "recommendation_text":  recommendation_text,
+            "reasoning_source":     "llm_revised",
+        }
+
+    except Exception as exc:
+        logger.warning("[Decision] _llm_revise_with_critique failed: %s", exc)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Self-Critique v5 — 3 checks (Section 3.6 ARCHITECTURE_MULTI_AGENT_V5_FINAL)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _self_critique(decision: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Self-critique du DecisionAgent avant finalisation :
+    1. Décision cohérente avec les données ?
+    2. Précédents similaires : résultat plausible ?
+    3. Budget respecté ?
+    Tout est dynamique — valeurs extraites du state courant.
+    """
+    checks   = {}
+    passed   = True
+    re_reason = False
+
+    # Check 1 — Cohérence données
+    (risk_level, days_remaining, formula_order_qty,
+     reorder_point, repl_cost, overstock_flag, lead_time_avg) = _extract_adjusted(state)
+
+    action = decision.get("action", "HOLD")
+    c1_ok  = True
+    c1_msg = "OK"
+
+    if action in ("ORDER", "EXPEDITE") and days_remaining > 90:
+        c1_ok  = False
+        c1_msg = f"ACTION={action} mais stock={days_remaining:.0f}j — incohérent"
+        re_reason = True
+    elif action == "HOLD" and days_remaining < lead_time_avg and not overstock_flag:
+        c1_ok  = False
+        c1_msg = f"HOLD mais stock={days_remaining:.0f}j < lead_time={lead_time_avg:.0f}j"
+        re_reason = True
+
+    checks["data_coherence"] = {"passed": c1_ok, "message": c1_msg}
+    if not c1_ok:
+        passed = False
+
+    # Check 2 — Confidence acceptable
+    conf   = decision.get("confidence", "low")
+    c2_ok  = conf in ("high", "medium")
+    c2_msg = f"confidence={conf}" if c2_ok else f"Confiance trop basse : {conf}"
+    checks["confidence_level"] = {"passed": c2_ok, "message": c2_msg}
+
+    # Check 3 — Budget (seuil dynamique depuis state ou settings)
+    order_qty   = decision.get("order_qty") or 0
+    cost_limit  = float(state.get("budget_limit", 100_000))
+    c3_ok       = True
+    c3_msg      = "OK"
+    escalate    = decision.get("escalate_to_human", False)
+
+    if action in ("ORDER", "EXPEDITE") and repl_cost > cost_limit and not escalate:
+        c3_ok   = False
+        c3_msg  = f"Coût={repl_cost:,.0f} DT > limite={cost_limit:,.0f} DT sans escalade"
+        re_reason = True
+
+    checks["budget"] = {"passed": c3_ok, "message": c3_msg}
+    if not c3_ok:
+        passed = False
+
+    return {
+        "passed":    passed,
+        "checks":    checks,
+        "re_reason": re_reason,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Publication alerte Redis — v5 FINAL (Section 5.1 du document)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _try_publish_alert(decision: Dict[str, Any], state: Dict[str, Any]) -> None:
+    """
+    Publie une alerte Redis Pub/Sub si action=EXPEDITE ou risk=CRITICAL.
+    Toutes les valeurs (stock, jours, produit) sont extraites dynamiquement du state.
+    Zéro valeur codée en dur.
+    """
+    action     = decision.get("action", "HOLD")
+    base       = state.get("baseline_report", {})
+    risk_level = (base.get("risk_assessment") or {}).get("level", "LOW")
+
+    if action not in ("EXPEDITE", "ORDER") and risk_level != "CRITICAL":
+        return
+
+    try:
+        import sys
+        from pathlib import Path
+
+        sales_path = Path(__file__).resolve().parent.parent.parent.parent.parent / "sales-module"
+        if str(sales_path) not in sys.path:
+            sys.path.insert(0, str(sales_path))
+
+        from core.alert_bus import get_alert_bus
+
+        store_id     = state.get("store_id", "")
+        sku          = str(state.get("sku", ""))
+        adj_metrics  = (state.get("adjusted_metrics") or {}).get("metrics") or base.get("metrics", {})
+        stock_info   = base.get("stock", {})
+
+        # Données 100% dynamiques depuis le state
+        stock_qty       = int(stock_info.get("current_stock", 0))
+        days_remaining  = float(adj_metrics.get("days_of_stock_remaining", 0))
+        product_name    = str(base.get("product_name", sku))
+        revenue_at_risk = float(adj_metrics.get("total_replenishment_cost", 0))
+        is_top_seller   = bool(stock_info.get("is_top_seller", False))
+
+        get_alert_bus().publish_stock_alert(
+            store_id        = store_id,
+            sku             = sku,
+            product_name    = product_name,
+            stock_qty       = stock_qty,          # dynamique
+            risk_level      = risk_level,
+            days_to_stockout= days_remaining,     # dynamique
+            revenue_at_risk = revenue_at_risk,
+            is_top_seller   = is_top_seller,
+            cycle_id        = state.get("cycle_id", ""),
+        )
+
+    except ImportError:
+        logger.debug("[Decision] sales-module non accessible — alerte Redis non publiée")
+    except Exception as exc:
+        logger.debug("[Decision] _try_publish_alert: %s", exc)

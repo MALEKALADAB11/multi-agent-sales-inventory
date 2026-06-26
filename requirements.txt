@@ -9,14 +9,13 @@ python-dotenv==1.0.1
 python-multipart==0.0.12
 
 # ── LangChain / LangGraph ─────────────────────────────────────
-langgraph==0.2.45
-langgraph-checkpoint==2.0.10
-langgraph-sdk==0.1.48
-langchain==0.3.7
+langgraph==0.2.56
+langchain==0.3.14
 langchain-core==0.3.29
 langchain-text-splitters==0.3.3
 langchain-groq==0.2.3
 langchain-openai==0.2.9
+langchain-ollama==0.2.1
 langsmith==0.1.147
 tenacity==9.0.0
 jsonpatch==1.33
@@ -33,6 +32,7 @@ sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
 greenlet==3.1.1
+psycopg2-binary==2.9.9
 
 # ── Redis ─────────────────────────────────────────────────────
 redis[hiredis]==5.2.0
@@ -47,19 +47,27 @@ httpcore==1.0.5
 h11==0.14.0
 aiohttp==3.11.10
 requests==2.32.3
+websockets==14.1
 certifi==2024.8.30
 idna==3.10
 urllib3==2.2.3
 charset-normalizer==3.4.0
 
+# ── LLM Providers ─────────────────────────────────────────────
+ollama==0.4.4
+
 # ── Forecasting ───────────────────────────────────────────────
 timesfm==1.2.9
 torch==2.1.2
 utilsforecast==0.2.4
+huggingface-hub
+
+# ── Data & ML ─────────────────────────────────────────────────
+pandas==2.1.4
+numpy==1.26.4
 matplotlib==3.9.3
 scikit-learn==1.5.2
 seaborn==0.13.2
-numpy==1.26.4
 scipy==1.14.1
 joblib==1.4.2
 threadpoolctl==3.5.0
@@ -70,16 +78,16 @@ fonttools==4.54.1
 kiwisolver==1.4.7
 pyparsing==3.2.0
 python-dateutil==2.9.0.post0
-six==1.16.0
-
-# ── Data & ML ─────────────────────────────────────────────────
-pandas==2.2.3
 pytz==2024.2
 tzdata==2024.2
+six==1.16.0
 
 # ── Observability ─────────────────────────────────────────────
 langfuse==2.36.1
 mlflow==2.17.2
+
+# ── Logging ───────────────────────────────────────────────────
+loguru==0.7.3
 
 # ── Utilities ─────────────────────────────────────────────────
 anyio==4.6.2
@@ -96,7 +104,7 @@ sympy==1.13.3
 networkx==3.4.2
 
 # ── Testing ───────────────────────────────────────────────────
-pytest==8.3.3
+pytest==8.3.4
 pytest-asyncio==0.24.0
 pytest-cov==5.0.0
 coverage==7.6.4

@@ -17,11 +17,11 @@ def upgrade() -> None:
     op.execute('CREATE SCHEMA IF NOT EXISTS inv')
     op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
 
-    # ── inv.stores ────────────────────────────────────────────────────────────
+    # ── inventory.stores ────────────────────────────────────────────────────────────
     # Needed only as an anchor for store_id FK columns in other tables.
     # Populated from sales_history.csv (store_id, store_name, region columns).
     op.execute("""
-        CREATE TABLE inv.stores (
+        CREATE TABLE inventory.stores (
             store_id    VARCHAR(50)  PRIMARY KEY,
             store_name  VARCHAR(200) NOT NULL,
             region      VARCHAR(100),
@@ -31,12 +31,12 @@ def upgrade() -> None:
         )
     """)
 
-    # ── inv.products ──────────────────────────────────────────────────────────
+    # ── inventory.products ──────────────────────────────────────────────────────────
     # Populated once from product_master.csv.
     # Exists in DB so agents read one source instead of loading CSV each time.
     # Every other table FKs here on sku.
     op.execute("""
-        CREATE TABLE inv.products (
+        CREATE TABLE inventory.products (
             sku               VARCHAR(50)    PRIMARY KEY,
             product_name      VARCHAR(200)   NOT NULL,
             category          VARCHAR(100),
@@ -55,17 +55,17 @@ def upgrade() -> None:
         )
     """)
 
-    # ── inv.stock_levels ──────────────────────────────────────────────────────
+    # ── inventory.stock_levels ──────────────────────────────────────────────────────
     # Live state — one row per (sku, store_id).
     # Initialized from the most recent row in stock_history.csv.
     # After that, updated by the stock_simulator when sales happen,
     # reorders are approved, or stock is received.
     op.execute("""
-        CREATE TABLE inv.stock_levels (
+        CREATE TABLE inventory.stock_levels (
             sku                     VARCHAR(50)   NOT NULL
-                REFERENCES inv.products(sku),
+                REFERENCES inventory.products(sku),
             store_id                VARCHAR(50)   NOT NULL
-                REFERENCES inv.stores(store_id),
+                REFERENCES inventory.stores(store_id),
             stock_current           INTEGER       NOT NULL DEFAULT 0,
             stock_in_transit        INTEGER       DEFAULT 0,
             stock_min               INTEGER,
@@ -76,23 +76,23 @@ def upgrade() -> None:
             PRIMARY KEY (sku, store_id)
         )
     """)
-    op.execute("CREATE INDEX idx_stock_levels_store ON inv.stock_levels(store_id)")
+    op.execute("CREATE INDEX idx_stock_levels_store ON inventory.stock_levels(store_id)")
     op.execute(
         "CREATE INDEX idx_stock_levels_low "
-        "ON inv.stock_levels(store_id, sku) "
+        "ON inventory.stock_levels(store_id, sku) "
         "WHERE stock_current <= stock_min"
     )
 
-    # ── inv.demand_forecast ───────────────────────────────────────────────────
+    # ── inventory.demand_forecast ───────────────────────────────────────────────────
     # Output of the TimesFM pipeline — one row per (sku, store_id, date).
     # Keeping history here lets you detect model drift later.
     op.execute("""
-        CREATE TABLE inv.demand_forecast (
+        CREATE TABLE inventory.demand_forecast (
             id              SERIAL        PRIMARY KEY,
             sku             VARCHAR(50)   NOT NULL
-                REFERENCES inv.products(sku),
+                REFERENCES inventory.products(sku),
             store_id        VARCHAR(50)   NOT NULL
-                REFERENCES inv.stores(store_id),
+                REFERENCES inventory.stores(store_id),
             forecast_date   DATE          NOT NULL,
             demand_24h      NUMERIC(12, 4) NOT NULL,
             confidence_low  NUMERIC(12, 4),
@@ -102,14 +102,14 @@ def upgrade() -> None:
             UNIQUE (sku, store_id, forecast_date)
         )
     """)
-    op.execute("CREATE INDEX idx_forecast_date ON inv.demand_forecast(forecast_date)")
-    op.execute("CREATE INDEX idx_forecast_sku ON inv.demand_forecast(sku, store_id)")
+    op.execute("CREATE INDEX idx_forecast_date ON inventory.demand_forecast(forecast_date)")
+    op.execute("CREATE INDEX idx_forecast_sku ON inventory.demand_forecast(sku, store_id)")
 
-    # ── inv.agent_runs ────────────────────────────────────────────────────────
+    # ── inventory.agent_runs ────────────────────────────────────────────────────────
     # One row per agent execution. Defined before alerts/recommendations
     # because they FK here.
     op.execute("""
-        CREATE TABLE inv.agent_runs (
+        CREATE TABLE inventory.agent_runs (
             id                        UUID         PRIMARY KEY
                 DEFAULT uuid_generate_v4(),
             agent_name                VARCHAR(50)  NOT NULL
@@ -117,7 +117,7 @@ def upgrade() -> None:
                     'analysis_agent', 'context_agent', 'decision_agent'
                 )),
             store_id                  VARCHAR(50)
-                REFERENCES inv.stores(store_id),
+                REFERENCES inventory.stores(store_id),
             started_at                TIMESTAMP    DEFAULT NOW(),
             completed_at              TIMESTAMP,
             status                    VARCHAR(20)  DEFAULT 'running'
@@ -131,21 +131,21 @@ def upgrade() -> None:
     """)
     op.execute(
         "CREATE INDEX idx_agent_runs_status "
-        "ON inv.agent_runs(agent_name, status)"
+        "ON inventory.agent_runs(agent_name, status)"
     )
 
-    # ── inv.alerts ────────────────────────────────────────────────────────────
+    # ── inventory.alerts ────────────────────────────────────────────────────────────
     # Every stockout risk or overstock condition the system detects.
     # estimated_stockout_date = model prediction.
     # actual_stockout_date + was_accurate = filled retroactively.
     op.execute("""
-        CREATE TABLE inv.alerts (
+        CREATE TABLE inventory.alerts (
             id                      UUID         PRIMARY KEY
                 DEFAULT uuid_generate_v4(),
             sku                     VARCHAR(50)  NOT NULL
-                REFERENCES inv.products(sku),
+                REFERENCES inventory.products(sku),
             store_id                VARCHAR(50)  NOT NULL
-                REFERENCES inv.stores(store_id),
+                REFERENCES inventory.stores(store_id),
             alert_type              VARCHAR(30)  NOT NULL
                 CHECK (alert_type IN (
                     'stockout_critical', 'stockout_risk',
@@ -168,22 +168,22 @@ def upgrade() -> None:
     """)
     op.execute(
         "CREATE INDEX idx_alerts_pending "
-        "ON inv.alerts(store_id, severity) WHERE status = 'pending'"
+        "ON inventory.alerts(store_id, severity) WHERE status = 'pending'"
     )
-    op.execute("CREATE INDEX idx_alerts_store_sku ON inv.alerts(store_id, sku)")
+    op.execute("CREATE INDEX idx_alerts_store_sku ON inventory.alerts(store_id, sku)")
 
-    # ── inv.recommendations ───────────────────────────────────────────────────
+    # ── inventory.recommendations ───────────────────────────────────────────────────
     # Decision agent output — what was suggested and what the user did with it.
     op.execute("""
-        CREATE TABLE inv.recommendations (
+        CREATE TABLE inventory.recommendations (
             id                  UUID         PRIMARY KEY
                 DEFAULT uuid_generate_v4(),
             sku                 VARCHAR(50)  NOT NULL
-                REFERENCES inv.products(sku),
+                REFERENCES inventory.products(sku),
             store_id            VARCHAR(50)  NOT NULL
-                REFERENCES inv.stores(store_id),
+                REFERENCES inventory.stores(store_id),
             agent_run_id        UUID
-                REFERENCES inv.agent_runs(id),
+                REFERENCES inventory.agent_runs(id),
             recommendation_type VARCHAR(20)  NOT NULL
                 CHECK (recommendation_type IN (
                     'reorder', 'transfer', 'promotion', 'markdown'
@@ -200,15 +200,15 @@ def upgrade() -> None:
     """)
     op.execute(
         "CREATE INDEX idx_reco_pending "
-        "ON inv.recommendations(store_id) WHERE status = 'pending'"
+        "ON inventory.recommendations(store_id) WHERE status = 'pending'"
     )
 
-    # ── inv.promotions ────────────────────────────────────────────────────────
+    # ── inventory.promotions ────────────────────────────────────────────────────────
     # Populated from promotions.csv.
     # Context agent reads this to adjust demand upward before forecast.
     # sku nullable — a promo can apply to a whole category.
     op.execute("""
-        CREATE TABLE inv.promotions (
+        CREATE TABLE inventory.promotions (
             promo_id     VARCHAR(50)   PRIMARY KEY,
             promo_name   VARCHAR(200)  NOT NULL,
             promo_type   VARCHAR(100),
@@ -223,18 +223,18 @@ def upgrade() -> None:
             created_at   TIMESTAMP     DEFAULT NOW()
         )
     """)
-    op.execute("CREATE INDEX idx_promo_dates ON inv.promotions(start_date, end_date)")
+    op.execute("CREATE INDEX idx_promo_dates ON inventory.promotions(start_date, end_date)")
     op.execute(
-        "CREATE INDEX idx_promo_active ON inv.promotions(is_active) "
+        "CREATE INDEX idx_promo_active ON inventory.promotions(is_active) "
         "WHERE is_active = TRUE"
     )
 
-    # ── inv.events ────────────────────────────────────────────────────────────
+    # ── inventory.events ────────────────────────────────────────────────────────────
     # External demand events: Ramadan, back-to-school, etc.
     # Context agent reads this alongside promotions.
     # affected_categories stored as JSON array.
     op.execute("""
-        CREATE TABLE inv.events (
+        CREATE TABLE inventory.events (
             event_id             UUID         PRIMARY KEY
                 DEFAULT uuid_generate_v4(),
             event_name           VARCHAR(200) NOT NULL,
@@ -248,13 +248,13 @@ def upgrade() -> None:
             created_at           TIMESTAMP    DEFAULT NOW()
         )
     """)
-    op.execute("CREATE INDEX idx_events_dates ON inv.events(start_date, end_date)")
+    op.execute("CREATE INDEX idx_events_dates ON inventory.events(start_date, end_date)")
 
-    # ── inv.business_objectives ───────────────────────────────────────────────
+    # ── inventory.business_objectives ───────────────────────────────────────────────
     # Decision agent reads this to know current priority.
     # For V1 insert rows manually via seed_static_data.py.
     op.execute("""
-        CREATE TABLE inv.business_objectives (
+        CREATE TABLE inventory.business_objectives (
             id             UUID         PRIMARY KEY
                 DEFAULT uuid_generate_v4(),
             objective_type VARCHAR(30)  NOT NULL

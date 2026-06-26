@@ -1,8 +1,8 @@
 """
 seed_static_data.py
 Inserts static configuration data that doesn't come from CSVs:
-  - inv.business_objectives  ← derived from BUSINESS_OBJECTIVE_SETTINGS in config/settings.py
-  - inv.events               ← known recurring events for Tunisia
+  - inventory.business_objectives  ← derived from BUSINESS_OBJECTIVE_SETTINGS in config/settings.py
+  - inventory.events               ← known recurring events for Tunisia
 
 The four objective modes (user-facing labels):
   cost_savings   → minimize spending, accept moderate stockout risk
@@ -16,7 +16,7 @@ Run from inventory-module/:
 Re-run safe: existing rows are deleted and re-inserted cleanly.
 
 Migration required before first run (if label/metadata columns don't exist):
-    ALTER TABLE inv.business_objectives
+    ALTER TABLE inventory.business_objectives
         ADD COLUMN IF NOT EXISTS label    TEXT,
         ADD COLUMN IF NOT EXISTS metadata JSONB;
 """
@@ -212,7 +212,7 @@ async def seed_objectives(conn: asyncpg.Connection) -> None:
     for obj in OBJECTIVES:
         await conn.execute(
             """
-            INSERT INTO inv.business_objectives
+            INSERT INTO inventory.business_objectives
                 (objective_type, priority, target_value, applies_to,
                  category, sku, start_date, end_date, is_active, label, metadata)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -243,7 +243,7 @@ async def seed_events(conn: asyncpg.Connection) -> None:
     for evt in EVENTS_2026:
         await conn.execute(
             """
-            INSERT INTO inv.events
+            INSERT INTO inventory.events
                 (event_name, event_type, start_date, end_date,
                  affected_categories, estimated_uplift_pct, scope)
             VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -266,8 +266,8 @@ async def main():
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM inv.business_objectives")
-        await conn.execute("DELETE FROM inv.events")
+        await conn.execute("DELETE FROM inventory.business_objectives")
+        await conn.execute("DELETE FROM inventory.events")
 
         logger.info("Seeding business objectives...")
         await seed_objectives(conn)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unified API Server — Inventory + Sales + Agents IA
 ===================================================
     uvicorn main:app --port 8000
@@ -170,6 +170,47 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"⚠️ Coach interactions table: {e}")
 
+    try:
+        from agent_logger import _get_conn as _pg
+        _c = _pg()
+        with _c.cursor() as _cur:
+            # Trigger vente -> stock décrémentation
+            _cur.execute("""
+                CREATE OR REPLACE FUNCTION sync_stock_on_sale()
+                RETURNS TRIGGER AS $$
+                DECLARE v_daily_avg FLOAT;
+                BEGIN
+                    SELECT COALESCE(AVG(daily_qty), 0) INTO v_daily_avg
+                    FROM (SELECT date_only, SUM(qte_produit)::float AS daily_qty
+                          FROM sales.transactions_rt
+                          WHERE cod_prod=NEW.cod_prod AND store_id=NEW.store_id
+                            AND date_only >= CURRENT_DATE - INTERVAL '30 days'
+                          GROUP BY date_only) sub;
+                    UPDATE inventory.stock_levels
+                    SET quantity=GREATEST(0,quantity-NEW.qte_produit),
+                        last_sold=NEW.date_vente::date, updated_at=NOW(), last_updated=NOW(),
+                        remaining_days_of_stock=CASE WHEN v_daily_avg>0
+                            THEN GREATEST(0,(GREATEST(0,quantity-NEW.qte_produit)-quantity_reserved)::float/v_daily_avg)
+                            ELSE 999.0 END
+                    WHERE sku=NEW.cod_prod AND store_id=NEW.store_id;
+                    RETURN NEW;
+                END; $$ LANGUAGE plpgsql;
+            """)
+            _cur.execute("DROP TRIGGER IF EXISTS trg_sync_stock_on_sale ON sales.transactions_rt;")
+            _cur.execute("CREATE TRIGGER trg_sync_stock_on_sale AFTER INSERT ON sales.transactions_rt FOR EACH ROW EXECUTE FUNCTION sync_stock_on_sale();")
+            # Backfill stock_levels pour les SKUs actifs sans ligne
+            _cur.execute("""
+                INSERT INTO inventory.stock_levels (store_id,sku,quantity,quantity_reserved,last_updated,updated_at,remaining_days_of_stock)
+                SELECT DISTINCT t.store_id, t.cod_prod, 200, 0, NOW(), NOW(), 999.0
+                FROM sales.transactions_rt t
+                WHERE t.store_id='I63' AND t.date_only >= CURRENT_DATE - INTERVAL '30 days'
+                ON CONFLICT (store_id,sku) DO NOTHING
+            """)
+        _c.commit(); _c.close()
+        logger.info("[SYNC] Trigger vente->stock actif + stock_levels backfille")
+    except Exception as e:
+        logger.warning(f"[SYNC] Setup trigger: {e}")
+
     json_svc = JsonDataService()
     set_forecast_json(json_svc)
     set_stores_json(json_svc)
@@ -187,18 +228,17 @@ async def startup_event():
 
     def _on_sale(store_id: str, sku: str, units: int) -> None:
         sku_str = str(sku)
+
+        # ── Mise à jour mémoire ────────────────────────────────────────────
         try:
             from db.repositories.inventory_repo import SyncInventoryRepo
             db_row = SyncInventoryRepo.get_stock_level(sku_str, store_id)
-            if db_row is None:
-                logger.debug("Skipping sale for %s@%s — no stock_levels row.", sku_str, store_id)
-                return
         except Exception:
             db_row = None
 
         if sku_str not in _live_stock:
             if db_row is not None:
-                _live_stock[sku_str] = float(db_row["stock_current"])
+                _live_stock[sku_str] = float(db_row.get("stock_current") or db_row.get("quantity_available") or 0)
             else:
                 override = InventoryDataCache._stock_overrides.get((sku_str, store_id))
                 _live_stock[sku_str] = float(override) if override is not None else 0.0
@@ -207,17 +247,27 @@ async def startup_event():
         new_stock = max(0, current - units)
         _live_stock[sku_str] = new_stock
         InventoryDataCache.record_sale(sku_str, store_id, units)
-        logger.info("📉 Sale: %s | %.0f → %.0f units (-%d)", sku_str, current, new_stock, units)
+        logger.info("Sale: %s | %.0f -> %.0f units (-%d)", sku_str, current, new_stock, units)
 
+        # ── Broadcast + alertes stock bas ─────────────────────────────────
         async def _sale_and_broadcast():
-            if stock_sim is not None:
-                await stock_sim.record_sale(sku_str, store_id, units)
-            invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+            try:
+                invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
+                if new_stock < 10:
+                    from src.api.routes import _broadcast_to_store
+                    await _broadcast_to_store(store_id, {
+                        "type":     "stock_alert",
+                        "sku":      sku_str,
+                        "stock":    new_stock,
+                        "severity": "critical" if new_stock <= 3 else "warning",
+                        "message":  f"Stock critique : SKU {sku_str} — {int(new_stock)} unites restantes",
+                    })
+            except Exception as e:
+                logger.debug("[sale_broadcast] %s", e)
 
-        if stock_sim is not None:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_sale_and_broadcast())
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_sale_and_broadcast())
 
     simulator.on_sale = _on_sale
     simulator.start()
@@ -340,7 +390,7 @@ async def _get_advisors_from_pg(store_id: str, cr: float, dt: float) -> list:
             rows = await conn.fetch("""
                 SELECT
                     t.agent_id,
-                    COALESCE(a.agent_name || ' ' || a.agent_surname, t.agent_id::text) AS full_name,
+                    COALESCE(a.agent_name, t.agent_id::text) AS full_name,
                     SUM(t.lig_ttc)  AS revenue_today,
                     COUNT(*)        AS nb_ventes
                 FROM sales.transactions t
@@ -375,7 +425,7 @@ async def _get_advisors_from_pg(store_id: str, cr: float, dt: float) -> list:
                 hist = await conn2.fetch("""
                     SELECT
                         t.agent_id,
-                        COALESCE(a.agent_name || ' ' || a.agent_surname, t.agent_id::text) AS full_name,
+                        COALESCE(a.agent_name, t.agent_id::text) AS full_name,
                         SUM(t.lig_ttc) AS revenue_total
                     FROM sales.transactions_history t
                     LEFT JOIN sales.agents a
@@ -868,7 +918,7 @@ async def ws_store(websocket: WebSocket, store_id: str):
     await websocket.accept()
 
     mapped_id = STORE_MAP.get(store_id, "I63")
-    print(f"\n🔌 Frontend connecté → {store_id} (mapped={mapped_id})")
+    print(f"\n[WS] Frontend connecté → {store_id} (mapped={mapped_id})")
 
     # Enregistrer la connexion
     if store_id not in _store_connections:
@@ -906,7 +956,7 @@ async def ws_store(websocket: WebSocket, store_id: str):
                 break
 
     except WebSocketDisconnect:
-        print(f"\n🔌 Déconnecté : {store_id}")
+        print(f"\n[WS] Déconnecté : {store_id}")
     except Exception as e:
         logger.error(f"[WS] Erreur: {e}")
     finally:

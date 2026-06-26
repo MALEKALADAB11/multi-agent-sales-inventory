@@ -605,3 +605,291 @@ def _extract_price(message: str) -> str:
     import re
     match = re.search(r'(\d[\d\s]*)\s*(?:dt|tnd)', message.lower())
     return f"{match.group(1).strip()} TND" if match else "prix catalogue"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOMAIN ROUTER — Classification Sales vs Inventory
+# ══════════════════════════════════════════════════════════════════════════════
+
+INVENTORY_PATTERNS = {
+    "stock":     ["stock", "rupture", "inventaire", "quantite", "disponible",
+                  "epuise", "reste", "combien", "unites", "en stock", "disponibilite"],
+    "reorder":   ["reapprovisionner", "commander", "reorder", "livraison",
+                  "fournisseur", "arrivage", "recevoir", "commande", "reappro"],
+    "sku":       ["sku", "reference", "article", "modele", "produit en stock",
+                  "verifier produit", "chercher produit"],
+    "rotation":  ["rotation", "ventes lentes", "invendu", "dormant",
+                  "best-seller", "top ventes", "populaire", "tendance", "meilleure vente"],
+    "alerte":    ["alerte", "critique", "warning", "risque", "seuil",
+                  "minimum", "bas", "danger", "attention stock"],
+}
+
+
+def detect_domain(message: str) -> tuple:
+    """
+    Classifie le message en (domain, question_type).
+    domain : 'sales' | 'inventory'
+    question_type : sous-type specifique
+    """
+    msg = message.lower()
+    for a, b in [("é","e"),("è","e"),("ê","e"),("à","a"),
+                 ("ù","u"),("ô","o"),("î","i"),("ç","c")]:
+        msg = msg.replace(a, b)
+
+    # Score sales
+    sales_score = 0
+    sales_type = "general"
+    for qtype, keywords in QUESTION_PATTERNS.items():
+        hits = sum(1 for kw in keywords if kw in msg)
+        if hits > sales_score:
+            sales_score = hits
+            sales_type = qtype
+
+    # Score inventory
+    inv_score = 0
+    inv_type = "stock"
+    for qtype, keywords in INVENTORY_PATTERNS.items():
+        hits = sum(1 for kw in keywords if kw in msg)
+        if hits > inv_score:
+            inv_score = hits
+            inv_type = qtype
+
+    if inv_score > sales_score and inv_score >= 1:
+        return "inventory", inv_type
+    elif sales_score >= 1:
+        return "sales", sales_type
+    else:
+        return "sales", "general"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PROMPTS INVENTORY — Constitutional AI Guardrails + Few-Shot
+# ══════════════════════════════════════════════════════════════════════════════
+
+INVENTORY_GUARDRAILS = """\
+CONSTITUTIONAL GUARDRAILS INVENTORY (inviolables) :
+I1. CHIFFRES EXACTS  → Utilise UNIQUEMENT les quantités réelles fournies. Jamais d'invention.
+I2. FRANÇAIS PUR     → Réponse en français naturel. Jamais d'anglais, jamais de JSON.
+I3. SKU RÉELS        → Ne mentionne que les SKUs et produits présents dans les données.
+I4. ACTION DIRECTE   → Commence par le constat stock, puis l'action. Jamais d'intro.
+I5. LONGUEUR MAX     → 150 mots maximum. Précis et actionnable.
+I6. CLOSING ACTIONNABLE → Termine par une action prioritaire concrète.
+I7. SEUILS STRICTS   → rupture=0, critique=1-5, warning=6-15, ok>15.
+I8. PAS DE JSON      → Texte humain uniquement, jamais de code ou balises.
+"""
+
+INVENTORY_SYSTEM_PROMPT = """\
+Tu es le CoachAgent IA Ooredoo — expert gestion de stock et inventaire pour boutiques Tunisie.
+
+{guardrails}
+
+ÉTAT STOCK — Boutique {store_id} :
+  Total SKUs suivis : {total_skus}
+  Ruptures (0 unité) : {ruptures} | Critiques (1-5) : {critiques}
+  Warning (6-15) : {warnings} | OK (>15) : {ok_count}
+  Stock moyen : {avg_stock:.0f} unités par SKU
+
+{critical_section}
+
+{top_sellers_section}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGLES DE GESTION STOCK OOREDOO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Rupture (0)     → Alerte manager immédiate + proposer alternative même gamme
+  Critique (1-5)  → Commander en urgence + limiter ventes si best-seller
+  Warning (6-15)  → Planifier réappro cette semaine + surveiller vélocité
+  Best-seller en critique = URGENCE ABSOLUE → escalader au responsable régional
+  Produit dormant (0 ventes 7j) = redistribuer vers boutique active
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FEW-SHOT — QUALITÉ ATTENDUE PAR TYPE INVENTORY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[STOCK — rupture iPhone 16 Pro] :
+«ALERTE RUPTURE — iPhone 16 Pro (SKU 5021240) : 0 unité en stock.
+Action immédiate :
+1. Informe le manager — commande urgente fournisseur.
+2. Propose Samsung Galaxy A55 5G (899 TND, 12 en stock) comme alternative.
+3. Réserve les demandes clients — "livraison sous 48h, je vous rappelle."
+Ne laisse pas partir un client sans alternative. Maintenant !»
+
+[STOCK — critique AirPods] :
+«Stock critique — AirPods Pro 3 (SKU 9910031) : 3 unités restantes.
+Best-seller cette semaine (8 vendus en 7j) — rupture estimée dans 2 jours.
+Action : commande express + limite 1 par client si file d'attente.
+Informe l'équipe : "3 unités, premier arrivé premier servi." À toi !»
+
+[REORDER — planification] :
+«Réappro à planifier cette semaine :
+1. iPhone 16 Pro — vélocité 2/jour, stock 4 → rupture J+2. Commander 20 unités.
+2. AirPods Pro 3 — vélocité 1.1/jour, stock 3 → rupture J+3. Commander 15 unités.
+3. Assurance Premium — service digital, pas de stock physique. OK.
+Envoie la commande au responsable logistique avant 14h. Maintenant !»
+
+[ROTATION — produits dormants] :
+«Produits sans vente depuis 7 jours (candidats redistribution) :
+1. Coque Premium Galaxy (SKU 9910045) — 25 en stock, 0 vendu.
+2. Câble USB-C 2m (SKU 9910089) — 40 en stock, 0 vendu.
+Action : redistribuer vers boutique Centre Ville (forte demande accessoires).
+Ou : promo flash -20% ce weekend pour écouler. À toi !»
+
+[ALERTE — best-seller en danger] :
+«ALERTE CRITIQUE — Samsung A55 5G est ton #1 en ventes (15 cette semaine) mais stock = 4 unités.
+Rupture estimée demain si rythme maintenu.
+1. Commande express 30 unités — délai 24-48h.
+2. En attendant : oriente vers Galaxy S25 Ultra (marge plus haute, 8 en stock).
+Escalade au responsable régional maintenant. Allez !»
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RÈGLES ABSOLUES INVENTORY :
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ Commence par le CONSTAT (quel produit, combien d'unités, quel risque)
+✓ Puis l'ACTION concrète (commander, redistribuer, alerter, proposer alternative)
+✓ Mentionne les SKUs et quantités exactes
+✓ Calcule la vélocité si données disponibles (ventes 7j / 7 = unités/jour)
+✓ Termine par une action prioritaire
+✗ PAS de JSON, PAS de "voici", PAS de chiffres inventés
+✗ PAS de recommandation sans données — si pas de données, dis-le
+"""
+
+
+INVENTORY_STOCK_PROMPT = """\
+{guardrails}
+
+État stock boutique {store_id} :
+{stock_data}
+
+Le conseiller demande : "{message}"
+Réponds avec les données exactes de stock. Si rupture ou critique, propose une alternative.
+✓ Quantités exactes | Niveau de risque | Action recommandée
+✗ Max 120 mots | Pas d'intro
+RÉPONSE :"""
+
+
+INVENTORY_REORDER_PROMPT = """\
+{guardrails}
+
+État stock boutique {store_id} :
+{stock_data}
+
+Top vendeurs 7 derniers jours :
+{top_sellers}
+
+Le conseiller demande : "{message}"
+Calcule la vélocité (ventes 7j / 7) et estime les jours avant rupture pour chaque produit critique.
+Propose un plan de réappro priorisé.
+✓ Vélocité calculée | Jours avant rupture | Quantité à commander | Urgence
+✗ Max 150 mots | Pas d'intro
+RÉPONSE :"""
+
+
+INVENTORY_ROTATION_PROMPT = """\
+{guardrails}
+
+État stock boutique {store_id} :
+{stock_data}
+
+Top vendeurs 7 derniers jours :
+{top_sellers}
+
+Le conseiller demande : "{message}"
+Identifie les produits à forte rotation (risque rupture) et les dormants (à redistribuer).
+✓ Best-sellers avec stock restant | Dormants avec stock excédentaire | Action redistribution
+✗ Max 130 mots | Pas d'intro
+RÉPONSE :"""
+
+
+INVENTORY_ALERT_PROMPT = """\
+{guardrails}
+
+ALERTES STOCK — Boutique {store_id} :
+{alerts_data}
+
+Le conseiller demande : "{message}"
+Priorise les alertes par criticité. Pour chaque alerte, donne l'action immédiate.
+✓ Ordre de priorité | Action par alerte | Alternative si rupture
+✗ Max 140 mots | Pas d'intro
+RÉPONSE :"""
+
+
+def get_inventory_prompt(
+    question_type: str,
+    message: str,
+    store_id: str,
+    inv_ctx: dict,
+) -> tuple:
+    """Retourne (system_prompt, user_prompt) pour le domaine INVENTORY."""
+
+    critical = inv_ctx.get("critical_items", [])
+    warning = inv_ctx.get("warning_items", [])
+    top_sellers = inv_ctx.get("top_sellers", [])
+
+    # Section critique
+    critical_section = ""
+    if critical:
+        lines = ["PRODUITS CRITIQUES :"]
+        for c in critical[:6]:
+            icon = "X" if c["stock_qty"] == 0 else "!"
+            lines.append(f"  [{icon}] {c['product_name']} (SKU {c['sku']}) — {c['stock_qty']} unité(s) | {c['risk_level']}")
+        critical_section = "\n".join(lines)
+    else:
+        critical_section = "STOCK : Aucun produit en zone critique."
+
+    # Section top vendeurs
+    top_section = ""
+    if top_sellers:
+        lines = ["TOP VENDEURS (7 derniers jours) :"]
+        for t in top_sellers[:5]:
+            velocity = round(t["total_sold"] / 7, 1)
+            days_left = round(t["stock_restant"] / velocity, 1) if velocity > 0 else 999
+            lines.append(
+                f"  {t['nom']} — {t['total_sold']} vendus (vel. {velocity}/j) | "
+                f"stock: {t['stock_restant']} | rupture J+{days_left:.0f}"
+            )
+        top_section = "\n".join(lines)
+    else:
+        top_section = "TOP VENDEURS : données non disponibles."
+
+    # Stock data formaté
+    all_items = inv_ctx.get("all_items", [])
+    stock_lines = []
+    for item in all_items[:10]:
+        icon = {"rupture": "X", "critical": "!", "warning": "~", "ok": "v"}.get(item["risk_level"], "?")
+        stock_lines.append(f"  [{icon}] {item['product_name']} — {item['stock_qty']} unités | {item['risk_level']}")
+    stock_data = "\n".join(stock_lines) if stock_lines else "  Données stock non disponibles."
+
+    # System prompt
+    system = INVENTORY_SYSTEM_PROMPT.format(
+        guardrails=INVENTORY_GUARDRAILS,
+        store_id=store_id,
+        total_skus=inv_ctx.get("total_skus", 0),
+        ruptures=inv_ctx.get("ruptures", 0),
+        critiques=inv_ctx.get("critiques", 0),
+        warnings=inv_ctx.get("warnings", 0),
+        ok_count=inv_ctx.get("ok_count", 0),
+        avg_stock=inv_ctx.get("avg_stock", 0),
+        critical_section=critical_section,
+        top_sellers_section=top_section,
+    )
+
+    # User prompt par type
+    shared = {
+        "guardrails": INVENTORY_GUARDRAILS,
+        "store_id": store_id,
+        "stock_data": stock_data,
+        "top_sellers": top_section,
+        "alerts_data": critical_section,
+        "message": message,
+    }
+
+    if question_type == "reorder":
+        user = INVENTORY_REORDER_PROMPT.format(**shared)
+    elif question_type == "rotation":
+        user = INVENTORY_ROTATION_PROMPT.format(**shared)
+    elif question_type == "alerte":
+        user = INVENTORY_ALERT_PROMPT.format(**shared)
+    else:  # stock, sku, general
+        user = INVENTORY_STOCK_PROMPT.format(**shared)
+
+    return system, user

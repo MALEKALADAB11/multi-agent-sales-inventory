@@ -1,305 +1,543 @@
 """
-Stock Tools — Shared Data Layer
-================================
-Responsibilities:
-  - Lazy-load CSVs once per process (_DataCache)
-  - DB-first, CSV-fallback data reads
-  - Live stock depletion tracking (record_sale)
+stock_tools.py — v2.0 PostgreSQL-only
+=======================================
+Data layer pour l'inventory-module.
+Lit TOUT depuis PostgreSQL — zero CSV.
 
-NO metric computation — that lives in src/agents/analysis/tools.py.
+Tables utilisees :
+  inventory.stock_levels    — stock actuel par store/sku
+  inventory.stock_history   — historique stock journalier
+  inventory.sales_history   — historique ventes avec promos/events
+  inventory.product_master  — couts, lead time, MOQ, lifecycle
+  inventory.promotions      — promotions actives
+  sales.produits            — catalogue produits
+  sales.boutiques           — boutiques actives
 
-Public API (same readable names callers expect):
-  get_stock_status(sku, store_id)   -> dict   (replaces the old string version)
-  get_product(sku)                  -> dict | None
-  get_sales_history(sku, store_id)  -> DataFrame
-  get_forecast(sku, store_id)       -> DataFrame
-  get_store(store_id)               -> dict | None
+Fonctions (meme signature que l'ancien pour compatibilite) :
+  get_stock_level(sku, store_id)   -> dict
+  get_product_info(sku)            -> dict
+  get_sales_history(sku, store_id) -> DataFrame
+  get_stock_history(sku, store_id) -> DataFrame
+  get_forecast_data(sku, store_id) -> DataFrame
+  apply_sale_override(...)         -> None
+  get_all_skus_for_store(store_id) -> list[int]
 """
 
-import pandas as pd
+import os
 import logging
+import time as _time
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+
+import pandas as pd
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 
 logger = logging.getLogger(__name__)
 
-import sys
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent.parent))
+# ── Config ────────────────────────────────────────────────────────────────────
 
-from config.settings import (
-    STOCK_HISTORY_PATH,
-    SALES_HISTORY_PATH,
-    PRODUCT_MASTER_PATH,
-    FORECAST_OUTPUT_PATH,
-    DEFAULT_STORE,
-)
+DB_CONFIG = {
+    "host":     os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
+    "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
+    "dbname":   os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
+    "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
+}
 
-try:
-    from db.repositories.inventory_repo import SyncInventoryRepo
-    _DB_AVAILABLE = True
-except Exception:
-    _DB_AVAILABLE = False
-    logger.warning("SyncInventoryRepo not importable — DB reads disabled, using CSVs only.")
+# In-memory sale overrides (from realtime simulator)
+_sale_overrides: Dict[str, Dict[str, Any]] = {}
+
+_pool: Optional[ThreadedConnectionPool] = None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Data Cache — Lazy-loaded CSV storage
-# ═══════════════════════════════════════════════════════════════════════════
-
-class _DataCache:
-    """
-    Lazy-loaded CSV cache. Reads each file at most once per process.
-    Thread-safe for read operations (GIL protects initial load).
-    """
-
-    _stock_df: Optional[pd.DataFrame] = None
-    _product_df: Optional[pd.DataFrame] = None
-    _sales_df: Optional[pd.DataFrame] = None
-    _forecast_df: Optional[pd.DataFrame] = None
-
-    # In-memory stock overrides: (sku, store_id) -> current units on hand.
-    # Populated by record_sale() for live depletion tracking.
-    _stock_overrides: Dict[tuple, float] = {}
-
-    @classmethod
-    def stock(cls) -> pd.DataFrame:
-        if cls._stock_df is None:
-            cls._stock_df = pd.read_csv(STOCK_HISTORY_PATH, parse_dates=["date"])
-            cls._stock_df["sku"] = cls._stock_df["sku"].astype(str)
-            if "store_id" in cls._stock_df.columns:
-                cls._stock_df["store_id"] = cls._stock_df["store_id"].astype(str)
-            logger.debug("Loaded stock_history.csv (%d rows)", len(cls._stock_df))
-        return cls._stock_df
-
-    @classmethod
-    def product(cls) -> pd.DataFrame:
-        if cls._product_df is None:
-            cls._product_df = pd.read_csv(PRODUCT_MASTER_PATH)
-            cls._product_df["sku"] = cls._product_df["sku"].astype(str)
-            logger.debug("Loaded product_master.csv (%d rows)", len(cls._product_df))
-        return cls._product_df
-
-    @classmethod
-    def sales(cls) -> pd.DataFrame:
-        if cls._sales_df is None:
-            cls._sales_df = pd.read_csv(
-                SALES_HISTORY_PATH,
-                parse_dates=["date"],
-                low_memory=False,  # évite DtypeWarning colonnes mixtes
-            )
-            cls._sales_df = cls._sales_df.copy()
-            cls._sales_df["sku"] = cls._sales_df["sku"].astype(str)
-            if "store_id" in cls._sales_df.columns:
-                cls._sales_df["store_id"] = cls._sales_df["store_id"].astype(str)
-            logger.debug("Loaded sales_history.csv (%d rows)", len(cls._sales_df))
-        return cls._sales_df
-
-    @classmethod
-    def forecast(cls) -> pd.DataFrame:
-        if cls._forecast_df is None:
-            cls._forecast_df = pd.read_csv(
-                str(FORECAST_OUTPUT_PATH),
-                parse_dates=["date"],
-                low_memory=False,  # évite DtypeWarning et tuple index out of range
-            )
-            # Reconstruire le block manager après chargement mixed-type
-            cls._forecast_df = cls._forecast_df.copy()
-            if "sku" in cls._forecast_df.columns:
-                cls._forecast_df["sku"] = cls._forecast_df["sku"].astype(str)
-            if "store_id" in cls._forecast_df.columns:
-                cls._forecast_df["store_id"] = cls._forecast_df["store_id"].astype(str)
-            logger.debug("Loaded forecast CSV (%d rows)", len(cls._forecast_df))
-        return cls._forecast_df
-
-    @classmethod
-    def record_sale(cls, sku: str, store_id: str, qty: float) -> None:
-        """
-        Decrement in-memory stock when a sale occurs.
-        Called by the sales simulator for live depletion tracking.
-        Thread-safe: GIL protects dict writes at this granularity.
-        """
-        sku = str(sku)
-        store_id = str(store_id)
-        key = (sku, store_id)
-
-        if key not in cls._stock_overrides:
-            df = cls.stock()
-            rows = df[(df["sku"] == sku) & (df["store_id"] == store_id)]
-            seed = float(rows.sort_values("date").iloc[-1]["stock_level"]) if not rows.empty else 0.0
-            cls._stock_overrides[key] = seed
-
-        cls._stock_overrides[key] = max(0.0, cls._stock_overrides[key] - qty)
-        logger.debug(
-            "Sale recorded: %s@%s −%.0f units → %.0f remaining",
-            sku, store_id, qty, cls._stock_overrides[key],
-        )
-
-    @classmethod
-    def invalidate(cls) -> None:
-        """Clear cache. Call if CSVs change on disk."""
-        cls._stock_df = None
-        cls._product_df = None
-        cls._sales_df = None
-        cls._forecast_df = None
-        cls._stock_overrides = {}
-        logger.info("Data cache invalidated")
+def _get_pool() -> ThreadedConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = ThreadedConnectionPool(2, 20, **DB_CONFIG, connect_timeout=10)
+    return _pool
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Public Data Access Functions
-# ═══════════════════════════════════════════════════════════════════════════
+def _get_conn():
+    return _get_pool().getconn()
 
-def get_stock_status(sku: str, store_id: str = DEFAULT_STORE) -> Dict[str, Any]:
-    """
-    Get current stock data for a SKU at a store.
-    DB first, CSV fallback. Applies in-memory sale overrides.
 
-    Returns:
-        {
-            "stock_current": float,
-            "stock_in_transit": float,
-            "stock_min": float | None,   # manager-set threshold
-            "stock_max": float | None,   # manager-set threshold
-            "source": "db" | "csv" | "none"
-        }
-    """
-    sku = str(sku)
-    store_id = str(store_id)
-
-    if _DB_AVAILABLE:
+def _release_conn(conn):
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
         try:
-            db_stock = SyncInventoryRepo.get_stock_level(sku=sku, store_id=store_id)
-            if db_stock:
-                override_key = (sku, store_id)
-                stock_current = float(db_stock.get("stock_current", 0))
-                if override_key in _DataCache._stock_overrides:
-                    stock_current = _DataCache._stock_overrides[override_key]
-                return {
-                    "stock_current":    stock_current,
-                    "stock_in_transit": float(db_stock.get("stock_in_transit", 0)),
-                    "stock_min":        db_stock.get("stock_min"),
-                    "stock_max":        db_stock.get("stock_max"),
-                    "source":           "db",
-                }
-        except Exception as e:
-            logger.warning("DB stock read failed for %s@%s: %s", sku, store_id, e)
+            conn.close()
+        except Exception:
+            pass
 
-    # CSV fallback
-    df = _DataCache.stock()
-    rows = df[(df["sku"] == sku) & (df["store_id"] == store_id)]
 
-    if rows.empty:
-        logger.warning("No stock data for %s@%s in DB or CSV", sku, store_id)
+def _query(sql: str, params: tuple = None, fetch: str = "all") -> Any:
+    """Execute une requete et retourne les resultats."""
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            if fetch == "one":
+                return dict(cur.fetchone()) if cur.description and cur.rowcount else None
+            elif fetch == "all":
+                return [dict(r) for r in cur.fetchall()] if cur.description else []
+            elif fetch == "val":
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        logger.warning(f"[STOCK_TOOLS] Query error: {e}")
+        return None if fetch in ("one", "val") else []
+    finally:
+        _release_conn(conn)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. STOCK LEVEL — Niveau de stock actuel pour un SKU/store
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_stock_level(sku, store_id: str = "I63") -> Dict[str, Any]:
+    """
+    Retourne le niveau de stock pour un SKU dans un store.
+    Applique les overrides du simulateur temps reel si presents.
+    """
+    sku = int(sku)
+    override_key = f"{sku}@{store_id}"
+
+    # Check overrides first (from realtime simulator)
+    if override_key in _sale_overrides:
+        ov = _sale_overrides[override_key]
         return {
-            "stock_current": 0.0, "stock_in_transit": 0.0,
-            "stock_min": None, "stock_max": None, "source": "none",
+            "sku": sku,
+            "store_id": store_id,
+            "stock_on_hand": max(0, ov.get("stock_on_hand", 0)),
+            "stock_available": max(0, ov.get("stock_available", 0)),
+            "stock_reserved": ov.get("stock_reserved", 0),
+            "stock_in_transit": 0,
+            "stock_min": None,
+            "last_received": None,
+            "last_sold": str(date.today()),
+            "source": "override",
         }
 
-    override_key = (sku, store_id)
-    stock_current = float(rows.sort_values("date").iloc[-1]["stock_level"])
-    if override_key in _DataCache._stock_overrides:
-        stock_current = _DataCache._stock_overrides[override_key]
+    # PostgreSQL
+    row = _query("""
+        SELECT sl.quantity, COALESCE(sl.quantity_reserved, 0) AS reserved,
+               sl.last_received, sl.last_sold
+        FROM inventory.stock_levels sl
+        WHERE sl.sku = %s AND sl.store_id = %s
+    """, (sku, store_id), fetch="one")
 
+    if row:
+        qty = int(row["quantity"] or 0)
+        res = int(row["reserved"] or 0)
+        return {
+            "sku": sku,
+            "store_id": store_id,
+            "stock_on_hand": qty,
+            "stock_available": max(0, qty - res),
+            "stock_reserved": res,
+            "stock_in_transit": 0,
+            "stock_min": None,
+            "last_received": str(row["last_received"]) if row["last_received"] else None,
+            "last_sold": str(row["last_sold"]) if row["last_sold"] else None,
+            "source": "postgresql",
+        }
+
+    logger.warning("No stock data for %s@%s", sku, store_id)
     return {
-        "stock_current":    stock_current,
-        "stock_in_transit": 0.0,   # CSV doesn't track in-transit
-        "stock_min":        None,  # CSV doesn't have manager thresholds
-        "stock_max":        None,
-        "source":           "csv",
+        "sku": sku, "store_id": store_id,
+        "stock_on_hand": 0, "stock_available": 0, "stock_reserved": 0,
+        "stock_in_transit": 0, "stock_min": None,
+        "last_received": None, "last_sold": None, "source": "none",
     }
 
 
-def get_product(sku: str) -> Optional[Dict[str, Any]]:
+# ══════════════════════════════════════════════════════════════════════════════
+# 2. PRODUCT INFO — Informations produit enrichies
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_product_info(sku) -> Dict[str, Any]:
+    """Retourne les infos produit depuis produits + product_master."""
+    sku = int(sku)
+
+    row = _query("""
+        SELECT p.sku, p.nom AS product_name, p.categorie AS category,
+               p.famille AS family, p.prix_ht, p.prix_ttc AS unit_price,
+               p.marge_pct, p.actif AS active,
+               pm.unit_cost, pm.lead_time_days, pm.lead_time_std,
+               pm.moq, pm.holding_cost_pct, pm.order_cost,
+               pm.lifecycle_stage
+        FROM sales.produits p
+        LEFT JOIN inventory.product_master pm ON pm.sku = p.sku
+        WHERE p.sku = %s
+    """, (sku,), fetch="one")
+
+    if row:
+        return {
+            "sku": sku,
+            "product_name": row["product_name"] or f"SKU {sku}",
+            "category": row["category"] or "",
+            "family": row["family"] or "",
+            "unit_cost": float(row["unit_cost"] or row["prix_ht"] or 0),
+            "unit_price": float(row["unit_price"] or 0),
+            "margin_pct": float(row["marge_pct"] or 0),
+            "lead_time_days": int(row["lead_time_days"] or 10),
+            "lead_time_std": int(row["lead_time_std"] or 3),
+            "moq": int(row["moq"] or 1),
+            "holding_cost_pct": float(row["holding_cost_pct"] or 0.25),
+            "order_cost": float(row["order_cost"] or 50),
+            "lifecycle_stage": row["lifecycle_stage"] or "growth",
+            "active": bool(row["active"]),
+            "source": "postgresql",
+        }
+
+    logger.warning("No product data for %s", sku)
+    return {
+        "sku": sku, "product_name": f"SKU {sku}", "category": "",
+        "unit_cost": 0, "unit_price": 0, "lead_time_days": 10,
+        "moq": 1, "lifecycle_stage": "unknown", "source": "none",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. SALES HISTORY — Historique ventes (pour series temporelles)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_sales_history(sku, store_id: str = "I63", days: int = 365) -> pd.DataFrame:
     """
-    Get product master data for a SKU.
-    DB first, CSV fallback.
-
-    Returns dict with all product fields, or None if not found.
+    Retourne l'historique des ventes depuis inventory.sales_history.
+    Compatible TimesFM/Prophet : colonnes date, quantity_sold, revenue, is_promo.
     """
-    sku = str(sku)
-
-    if _DB_AVAILABLE:
-        try:
-            db_product = SyncInventoryRepo.get_product(sku=sku)
-            if db_product:
-                return db_product
-        except Exception as e:
-            logger.warning("DB product read failed for %s: %s", sku, e)
-
-    df = _DataCache.product()
-    rows = df[df["sku"] == sku]
-
-    if rows.empty:
-        logger.warning("No product data for %s in DB or CSV", sku)
-        return None
-
-    return rows.iloc[0].to_dict()
-
-
-def get_sales_history(sku: str, store_id: str) -> pd.DataFrame:
-    """
-    Get sales history for a SKU at a store.
-    CSV only — no DB equivalent.
-
-    Returns filtered DataFrame with all sales_history.csv columns.
-    """
-    sku = str(sku)
-    store_id = str(store_id)
-
-    df = _DataCache.sales()
-    filtered = df[(df["sku"] == sku) & (df["store_id"] == store_id)].copy()
-
-    if filtered.empty:
-        logger.debug("No sales history for %s@%s", sku, store_id)
-
-    return filtered
-
-
-def get_forecast(sku: str, store_id: str) -> pd.DataFrame:
-    """
-    Get demand forecast for a SKU at a store.
-    CSV only — no DB equivalent.
-
-    Returns filtered DataFrame with date, predicted_demand columns.
-
-    Note: .reset_index(drop=True) est requis après le filtre boolean pour
-    reconstruire le block manager pandas et éviter le IndexError 'tuple index
-    out of range' causé par des colonnes mixed-type dans le CSV source.
-    """
-    sku = str(sku)
-    store_id = str(store_id)
-
+    sku = int(sku)
+    conn = _get_conn()
     try:
-        df = _DataCache.forecast().copy()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT record_date AS date, quantity_sold, revenue,
+                       unit_price, is_promo, event_name, event_type, season
+                FROM inventory.sales_history
+                WHERE sku = %s AND store_id = %s
+                  AND record_date >= CURRENT_DATE - INTERVAL '%s days'
+                ORDER BY record_date
+            """, (sku, store_id, days))
+            cols = [desc[0] for desc in cur.description]
+            df = pd.DataFrame(cur.fetchall(), columns=cols)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+        return df
+    except Exception as e:
+        logger.warning("Sales history error for %s@%s: %s", sku, store_id, e)
+        return pd.DataFrame(columns=["date", "quantity_sold", "revenue", "is_promo"])
+    finally:
+        _release_conn(conn)
 
-        if "sku" in df.columns:
-            df = df[df["sku"] == sku].reset_index(drop=True)
-        if "store_id" in df.columns:
-            df = df[df["store_id"] == store_id].reset_index(drop=True)
 
-        if df.empty:
-            logger.debug("No forecast for %s@%s", sku, store_id)
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. STOCK HISTORY — Historique niveaux de stock
+# ══════════════════════════════════════════════════════════════════════════════
 
+def get_stock_history(sku, store_id: str = "I63", days: int = 365) -> pd.DataFrame:
+    """
+    Retourne l'historique stock depuis inventory.stock_history.
+    Compatible series temporelles : colonnes date, stock_level, is_stockout.
+    """
+    sku = int(sku)
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT record_date AS date, stock_level, is_stockout
+                FROM inventory.stock_history
+                WHERE sku = %s AND store_id = %s
+                  AND record_date >= CURRENT_DATE - INTERVAL '%s days'
+                ORDER BY record_date
+            """, (sku, store_id, days))
+            cols = [desc[0] for desc in cur.description]
+            df = pd.DataFrame(cur.fetchall(), columns=cols)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+        return df
+    except Exception as e:
+        logger.warning("Stock history error for %s@%s: %s", sku, store_id, e)
+        return pd.DataFrame(columns=["date", "stock_level", "is_stockout"])
+    finally:
+        _release_conn(conn)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5. FORECAST DATA — Donnees pour prediction (sales + stock combinees)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_forecast_data(sku, store_id: str = "I63", days: int = 180) -> pd.DataFrame:
+    """
+    Combine sales_history et stock_history pour le forecasting.
+    Retourne un DataFrame journalier avec quantity_sold, stock_level, is_promo.
+    """
+    sku = int(sku)
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COALESCE(s.record_date, sh.record_date) AS date,
+                    COALESCE(s.quantity_sold, 0) AS quantity_sold,
+                    COALESCE(s.revenue, 0) AS revenue,
+                    COALESCE(sh.stock_level, 0) AS stock_level,
+                    COALESCE(s.is_promo, false) AS is_promo,
+                    s.event_name, s.season
+                FROM inventory.sales_history s
+                FULL OUTER JOIN inventory.stock_history sh
+                    ON s.sku = sh.sku AND s.store_id = sh.store_id AND s.record_date = sh.record_date
+                WHERE COALESCE(s.sku, sh.sku) = %s
+                  AND COALESCE(s.store_id, sh.store_id) = %s
+                  AND COALESCE(s.record_date, sh.record_date) >= CURRENT_DATE - INTERVAL '%s days'
+                ORDER BY date
+            """, (sku, store_id, days))
+            cols = [desc[0] for desc in cur.description]
+            df = pd.DataFrame(cur.fetchall(), columns=cols)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+        return df
+    except Exception as e:
+        logger.warning("Forecast data error for %s@%s: %s", sku, store_id, e)
+        return pd.DataFrame(columns=["date", "quantity_sold", "stock_level", "is_promo"])
+    finally:
+        _release_conn(conn)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. ALL SKUs FOR STORE — Liste des SKUs avec stock pour un store
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_all_skus_for_store(store_id: str = "I63") -> List[int]:
+    """Retourne la liste des SKUs avec du stock pour un store."""
+    rows = _query("""
+        SELECT DISTINCT sl.sku
+        FROM inventory.stock_levels sl
+        WHERE sl.store_id = %s AND sl.quantity > 0
+        ORDER BY sl.sku
+    """, (store_id,))
+    return [int(r["sku"]) for r in rows] if rows else []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7. SALE OVERRIDE — Simulateur temps reel
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_sale_override(sku, store_id: str, quantity_sold: int = 1):
+    """
+    Applique une vente simulee en memoire.
+    Le stock reel dans PostgreSQL n'est pas modifie (read-only pour le simulateur).
+    """
+    sku = int(sku)
+    key = f"{sku}@{store_id}"
+    current = get_stock_level(sku, store_id)
+
+    new_qty = max(0, current["stock_on_hand"] - quantity_sold)
+    _sale_overrides[key] = {
+        "stock_on_hand": new_qty,
+        "stock_available": max(0, new_qty - current["stock_reserved"]),
+        "stock_reserved": current["stock_reserved"],
+        "last_sold": str(date.today()),
+    }
+    logger.debug("Sale override: %s qty=%d -> stock=%d", key, quantity_sold, new_qty)
+
+
+def clear_overrides():
+    """Reset les overrides (ex: nouveau jour)."""
+    _sale_overrides.clear()
+    logger.info("[STOCK_TOOLS] Overrides cleared")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 8. PROMOTIONS — Promotions actives pour un SKU
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_active_promotions(sku: int = None) -> List[Dict]:
+    """Retourne les promotions actives, optionnellement filtrees par SKU."""
+    if sku:
+        return _query("""
+            SELECT promo_id, promo_name, start_date, end_date,
+                   sku, product_name, discount_pct, promo_type
+            FROM inventory.promotions
+            WHERE sku = %s AND (end_date >= CURRENT_DATE OR end_date IS NULL)
+        """, (int(sku),))
+    else:
+        return _query("""
+            SELECT promo_id, promo_name, start_date, end_date,
+                   sku, product_name, discount_pct, promo_type
+            FROM inventory.promotions
+            WHERE end_date >= CURRENT_DATE OR end_date IS NULL
+        """)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9. BATCH — Donnees pre-chargees pour le pipeline batch
+# ══════════════════════════════════════════════════════════════════════════════
+
+def prefetch_store_data(store_id: str) -> Dict[str, Any]:
+    """
+    Pre-charge toutes les donnees pour un store en une seule passe.
+    Utilise par l'orchestrateur pour eviter N+1 queries.
+    """
+    skus = get_all_skus_for_store(store_id)
+
+    # Stock levels en batch
+    stock_rows = _query("""
+        SELECT sl.sku, sl.quantity, COALESCE(sl.quantity_reserved, 0) AS reserved,
+               sl.last_received, sl.last_sold
+        FROM inventory.stock_levels sl
+        WHERE sl.store_id = %s
+    """, (store_id,))
+    stock_map = {int(r["sku"]): r for r in stock_rows} if stock_rows else {}
+
+    # Products en batch
+    if skus:
+        placeholders = ",".join(["%s"] * len(skus))
+        product_rows = _query(f"""
+            SELECT p.sku, p.nom AS product_name, p.categorie AS category,
+                   pm.unit_cost, pm.unit_price, pm.lead_time_days, pm.moq, pm.lifecycle_stage
+            FROM sales.produits p
+            LEFT JOIN inventory.product_master pm ON pm.sku = p.sku
+            WHERE p.sku IN ({placeholders})
+        """, tuple(skus))
+        product_map = {int(r["sku"]): r for r in product_rows} if product_rows else {}
+    else:
+        product_map = {}
+
+    return {
+        "store_id": store_id,
+        "skus": skus,
+        "stock": stock_map,
+        "products": product_map,
+        "nb_skus": len(skus),
+        "nb_ruptures": sum(1 for s in stock_map.values() if int(s.get("quantity", 0)) <= 0),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPATIBILITY SHIM — _DataCache for routes.py
+# ══════════════════════════════════════════════════════════════════════════════
+# routes.py importe `from src.tools.internal.stock_tools import _DataCache`
+# et appelle _DataCache.stock(), .sales(), .product(), .forecast(), .invalidate()
+# Ce shim redirige tout vers PostgreSQL via pg_data_loader.
+
+class _DataCache:
+    """Compatibility wrapper — reads from PostgreSQL, results cached 5 min in memory."""
+
+    _stock_overrides: Dict = {}
+    _cache: Dict[str, Any] = {}
+    _ts: Dict[str, float] = {}
+    _TTL: float = 300.0  # 5 minutes
+
+    @classmethod
+    def _fresh(cls, key: str) -> bool:
+        return key in cls._cache and (_time.time() - cls._ts.get(key, 0)) < cls._TTL
+
+    @classmethod
+    def stock(cls) -> pd.DataFrame:
+        if cls._fresh("stock"):
+            return cls._cache["stock"]
+        try:
+            from pg_data_loader import load_stock_history
+        except ImportError:
+            import sys
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+            from src.pg_data_loader import load_stock_history
+        df = load_stock_history()
+        cls._cache["stock"] = df; cls._ts["stock"] = _time.time()
         return df
 
-    except Exception as e:
-        logger.warning("get_forecast error for %s@%s: %s — returning empty", sku, store_id, e)
-        return pd.DataFrame(columns=["date", "predicted_demand", "sku", "store_id"])
-
-
-def get_store(store_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Get store information.
-    DB only — no CSV fallback needed.
-
-    Returns dict with store_id, store_name, region, active, or None.
-    """
-    store_id = str(store_id)
-
-    if _DB_AVAILABLE:
+    @classmethod
+    def sales(cls) -> pd.DataFrame:
+        if cls._fresh("sales"):
+            return cls._cache["sales"]
         try:
-            return SyncInventoryRepo.get_store(store_id=store_id)
-        except Exception as e:
-            logger.warning("DB store read failed for %s: %s", store_id, e)
+            from pg_data_loader import load_sales_history
+        except ImportError:
+            from src.pg_data_loader import load_sales_history
+        df = load_sales_history()
+        cls._cache["sales"] = df; cls._ts["sales"] = _time.time()
+        return df
 
-    return None
+    @classmethod
+    def product(cls) -> pd.DataFrame:
+        if cls._fresh("product"):
+            return cls._cache["product"]
+        try:
+            from pg_data_loader import load_product_master
+        except ImportError:
+            from src.pg_data_loader import load_product_master
+        df = load_product_master()
+        cls._cache["product"] = df; cls._ts["product"] = _time.time()
+        return df
+
+    @classmethod
+    def forecast(cls) -> pd.DataFrame:
+        if cls._fresh("forecast"):
+            return cls._cache["forecast"]
+        try:
+            from pg_data_loader import load_sales_history
+        except Exception:
+            return pd.DataFrame(columns=["sku", "store_id", "predicted_demand"])
+        try:
+            df = load_sales_history(days=30)
+            if not df.empty and "quantity_sold" in df.columns:
+                df = df.rename(columns={"quantity_sold": "predicted_demand"})
+            cls._cache["forecast"] = df; cls._ts["forecast"] = _time.time()
+            return df
+        except Exception:
+            return pd.DataFrame(columns=["sku", "store_id", "predicted_demand"])
+
+    @classmethod
+    def invalidate(cls):
+        cls._stock_overrides.clear()
+        cls._cache.clear()
+        cls._ts.clear()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPATIBILITY ALIASES — pour analysis/nodes.py, context/tools.py
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_stock_status(sku, store_id: str = "I63") -> Dict[str, Any]:
+    """Alias de get_stock_level pour compatibilite analysis/nodes.py."""
+    data = get_stock_level(sku, store_id)
+    return {
+        "sku": data["sku"],
+        "store_id": data["store_id"],
+        "current_stock": data["stock_on_hand"],
+        "stock_available": data["stock_available"],
+        "stock_reserved": data["stock_reserved"],
+        "stock_in_transit": data.get("stock_in_transit", 0),
+        "stock_min": data.get("stock_min"),
+        "last_received": data.get("last_received"),
+        "last_sold": data.get("last_sold"),
+        "source": data["source"],
+    }
+
+
+def get_product(sku) -> Dict[str, Any]:
+    """Alias de get_product_info pour compatibilite analysis/nodes.py."""
+    return get_product_info(sku)
+
+
+def get_forecast(sku, store_id: str = "I63") -> pd.DataFrame:
+    """Alias de get_forecast_data pour compatibilite analysis/nodes.py."""
+    df = get_forecast_data(sku, store_id)
+    # analysis/nodes.py attend 'predicted_demand', pas 'quantity_sold'
+    if not df.empty and "quantity_sold" in df.columns:
+        df = df.rename(columns={"quantity_sold": "predicted_demand"})
+    elif df.empty:
+        df = pd.DataFrame({
+            "date": pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
+            "predicted_demand": [1.0] * 30,
+            "sku": [str(sku)] * 30,
+            "store_id": [store_id] * 30,
+        })
+    if "predicted_demand" not in df.columns:
+        df["predicted_demand"] = 1.0
+    return df

@@ -142,11 +142,8 @@ class TimesFMForecaster:
             )
 
             try:
-                from config.settings import PROCESSED_DATA_DIR
-                promos_df = pd.read_csv(
-                    PROCESSED_DATA_DIR / "promotions.csv",
-                    parse_dates=["start_date", "end_date"]
-                )
+                from src.pg_data_loader import load_promotions
+                promos_df  = load_promotions(active_only=False)
                 sku_promos = promos_df[promos_df["sku"] == sku]
 
                 for i, forecast_date in enumerate(forecast_dates_temp):

@@ -11,7 +11,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 
-from data.mock_provider import get_data_provider
+from data.postgres_provider import get_data_provider
 from modules.coaching.agents.analyst.agent import get_analyst_agent
 from modules.coaching.agents.stratege.agent import get_stratege_agent
 

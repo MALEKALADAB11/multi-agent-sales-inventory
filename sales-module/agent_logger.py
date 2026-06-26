@@ -23,23 +23,26 @@ Usage dans les nodes :
 import json
 import logging
 import os
+from pathlib import Path
 import traceback
 from datetime import datetime
 from typing import Any, Optional
 
+from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", encoding="utf-8")
 
 logger = logging.getLogger(__name__)
 
 _DB_CONFIG = {
-    "host":     "localhost",
-    "port":     5432,
-    "dbname":   "ooredoo_sales",
-    "user":     "postgres",
-    "password": "admin",
+    "host":     os.getenv("POSTGRES_HOST", "localhost"),
+    "port":     int(os.getenv("POSTGRES_PORT", 5432)),
+    "dbname":   os.getenv("POSTGRES_DB", "ooredoo_sales"),
+    "user":     os.getenv("POSTGRES_USER", "postgres"),
+    "password": os.getenv("POSTGRES_PASSWORD", "admin"),
 }
-
 # Clés lourdes à exclure du JSONB
 _SKIP_KEYS = frozenset({
     "pos_history", "rag_context", "feedback_history",
@@ -546,7 +549,7 @@ def enrich_rag_from_cycle(
         with conn.cursor() as cur:
             for s in new_scripts:
                 cur.execute("""
-                    INSERT INTO coaching_scripts
+                    INSERT INTO sales.coaching_scripts
                         (store_id,categorie,situation,action,produit_cible,
                          argument_vente,impact_observe,heure_min,heure_max,
                          jour_semaine,source)

@@ -87,9 +87,9 @@ async def get_product_mix(store_id: str):
             p.categorie,
             SUM(t.lig_ttc)     AS ca,
             COUNT(*)           AS nb_tx,
-            SUM(t.qte_produit) AS nb_unites
-        FROM transactions t
-        LEFT JOIN produits p ON t.cod_prod = p.cod_prod
+            SUM(t.quantity) AS nb_unites
+        FROM sales.transactions t
+        LEFT JOIN sales.produits p ON t.sku = p.sku
         WHERE t.store_id = %s
           AND t.date_only = CURRENT_DATE
           AND t.lig_ttc > 0
@@ -117,7 +117,7 @@ async def get_live_analysis(store_id: str):
     Analyse en temps réel complète depuis PostgreSQL.
     Utilisé par le dashboard Angular pour la section Product Mix et advisors.
     """
-    from data.mock_provider import get_data_provider
+    from data.postgres_provider import get_data_provider
     import asyncio
 
     provider = get_data_provider()
@@ -148,9 +148,9 @@ async def get_live_analysis(store_id: str):
             COALESCE(p.categorie, 'Autre') AS product,
             SUM(t.lig_ttc)     AS revenue,
             COUNT(*)           AS nb_tx,
-            SUM(t.qte_produit) AS nb_unites
-        FROM transactions t
-        LEFT JOIN produits p ON t.cod_prod = p.cod_prod
+            SUM(t.quantity) AS nb_unites
+        FROM sales.transactions t
+        LEFT JOIN sales.produits p ON t.sku = p.sku
         WHERE t.store_id = %s
           AND t.date_only = CURRENT_DATE
           AND t.lig_ttc > 0
@@ -170,7 +170,7 @@ async def get_live_analysis(store_id: str):
         for r in mix_rows
     ]
 
-    # Fallback product mix depuis mock_provider si pas de données aujourd'hui
+    # Fallback product mix depuis PostgreSQL si pas de données aujourd'hui
     if not product_mix:
         raw_mix = await provider.fetch_product_mix(cd)
         product_mix = [

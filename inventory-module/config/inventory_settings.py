@@ -36,6 +36,16 @@ BUSINESS_OBJECTIVE_SETTINGS = {
     "competitive":   {"safety_stock_factor": 1.3,  "service_level": 0.95},
 }
 
+# ── Poids des signaux contextuels (fallback rule-based quand LLM indispo) ─────
+# Surchargeables via variables d'environnement ou table inventory.signal_weights.
+import os as _os
+SIGNAL_WEIGHTS = {
+    "promo_factor":      float(_os.getenv("SIGNAL_PROMO_FACTOR",    "0.5")),   # discount_pct × factor
+    "holiday_uplift_pct": float(_os.getenv("SIGNAL_HOLIDAY_UPLIFT",  "10.0")), # % uplift par jour férié
+    "bad_weather_impact": float(_os.getenv("SIGNAL_WEATHER_IMPACT",  "-3.0")), # % par jour de pluie forte
+    "confidence_min_sample": int(_os.getenv("SIGNAL_CONF_SAMPLE",   "50")),    # seuil sample → medium
+}
+
 
 class Settings:
     """

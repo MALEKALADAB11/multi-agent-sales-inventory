@@ -30,6 +30,23 @@ from src.agents.analysis.tools import (
 from src.agents.analysis.prompts import REASON_SYSTEM, REASON_USER
 
 try:
+    from src.forecasting.timeseries_engine import (
+        forecast as ts_forecast,
+        extract_series_from_sales,
+    )
+    _TS_ENGINE_AVAILABLE = True
+    logger.info("[Analysis] TimeSeriesEngine disponible ✓")
+except Exception as _e:
+    _TS_ENGINE_AVAILABLE = False
+    logger.info("[Analysis] TimeSeriesEngine non disponible (%s) — DB forecast utilisé", _e)
+
+try:
+    from src.pg_data_loader import get_seasonal_demand_profile
+    _SEASONAL_AVAILABLE = True
+except Exception:
+    _SEASONAL_AVAILABLE = False
+
+try:
     from db.repositories.inventory_repo import SyncInventoryRepo
     _DB_AVAILABLE = True
 except Exception:
@@ -79,17 +96,51 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if not product_data:
         raise ValueError(f"No product data found for SKU {sku}")
 
-    # Sales history: always CSV (cached in _DataCache — fast filter on loaded DF)
+    # Sales history: PostgreSQL via pg_data_loader (3 ans, features temporelles incluses)
     sales_df = get_sales_history(sku, store_id)
 
-    # Forecast: always CSV (cached in _DataCache — fast filter on loaded DF)
-    forecast_df = get_forecast(sku, store_id)
-    if forecast_df.empty:
-        logger.warning("No forecast data for %s@%s, using fallback baseline", sku, store_id)
-        import pandas as pd
+    # Profil saisonnier 3 ans — facteurs par mois, événement, saison, jour de semaine
+    seasonal_profile = {}
+    if _SEASONAL_AVAILABLE:
+        try:
+            seasonal_profile = get_seasonal_demand_profile(sku, store_id)
+        except Exception as e:
+            logger.warning("Seasonal profile error for %s@%s: %s", sku, store_id, e)
+
+    # ── Forecast : TimeSeriesEngine (StatsForecast) en priorité ─────────────
+    # Si StatsForecast disponible, calcule la prévision depuis l'historique
+    # des ventes réelles (plus précis + intervalles de confiance).
+    # Fallback : PostgreSQL precomputed → baseline constante.
+    ts_result: Dict[str, Any] = {}
+    if _TS_ENGINE_AVAILABLE and not sales_df.empty:
+        try:
+            series = extract_series_from_sales(sales_df, sku, store_id, days_back=90)
+            if len(series) >= 7:
+                ts_result = ts_forecast(series, horizon=30)
+                logger.debug(
+                    "[FETCH] TS engine OK — SKU=%s engine=%s avg_daily=%.3f",
+                    sku, ts_result.get("engine"), ts_result.get("avg_daily_demand"),
+                )
+        except Exception as exc:
+            logger.warning("[FETCH] TS engine failed (%s) — DB forecast fallback", exc)
+
+    # Forecast DB : utilisé si TS engine non disponible ou échoué
+    import pandas as pd
+    if not ts_result:
+        forecast_df = get_forecast(sku, store_id)
+        if forecast_df.empty:
+            logger.warning("No forecast data for %s@%s, using fallback baseline", sku, store_id)
+            forecast_df = pd.DataFrame({
+                "date":             pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
+                "predicted_demand": 1.0,
+                "sku":              sku,
+                "store_id":         store_id,
+            })
+    else:
+        # Construire un forecast_df compatible depuis le résultat TS
         forecast_df = pd.DataFrame({
             "date":             pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
-            "predicted_demand": 1.0,
+            "predicted_demand": ts_result["forecast_values"][:30],
             "sku":              sku,
             "store_id":         store_id,
         })
@@ -111,7 +162,9 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "product":            product_data,
             "sales_df":           sales_df,
             "forecast_df":        forecast_df,
+            "ts_result":          ts_result,     # dict enrichi du TS engine (peut être {})
             "business_objective": business_objective,
+            "seasonal_profile":   seasonal_profile,
         }
     }
 
@@ -136,36 +189,89 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
     product            = fetch_data["product"]
     forecast_df        = fetch_data["forecast_df"]
     sales_df           = fetch_data["sales_df"]
+    ts_result          = fetch_data.get("ts_result", {})
     business_objective = fetch_data["business_objective"]
+    seasonal_profile   = fetch_data.get("seasonal_profile", {})
 
-    # Demand statistics from forecast
-    avg_daily_demand = float(forecast_df["predicted_demand"].mean())
-    total_30d_demand = float(forecast_df["predicted_demand"].sum())
+    # ── Statistiques de demande : TS engine > saisonnier > forecast_df ───────
+    if ts_result:
+        # TS engine disponible — données les plus précises (StatsForecast/Chronos)
+        avg_daily_demand_raw = float(ts_result["avg_daily_demand"])
+        total_30d_demand_raw = float(ts_result["total_30d_demand"])
+        ts_trend             = ts_result.get("trend_direction", "stable")
+        ts_std               = float(ts_result.get("demand_std_dev", 0))
+        ts_seasonality       = float(ts_result.get("seasonality_score", 0))
+        logger.debug(
+            "[COMPUTE] TS engine data — SKU=%s avg=%.3f std=%.3f trend=%s seasonality=%.2f",
+            sku, avg_daily_demand_raw, ts_std, ts_trend, ts_seasonality,
+        )
+    else:
+        avg_daily_demand_raw = float(forecast_df["predicted_demand"].mean())
+        total_30d_demand_raw = float(forecast_df["predicted_demand"].sum())
+        ts_trend             = None
+        ts_std               = 0.0
+        ts_seasonality       = 0.0
 
-    # Trend: compare first 7 days vs last 7 days
-    if len(forecast_df) >= 14:
-        df_sorted = forecast_df.sort_values("date")
-        first_7   = df_sorted.head(7)["predicted_demand"].mean()
-        last_7    = df_sorted.tail(7)["predicted_demand"].mean()
-        if last_7 > first_7 * 1.1:
+    # ── Ajustement saisonnier depuis le profil 3 ans ───────────────────────
+    import datetime
+    current_month = datetime.date.today().month
+    seasonal_uplift = 1.0
+
+    if seasonal_profile and seasonal_profile.get("baseline_demand", 0) > 0:
+        # Préférer la baseline observée hors-events comme référence de demande
+        baseline = seasonal_profile["baseline_demand"]
+        month_factor = seasonal_profile.get("by_month", {}).get(current_month, 1.0)
+        seasonal_uplift = month_factor
+
+        # Utiliser la baseline × facteur mois comme demande attendue si plus riche que forecast_df
+        n_years = seasonal_profile.get("n_data_years", 0)
+        if n_years >= 2 and baseline > 0:
+            avg_daily_demand = baseline * month_factor
+            total_30d_demand = avg_daily_demand * 30
+            logger.debug(
+                "[COMPUTE] SKU=%s: seasonal baseline %.3f × month_factor %.3f → %.3f",
+                sku, baseline, month_factor, avg_daily_demand
+            )
+        else:
+            avg_daily_demand = avg_daily_demand_raw
+            total_30d_demand = total_30d_demand_raw
+    else:
+        avg_daily_demand = avg_daily_demand_raw
+        total_30d_demand = total_30d_demand_raw
+
+    # ── Trend : TS engine > profil saisonnier > forecast_df ─────────────────
+    if ts_trend:
+        # TS engine: tendance calculée sur régression linéaire 14j
+        trend = ts_trend
+    else:
+        trend_6m_pct = seasonal_profile.get("trend_6m_pct", 0) if seasonal_profile else 0
+        if trend_6m_pct > 10:
             trend = "increasing"
-        elif last_7 < first_7 * 0.9:
+        elif trend_6m_pct < -10:
             trend = "declining"
+        elif len(forecast_df) >= 14:
+            df_sorted = forecast_df.sort_values("date")
+            first_7   = df_sorted.head(7)["predicted_demand"].mean()
+            last_7    = df_sorted.tail(7)["predicted_demand"].mean()
+            trend = "increasing" if last_7 > first_7 * 1.1 else ("declining" if last_7 < first_7 * 0.9 else "stable")
         else:
             trend = "stable"
-    else:
-        trend = "stable"
 
-    # Demand std dev from historical sales (daily-grouped for correctness)
-    demand_std = compute_demand_std(sales_df, avg_daily_demand)
+    # ── Écart-type demande : TS engine > profil saisonnier > compute ────────
+    if ts_std > 0:
+        demand_std = ts_std * seasonal_uplift
+    elif seasonal_profile and seasonal_profile.get("demand_std", 0) > 0:
+        demand_std = seasonal_profile["demand_std"] * seasonal_uplift
+    else:
+        demand_std = compute_demand_std(sales_df, avg_daily_demand)
 
     # Compute all metrics
     metrics = compute_inventory_metrics(
         # Stock
-        stock_current      = stock["stock_current"],
-        stock_in_transit   = stock["stock_in_transit"],
-        stock_min          = stock["stock_min"],
-        stock_max          = stock["stock_max"],
+        stock_current      = stock.get("stock_current") or 0,
+        stock_in_transit   = stock.get("stock_in_transit") or 0,
+        stock_min          = stock.get("stock_min"),
+        stock_max          = stock.get("stock_max"),
         # Product
         lead_time_avg      = float(product["lead_time_days"]),
         lead_time_std      = float(product.get("lead_time_std", 0) or 0),
@@ -184,9 +290,20 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
         business_objective = business_objective,
     )
 
+    # Enrichir les métriques avec les données TS engine si disponibles
+    if ts_result:
+        metrics.setdefault("forecast", {}).update({
+            "confidence_lower":  ts_result.get("confidence_lower", []),
+            "confidence_upper":  ts_result.get("confidence_upper", []),
+            "seasonality_score": ts_seasonality,
+            "forecast_engine":   ts_result.get("engine", "unknown"),
+        })
+
     return {
         "computed_metrics":    metrics,
         "business_objective":  business_objective,
+        "seasonal_profile":    seasonal_profile,
+        "seasonal_uplift":     seasonal_uplift,
     }
 
 

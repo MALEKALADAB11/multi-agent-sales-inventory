@@ -67,10 +67,10 @@ class CycleTracer:
 
     def cycle_end(
         self,
-        cycle_id:  str  = None,
+        cycle_id:  str   = None,
         total_ms:  float = None,
-        nodes:     int  = None,
-        urgency:   str  = None,
+        nodes:     int   = None,
+        urgency:   str   = None,
         gap:       float = None,
         eod:       float = None,
         **kwargs,

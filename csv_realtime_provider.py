@@ -31,8 +31,10 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ── Chemins ──────────────────────────────────────────────────────────────────
-BASE = Path(r"C:\Users\malek\Desktop\PFE-Backend")
-CSV_PATH = BASE / "sales-module" / "data" / "transactions_2025_2026_v2.csv"
+# Ce fichier est conservé pour référence mais n'est plus utilisé.
+# Toutes les données sont lues depuis PostgreSQL.
+BASE = Path(__file__).resolve().parent
+CSV_PATH = Path(os.getenv("CSV_TRANSACTIONS_PATH", str(BASE / "sales-module" / "data" / "transactions_2025_2026_v2.csv")))
 
 STORE_ID = "I63"
 DAILY_TARGET = 1007.0  # objectif journalier boutique I63
