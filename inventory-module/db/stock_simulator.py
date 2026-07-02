@@ -8,11 +8,7 @@ stock is received, etc.). It updates stock_current and recalculates
 remaining_days_of_stock automatically.
 
 In development, replay_sales_as_today() drives stock changes from the
-historical sales CSV as if they were happening now.
-
-NOTE: sales_history and stock_history are CSV files only — they are NOT
-DB tables. All historical demand queries in this file read directly from
-data/processed/sales_history.csv.
+historical sales data as if they were happening now.
 
 Usage from an agent:
     from db.stock_simulator import StockSimulator
@@ -29,44 +25,27 @@ Design note on record_sale / record_adjustment:
     for any store_id not present in that table.
 """
 import logging
+import os
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Optional
 
-import pandas as pd
+import psycopg2
 
 from db.repositories.inventory_repo import InventoryRepo
 
 logger = logging.getLogger(__name__)
 
-# Path to the historical sales CSV — read by _get_avg_daily_demand and
-# replay_sales_as_today instead of querying a (non-existent) DB table.
-_MODULE_ROOT = Path(__file__).parent.parent
-_SALES_FILE  = _MODULE_ROOT / "data" / "processed" / "sales_history.csv"
 
-# Module-level cache so we don't re-read the CSV on every demand lookup.
-# sales_history.csv columns: date, store_id, store_name, region, sku,
-#   product_name, category, quantity_sold, revenue, unit_price,
-#   is_promo, event_name, event_type, season
-_sales_cache: Optional[pd.DataFrame] = None
-
-
-def _load_sales_csv() -> pd.DataFrame:
-    """
-    Lazy-load and cache sales_history.csv.
-    Only the columns we actually need are kept in memory.
-    """
-    global _sales_cache
-    if _sales_cache is None:
-        logger.debug("Loading sales_history.csv into memory cache...")
-        _sales_cache = pd.read_csv(
-            _SALES_FILE,
-            usecols=["date", "store_id", "sku", "quantity_sold"],
-            dtype={"store_id": str, "sku": str},
-            parse_dates=["date"],
-            low_memory=False,
-        )
-    return _sales_cache
+def _pg_conn():
+    """Open a direct psycopg2 connection for synchronous demand queries."""
+    return psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
+        port=int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
+        dbname=os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
+        user=os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+        password=os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
+        connect_timeout=10,
+    )
 
 
 class StockSimulator:
@@ -234,35 +213,34 @@ class StockSimulator:
         speed:     float = 1.0,
     ) -> int:
         """
-        Development tool. Takes recent rows from sales_history.csv and
+        Development tool. Takes recent rows from inventory.sales_history and
         applies them as if they are happening now, driving stock_current down.
-
-        Reads directly from data/processed/sales_history.csv — this is a
-        CSV file, NOT a DB table.
 
         speed: demand multiplier — 1.0 = real rate, 2.0 = twice as fast.
         Returns: number of SKU sale events applied.
         """
-        sales_df = _load_sales_csv()
-
-        cutoff = pd.Timestamp.now() - pd.Timedelta(days=days_back)
-        recent = sales_df[
-            (sales_df["store_id"] == store_id) &
-            (sales_df["date"] >= cutoff)
-        ]
-
-        # Aggregate total sold per SKU over the window
-        totals = (
-            recent.groupby("sku")["quantity_sold"]
-            .sum()
-            .reset_index()
-            .rename(columns={"quantity_sold": "total_sold"})
-        )
+        try:
+            conn = _pg_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT sku, SUM(quantity_sold) AS total_sold
+                        FROM inventory.sales_history
+                        WHERE store_id = %s
+                          AND record_date >= CURRENT_DATE - %s * INTERVAL '1 day'
+                        GROUP BY sku
+                    """, (store_id, days_back))
+                    rows = cur.fetchall()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning("[Simulator] replay_sales_as_today DB error: %s", exc)
+            return 0
 
         applied = 0
-        for _, row in totals.iterrows():
-            sku        = row["sku"]
-            total_sold = int(row["total_sold"] * speed)
+        for row in rows:
+            sku        = str(row[0])
+            total_sold = int(float(row[1] or 0) * speed)
             if total_sold <= 0:
                 continue
 
@@ -335,29 +313,27 @@ class StockSimulator:
         days_back: int = 30,
     ) -> float:
         """
-        Computes average daily demand from sales_history.csv.
-        Reads the CSV (cached after first load) — NOT a DB table.
+        Computes average daily demand from inventory.sales_history (PostgreSQL).
         Falls back to 1.0 if no history exists for this (sku, store_id).
-
-        sales_history.csv columns used: date, store_id, sku, quantity_sold
         """
-        sales_df = _load_sales_csv()
-
-        cutoff = pd.Timestamp.now() - pd.Timedelta(days=days_back)
-        subset = sales_df[
-            (sales_df["sku"] == sku) &
-            (sales_df["store_id"] == store_id) &
-            (sales_df["date"] >= cutoff)
-        ]
-
-        if subset.empty:
-            return 1.0
-
-        total_sold  = subset["quantity_sold"].sum()
-        unique_days = subset["date"].nunique()
-
-        avg = float(total_sold) / unique_days if unique_days > 0 else 1.0
-        return max(avg, 0.01)
+        try:
+            conn = _pg_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT SUM(quantity_sold), COUNT(DISTINCT record_date)
+                        FROM inventory.sales_history
+                        WHERE sku = %s AND store_id = %s
+                          AND record_date >= CURRENT_DATE - %s * INTERVAL '1 day'
+                    """, (str(sku), store_id, days_back))
+                    row = cur.fetchone()
+                    if row and row[1] and int(row[1]) > 0:
+                        return max(float(row[0] or 0) / int(row[1]), 0.01)
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning("[Simulator] _get_avg_daily_demand DB error: %s", exc)
+        return 1.0
 
     async def get_stock_status(self, store_id: str) -> dict:
         """

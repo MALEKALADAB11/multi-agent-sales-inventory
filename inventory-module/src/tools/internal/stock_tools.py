@@ -8,7 +8,7 @@ Tables utilisees :
   inventory.stock_levels    — stock actuel par store/sku
   inventory.stock_history   — historique stock journalier
   inventory.sales_history   — historique ventes avec promos/events
-  inventory.product_master  — couts, lead time, MOQ, lifecycle
+  inventory.products        — couts, lead time, MOQ, lifecycle
   inventory.promotions      — promotions actives
   sales.produits            — catalogue produits
   sales.boutiques           — boutiques actives
@@ -171,7 +171,7 @@ def get_product_info(sku) -> Dict[str, Any]:
                pm.moq, pm.holding_cost_pct, pm.order_cost,
                pm.lifecycle_stage
         FROM sales.produits p
-        LEFT JOIN inventory.product_master pm ON pm.sku = p.sku
+        LEFT JOIN inventory.products pm ON pm.sku = p.sku
         WHERE p.sku = %s
     """, (sku,), fetch="one")
 
@@ -401,7 +401,7 @@ def prefetch_store_data(store_id: str) -> Dict[str, Any]:
             SELECT p.sku, p.nom AS product_name, p.categorie AS category,
                    pm.unit_cost, pm.unit_price, pm.lead_time_days, pm.moq, pm.lifecycle_stage
             FROM sales.produits p
-            LEFT JOIN inventory.product_master pm ON pm.sku = p.sku
+            LEFT JOIN inventory.products pm ON pm.sku = p.sku
             WHERE p.sku IN ({placeholders})
         """, tuple(skus))
         product_map = {int(r["sku"]): r for r in product_rows} if product_rows else {}
@@ -414,7 +414,7 @@ def prefetch_store_data(store_id: str) -> Dict[str, Any]:
         "stock": stock_map,
         "products": product_map,
         "nb_skus": len(skus),
-        "nb_ruptures": sum(1 for s in stock_map.values() if int(s.get("quantity", 0)) <= 0),
+        "nb_ruptures": sum(1 for s in stock_map.values() if int(s.get("stock_available", s.get("stock_on_hand", 0)) or 0) <= 0),
     }
 
 

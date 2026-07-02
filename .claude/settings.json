@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git rm *)",
+      "Bash(git -C \"d:/backend/multi-agent-sales-inventory\" status --short)",
+      "Read(//c/Program Files/PostgreSQL/17/bin/**)"
+    ],
+    "additionalDirectories": [
+      "D:\\frontend\\PFE\\src\\app\\layout\\sidebar",
+      "D:\\frontend\\PFE\\src\\app\\layout\\navbar",
+      "D:\\frontend\\PFE\\src\\app"
+    ]
+  }
+}

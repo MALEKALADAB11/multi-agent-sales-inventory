@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[4]))
 
-from src.agents.decision.nodes import create_decide_node
+from src.agents.decision.nodes import create_decide_node, create_constraints_check_node
 from src.agents.decision.tools import (
     action_to_recommendation_type,
     confidence_to_float,
@@ -51,14 +51,15 @@ except Exception:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class DecisionAgentState(TypedDict):
-    messages:           Annotated[Sequence[BaseMessage], operator.add]
-    sku:                str
-    store_id:           str
-    business_objective: str
-    baseline_report:    Dict[str, Any]   # analysis_report from analysis agent
-    context_report:     Dict[str, Any]   # context_report from context agent (may be empty)
-    adjusted_metrics:   Dict[str, Any]   # re-computed with uplift applied
-    decision:           Dict[str, Any]   # populated by decide node
+    messages:                Annotated[Sequence[BaseMessage], operator.add]
+    sku:                     str
+    store_id:                str
+    business_objective:      str
+    baseline_report:         Dict[str, Any]   # analysis_report from analysis agent
+    context_report:          Dict[str, Any]   # context_report from context agent (may be empty)
+    adjusted_metrics:        Dict[str, Any]   # re-computed with uplift applied
+    decision:                Dict[str, Any]   # populated by decide node or constraints_check
+    constraints_violations:  list             # populated by constraints_check node
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -114,8 +115,15 @@ class InventoryDecisionAgent:
                         "[DecisionAgent] Compiling graph (use_llm=%s) — once per process", use_llm
                     )
                     workflow = StateGraph(DecisionAgentState)
+                    workflow.add_node("constraints_check", create_constraints_check_node())
                     workflow.add_node("decide", create_decide_node(self.llm, use_llm))
-                    workflow.set_entry_point("decide")
+                    workflow.set_entry_point("constraints_check")
+                    # Route: if constraints_check already set a decision (hard block) → END
+                    #        otherwise → decide
+                    workflow.add_conditional_edges(
+                        "constraints_check",
+                        lambda s: END if s.get("decision") else "decide",
+                    )
                     workflow.add_edge("decide", END)
                     InventoryDecisionAgent._compiled_graphs[use_llm] = workflow.compile()
                     logger.info(
@@ -190,14 +198,15 @@ class InventoryDecisionAgent:
             _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
             result = self.graph.invoke(
                 {
-                    "messages":           [],
-                    "sku":                sku,
-                    "store_id":           store_id,
-                    "business_objective": business_objective,
-                    "baseline_report":    analysis_report,
-                    "context_report":     ctx,
-                    "adjusted_metrics":   adjusted_metrics,
-                    "decision":           {},
+                    "messages":               [],
+                    "sku":                    sku,
+                    "store_id":               store_id,
+                    "business_objective":     business_objective,
+                    "baseline_report":        analysis_report,
+                    "context_report":         ctx,
+                    "adjusted_metrics":       adjusted_metrics,
+                    "decision":               {},
+                    "constraints_violations": [],
                 },
                 config={"callbacks": _callbacks} if _callbacks else {},
             )
@@ -213,12 +222,13 @@ class InventoryDecisionAgent:
             )
 
             final = {
-                "sku":               sku,
-                "store_id":          store_id,
-                "business_objective": business_objective,
-                "decision":          decision,
-                "adjusted_metrics":  adjusted_metrics,
-                "recommendation_id": recommendation_id,
+                "sku":                    sku,
+                "store_id":               store_id,
+                "business_objective":     business_objective,
+                "decision":               decision,
+                "adjusted_metrics":       adjusted_metrics,
+                "recommendation_id":      recommendation_id,
+                "constraints_violations": result.get("constraints_violations", []),
             }
 
             # ── Close agent_run — success ─────────────────────────────────

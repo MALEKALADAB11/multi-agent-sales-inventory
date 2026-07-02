@@ -416,10 +416,25 @@ def extract_series_from_sales(
     """
     try:
         df = sales_df.copy()
-        df["sku"]      = df["sku"].astype(str)
-        df["store_id"] = df["store_id"].astype(str)
 
-        mask = (df["sku"] == str(sku)) & (df["store_id"] == str(store_id))
+        # Normalise SKU column — tolère sku / product_id / article_id
+        sku_col = next((c for c in ["sku", "product_id", "article_id"] if c in df.columns), None)
+        if sku_col is None:
+            return [0.0] * 7
+        if sku_col != "sku":
+            df = df.rename(columns={sku_col: "sku"})
+        df["sku"] = df["sku"].astype(str)
+
+        # Normalise store column
+        store_col = next((c for c in ["store_id", "store", "boutique_id"] if c in df.columns), None)
+        if store_col is None:
+            mask = df["sku"] == str(sku)
+        else:
+            if store_col != "store_id":
+                df = df.rename(columns={store_col: "store_id"})
+            df["store_id"] = df["store_id"].astype(str)
+            mask = (df["sku"] == str(sku)) & (df["store_id"] == str(store_id))
+
         sub  = df[mask].copy()
 
         if sub.empty:

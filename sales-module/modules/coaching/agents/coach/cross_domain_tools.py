@@ -6,6 +6,12 @@ Section 4.2 — CoachAgent StateGraph
 
 Tous les outils interrogent la DB ou Redis dynamiquement.
 Aucune valeur de stock, SKU ou quantité codée en dur.
+
+SPRINT 5 — S5.2 : score_product() implémente la formule de fusion Sales×Inventory
+de l'architecture agentique (§8 CoachAgent Cross-Domain) :
+    final_score = 0.30*sales_gap_alignment + 0.20*stock_health
+                + 0.15*margin_score + 0.15*promotion_priority
+                + 0.10*advisor_fit + 0.10*customer_fit
 """
 
 from __future__ import annotations
@@ -32,37 +38,48 @@ async def get_sales_context(store_id: str, advisor_id: str = "") -> Dict[str, An
             timeout=3,
         )
         try:
-            # CA actuel dynamique
+            # CA actuel dynamique depuis transactions_rt (données du jour en temps réel)
             row = await conn.fetchrow("""
                 SELECT
-                    COALESCE(SUM(t.montant), 0) AS ca_actuel,
-                    COALESCE(AVG(t.montant), 0) AS panier_moy,
-                    COUNT(*)                    AS nb_transactions,
-                    o.objectif_journalier       AS objectif
-                FROM sales.transactions t
-                JOIN sales.objectifs    o
-                  ON o.store_id = t.store_id
-                 AND o.date     = CURRENT_DATE
+                    COALESCE(SUM(t.lig_ttc), 0) AS ca_actuel,
+                    COALESCE(AVG(t.lig_ttc), 0) AS panier_moy,
+                    COUNT(*)                     AS nb_transactions
+                FROM sales.transactions_rt t
                 WHERE t.store_id = $1
-                  AND t.date     = CURRENT_DATE
-                  AND o.store_id = $1
+                  AND t.date_only = CURRENT_DATE
+                  AND t.lig_ttc  > 0
             """, store_id)
 
             ca_actuel  = float(row["ca_actuel"]  or 0)
             panier_moy = float(row["panier_moy"] or 0)
             nb_tx      = int(row["nb_transactions"] or 0)
 
-            # Objectif : depuis DB ou moyenne des 30 derniers jours de cette boutique
-            if row["objectif"]:
-                objectif = float(row["objectif"])
+            # Objectif journalier depuis sales.objectifs (store-level, agent_id IS NULL)
+            obj_row = await conn.fetchrow("""
+                SELECT objectif_ca AS objectif_journalier
+                FROM sales.objectifs
+                WHERE store_id = $1
+                  AND agent_id IS NULL
+                  AND date_objectif = CURRENT_DATE
+                LIMIT 1
+            """, store_id)
+
+            if obj_row and obj_row["objectif_journalier"]:
+                objectif = float(obj_row["objectif_journalier"])
             else:
-                obj_row = await conn.fetchrow("""
-                    SELECT AVG(objectif_journalier) AS avg_obj
-                    FROM sales.objectifs
-                    WHERE store_id = $1
-                      AND date >= CURRENT_DATE - INTERVAL '30 days'
+                # Fallback: moyenne historique depuis transactions
+                hist_row = await conn.fetchrow("""
+                    SELECT AVG(daily_ca) AS avg_obj
+                    FROM (
+                        SELECT date_only, SUM(lig_ttc) AS daily_ca
+                        FROM sales.transactions_rt
+                        WHERE store_id = $1
+                          AND date_only >= CURRENT_DATE - INTERVAL '30 days'
+                          AND date_only  < CURRENT_DATE
+                        GROUP BY date_only
+                    ) sub
                 """, store_id)
-                objectif = float(obj_row["avg_obj"] or 0) if obj_row and obj_row["avg_obj"] else 0.0
+                objectif = float(hist_row["avg_obj"] or 1007) if hist_row and hist_row["avg_obj"] else 1007.0
 
             gap_amount = max(0, objectif - ca_actuel)
             gap_pct     = round(gap_amount / objectif * 100, 1) if objectif > 0 else 0
@@ -336,6 +353,202 @@ def check_promotions(sku: str, store_id: str) -> Dict[str, Any]:
 
 # ── Outil 8 — get_realtime_kpis ─────────────────────────────────────────────
 
+# ── Outil 9 — score_product (Cross-Domain Fusion Formula, Sprint 5) ─────────
+
+def score_product(
+    product:         Dict[str, Any],
+    sales_context:   Dict[str, Any],
+    advisor_history: Dict[str, Any],
+    has_promo:       bool = False,
+) -> Dict[str, Any]:
+    """
+    Compute the cross-domain fusion score for a product.
+
+    Formula (§8 CoachAgent Cross-Domain, ARCHITECTURE_AGENTIQUE_COMMUNICATION.md):
+        final_score = 0.30 * sales_gap_alignment
+                    + 0.20 * stock_health
+                    + 0.15 * margin_score
+                    + 0.15 * promotion_priority
+                    + 0.10 * advisor_fit
+                    + 0.10 * customer_fit
+
+    Args:
+        product:        One item from get_recommendable_products()
+        sales_context:  Output of get_sales_context()
+        advisor_history:Output of retrieve_advisor_history()
+        has_promo:      Whether an active promo exists for this product
+
+    Returns:
+        {
+            "sku":               str,
+            "name":              str,
+            "price":             float,
+            "final_score":       float,   # [0.0 – 1.0]
+            "components":        dict,    # per-criterion scores for explainability
+            "recommendation_reason": str, # human-readable justification
+        }
+    """
+    price          = float(product.get("price", 0))
+    stock_qty      = int(product.get("stock_current", 0))
+    stock_optimal  = max(1.0, float(product.get("stock_optimal", 10)))
+    margin_pct     = float(product.get("margin_pct", 20))
+    days_to_out    = float(product.get("days_to_stockout", 30))
+    category       = str(product.get("category", ""))
+    is_top_seller  = bool(product.get("is_top_seller", False))
+    risk_level     = str(product.get("risk_level", "LOW"))
+
+    gap_amount = float(sales_context.get("gap_amount", 0))
+    gap_pct    = float(sales_context.get("gap_pct", 0))
+    objectif   = max(1.0, float(sales_context.get("objectif", 1)))
+
+    # ── C1: Sales Gap Alignment (0–1) ─────────────────────────────────────
+    # How well does the product price address the remaining gap?
+    if gap_amount <= 0:
+        sales_gap_alignment = 0.3  # gap already filled — minor push still useful
+    elif price <= 0:
+        sales_gap_alignment = 0.0
+    else:
+        coverage = price / gap_amount
+        if coverage >= 1.0:
+            sales_gap_alignment = 1.0
+        elif coverage >= 0.5:
+            sales_gap_alignment = 0.7
+        elif coverage >= 0.2:
+            sales_gap_alignment = 0.5
+        else:
+            sales_gap_alignment = 0.2
+        # Boost if gap is urgent (> 30%)
+        if gap_pct > 30:
+            sales_gap_alignment = min(1.0, sales_gap_alignment * 1.15)
+
+    # ── C2: Stock Health (0–1) ─────────────────────────────────────────────
+    # High stock = safe to push; critical/zero = penalised
+    if stock_qty == 0 or risk_level == "CRITICAL":
+        stock_health = 0.0
+    elif risk_level == "HIGH" or days_to_out < 3:
+        stock_health = 0.25
+    elif risk_level == "MEDIUM" or days_to_out < 7:
+        stock_health = 0.55
+    else:
+        ratio = min(1.0, stock_qty / stock_optimal)
+        stock_health = 0.7 + 0.3 * ratio
+
+    # ── C3: Margin Score (0–1) ─────────────────────────────────────────────
+    # Normalize margin 0–50% range → 0–1
+    margin_score = min(1.0, margin_pct / 50.0)
+
+    # ── C4: Promotion Priority (0–1) ──────────────────────────────────────
+    if has_promo:
+        promotion_priority = 1.0
+    elif is_top_seller:
+        promotion_priority = 0.6
+    else:
+        promotion_priority = 0.2
+
+    # ── C5: Advisor Fit (0–1) ─────────────────────────────────────────────
+    # Use advisor's historical performance on this category
+    strong_cats = advisor_history.get("strong", {})
+    weak_cats   = advisor_history.get("weak", {})
+    acceptance  = float(advisor_history.get("acceptance", 0.5))
+
+    if category in strong_cats:
+        advisor_fit = min(1.0, 0.6 + float(strong_cats[category]) * 0.4)
+    elif category in weak_cats:
+        advisor_fit = max(0.1, 0.4 - float(weak_cats.get(category, 0)) * 0.3)
+    else:
+        advisor_fit = acceptance  # neutral → use overall acceptance rate
+
+    # ── C6: Customer Fit (0–1) ────────────────────────────────────────────
+    # Proxy: top-sellers have higher customer fit; flagship products score well
+    if is_top_seller:
+        customer_fit = 0.9
+    elif price >= 800:
+        customer_fit = 0.7  # premium products convert less but increase CA/unit
+    elif price >= 300:
+        customer_fit = 0.6
+    else:
+        customer_fit = 0.5
+
+    # ── Final weighted score ───────────────────────────────────────────────
+    final_score = (
+        0.30 * sales_gap_alignment
+        + 0.20 * stock_health
+        + 0.15 * margin_score
+        + 0.15 * promotion_priority
+        + 0.10 * advisor_fit
+        + 0.10 * customer_fit
+    )
+
+    # ── Explainability ────────────────────────────────────────────────────
+    top_reason = max(
+        [
+            ("gap CA", sales_gap_alignment * 0.30),
+            ("stock sain", stock_health * 0.20),
+            ("marge", margin_score * 0.15),
+            ("promo active", promotion_priority * 0.15),
+            ("fit conseiller", advisor_fit * 0.10),
+            ("fit client", customer_fit * 0.10),
+        ],
+        key=lambda x: x[1],
+    )[0]
+
+    name = product.get("name", "Produit")
+    recommendation_reason = (
+        f"{name} recommandé principalement pour : {top_reason} "
+        f"(score={final_score:.2f}, promo={'oui' if has_promo else 'non'}, "
+        f"stock={stock_qty}u, marge={margin_pct:.0f}%)"
+    )
+
+    return {
+        "sku":           product.get("sku", ""),
+        "name":          name,
+        "price":         price,
+        "final_score":   round(final_score, 4),
+        "components": {
+            "sales_gap_alignment": round(sales_gap_alignment, 3),
+            "stock_health":        round(stock_health, 3),
+            "margin_score":        round(margin_score, 3),
+            "promotion_priority":  round(promotion_priority, 3),
+            "advisor_fit":         round(advisor_fit, 3),
+            "customer_fit":        round(customer_fit, 3),
+        },
+        "recommendation_reason": recommendation_reason,
+    }
+
+
+def rank_products(
+    products:        List[Dict[str, Any]],
+    sales_context:   Dict[str, Any],
+    advisor_history: Dict[str, Any],
+    promos:          Optional[Dict[str, bool]] = None,
+    top_n:           int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    Score and rank all candidate products using score_product().
+    Returns top_n products sorted by final_score descending.
+
+    Args:
+        products:        From get_recommendable_products()
+        sales_context:   From get_sales_context()
+        advisor_history: From retrieve_advisor_history()
+        promos:          {sku: has_promo} dict from check_promotions()
+        top_n:           Number of top products to return
+
+    Returns: list of score_product() dicts, sorted by final_score DESC
+    """
+    promos = promos or {}
+    scored = [
+        score_product(
+            product         = p,
+            sales_context   = sales_context,
+            advisor_history = advisor_history,
+            has_promo       = promos.get(str(p.get("sku", "")), False),
+        )
+        for p in products
+    ]
+    return sorted(scored, key=lambda x: x["final_score"], reverse=True)[:top_n]
+
+
 def get_realtime_kpis(store_id: str) -> Dict[str, Any]:
     """KPIs temps réel : TX conversion, panier moyen heure courante — dynamique."""
     try:
@@ -351,13 +564,14 @@ def get_realtime_kpis(store_id: str) -> Dict[str, Any]:
                 hour = _dt.datetime.now().hour
                 row  = await conn.fetchrow("""
                     SELECT
-                        COUNT(*)                     AS nb_tx,
-                        COALESCE(AVG(montant), 0)    AS panier_moy,
-                        COALESCE(SUM(montant), 0)    AS ca_heure
-                    FROM sales.transactions
+                        COUNT(*)                      AS nb_tx,
+                        COALESCE(AVG(lig_ttc), 0)     AS panier_moy,
+                        COALESCE(SUM(lig_ttc), 0)     AS ca_heure
+                    FROM sales.transactions_rt
                     WHERE store_id = $1
-                      AND date     = CURRENT_DATE
-                      AND EXTRACT(HOUR FROM heure) = $2
+                      AND date_only = CURRENT_DATE
+                      AND EXTRACT(HOUR FROM date_vente) = $2
+                      AND lig_ttc  > 0
                 """, store_id, hour)
                 return {
                     "store_id":  store_id,

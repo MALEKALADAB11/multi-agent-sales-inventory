@@ -15,6 +15,12 @@ import json, random, time
 from datetime import datetime
 from dotenv import load_dotenv
 
+# Force UTF-8 on Windows (cp1252 choke on emojis/accents in logs)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(BASE_DIR, "inventory-module"))
 sys.path.insert(0, os.path.join(BASE_DIR, "sales-module"))
@@ -49,11 +55,9 @@ from modules.coaching.agents.stratege.agent import get_stratege_agent
 
 from monitoring_router import router as monitoring_router
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
+_log_handler = logging.StreamHandler(sys.stderr)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%H:%M:%S"))
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
 logger = logging.getLogger(__name__)
 
 # ── Registry multi-connexions (remplace _active_stores slot unique) ───────────
@@ -93,6 +97,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.middleware import SlowAPIMiddleware
+    _limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
+    app.state.limiter = _limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
+    logger.info("✅ slowapi rate limiting activé")
+except ImportError:
+    logger.warning("⚠️ slowapi non installé — rate limiting désactivé (pip install slowapi)")
+except Exception as _e:
+    logger.warning("⚠️ slowapi init échoué (%s) — rate limiting désactivé", _e)
+
 app.include_router(auth_router)
 app.include_router(inventory_router, prefix="/api/inventory")
 app.include_router(cycle_router)
@@ -106,6 +125,20 @@ try:
     logger.info("✅ Coach Chat RAG (LangGraph) chargé")
 except ImportError as e:
     logger.warning(f"⚠️ coach_chat_rag non trouvé: {e}")
+
+try:
+    from hitl_router import router as hitl_router
+    app.include_router(hitl_router)
+    logger.info("✅ HITL router chargé")
+except ImportError as e:
+    logger.warning(f"⚠️ hitl_router non trouvé: {e}")
+
+try:
+    from supervisor_router import router as supervisor_router
+    app.include_router(supervisor_router)
+    logger.info("✅ SupervisorAgent router chargé (S8.1)")
+except ImportError as e:
+    logger.warning(f"⚠️ supervisor_router non trouvé: {e}")
 
 
 # ── Broadcast vers toutes les connexions actives d'un store ──────────────────
@@ -164,11 +197,24 @@ async def startup_event():
         logger.warning(f"⚠️ Monitoring tables: {e}")
 
     try:
+        from hitl_router import setup_hitl_table
+        await setup_hitl_table()
+    except Exception as e:
+        logger.warning(f"⚠️ HITL table: {e}")
+
+    try:
         from modules.coaching.agents.coach.tools import ensure_interactions_table
         ensure_interactions_table()
         logger.info("✅ Coach interactions table prête")
     except Exception as e:
         logger.warning(f"⚠️ Coach interactions table: {e}")
+
+    try:
+        from modules.coaching.orchestrator.bootstrap import initialize_coach_stratege_orchestrator
+        await initialize_coach_stratege_orchestrator()
+        logger.info("✅ Coach-Stratège orchestrator initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Coach-Stratège orchestrator: {e}")
 
     try:
         from agent_logger import _get_conn as _pg
@@ -226,10 +272,26 @@ async def startup_event():
     stock_sim = None
     simulator = RealtimeSimulator(store_id="I63", interval=15)
 
-    def _on_sale(store_id: str, sku: str, units: int) -> None:
-        sku_str = str(sku)
+    _RT_DB_CFG = {
+        "host":     os.getenv("POSTGRES_HOST", "localhost"),
+        "port":     int(os.getenv("POSTGRES_PORT", "5432")),
+        "database": os.getenv("POSTGRES_DB", "ooredoo_sales"),
+        "user":     os.getenv("POSTGRES_USER", "postgres"),
+        "password": os.getenv("POSTGRES_PASSWORD", "admin"),
+    }
 
-        # ── Mise à jour mémoire ────────────────────────────────────────────
+    def _on_sale(store_id: str, sku: str, units: int) -> None:
+        """
+        Callback temps réel : une vente vient d'être enregistrée dans transactions_rt.
+        1. Décrémente quantity_available dans inventory.stock_levels (persistence PG)
+        2. Met à jour le cache mémoire _live_stock
+        3. Broadcast WebSocket immédiat avec le nouveau niveau de stock
+        4. Déclenche une alerte si stock critique
+        """
+        sku_str = str(sku)
+        sku_int = int(sku) if str(sku).isdigit() else None
+
+        # ── 1. Lire stock actuel depuis PG ou cache ────────────────────────
         try:
             from db.repositories.inventory_repo import SyncInventoryRepo
             db_row = SyncInventoryRepo.get_stock_level(sku_str, store_id)
@@ -238,36 +300,86 @@ async def startup_event():
 
         if sku_str not in _live_stock:
             if db_row is not None:
-                _live_stock[sku_str] = float(db_row.get("stock_current") or db_row.get("quantity_available") or 0)
+                _live_stock[sku_str] = float(
+                    db_row.get("quantity_available") or db_row.get("stock_on_hand") or 0
+                )
             else:
                 override = InventoryDataCache._stock_overrides.get((sku_str, store_id))
-                _live_stock[sku_str] = float(override) if override is not None else 0.0
+                _live_stock[sku_str] = float(override) if override is not None else 50.0
 
         current   = _live_stock[sku_str]
-        new_stock = max(0, current - units)
+        new_stock = max(0.0, current - units)
         _live_stock[sku_str] = new_stock
         InventoryDataCache.record_sale(sku_str, store_id, units)
-        logger.info("Sale: %s | %.0f -> %.0f units (-%d)", sku_str, current, new_stock, units)
 
-        # ── Broadcast + alertes stock bas ─────────────────────────────────
-        async def _sale_and_broadcast():
+        severity = (
+            "rupture"  if new_stock == 0  else
+            "critical" if new_stock <= 3  else
+            "warning"  if new_stock <= 10 else
+            "ok"
+        )
+        logger.info(
+            "[RT_SYNC] Sale %s@%s | stock %.0f→%.0f (-%d) [%s]",
+            sku_str, store_id, current, new_stock, units, severity
+        )
+
+        # ── 2. Persister le décrement dans PostgreSQL (async, non bloquant) ─
+        async def _persist_and_broadcast():
+            # Décrement stock_levels dans PG
+            if sku_int is not None:
+                try:
+                    import asyncpg as _apg
+                    _conn = await _apg.connect(**_RT_DB_CFG, timeout=5)
+                    await _conn.execute("""
+                        UPDATE inventory.stock_levels
+                        SET quantity_available = GREATEST(0, COALESCE(quantity_available, quantity, 0) - $1),
+                            quantity           = GREATEST(0, COALESCE(quantity, 0) - $2),
+                            last_sold          = NOW(),
+                            updated_at         = NOW()
+                        WHERE store_id = $3 AND sku = $4
+                    """, units, units, store_id, sku_int)
+                    await _conn.close()
+                    logger.debug("[RT_SYNC] PG stock_levels decremented: %s@%s -%d", sku_str, store_id, units)
+                except Exception as e:
+                    logger.debug("[RT_SYNC] PG decrement skipped: %s", e)
+
+            # Broadcast immédiat vers le frontend — event dédié temps réel
+            rt_event = json.dumps({
+                "type":       "realtime_stock_update",
+                "sku":        sku_str,
+                "store_id":   store_id,
+                "units_sold": units,
+                "stock_before": round(current),
+                "stock_after":  round(new_stock),
+                "severity":   severity,
+                "timestamp":  datetime.utcnow().isoformat(),
+                "message":    (
+                    f"Vente SKU {sku_str} : stock {int(current)}→{int(new_stock)} unités"
+                    + (" ⚠️ RUPTURE" if severity == "rupture" else
+                       " 🔴 CRITIQUE" if severity == "critical" else
+                       " 🟡 BAS" if severity == "warning" else "")
+                ),
+            })
+            await _broadcast(store_id, rt_event)
+
+            # Invalidate inventory cache + alerte si seuil critique
             try:
                 invalidate_store(store_id, sku=sku_str, new_stock=new_stock)
-                if new_stock < 10:
+                if severity in ("rupture", "critical"):
                     from src.api.routes import _broadcast_to_store
                     await _broadcast_to_store(store_id, {
                         "type":     "stock_alert",
                         "sku":      sku_str,
-                        "stock":    new_stock,
-                        "severity": "critical" if new_stock <= 3 else "warning",
-                        "message":  f"Stock critique : SKU {sku_str} — {int(new_stock)} unites restantes",
+                        "stock":    int(new_stock),
+                        "severity": severity,
+                        "message":  f"⚠️ Stock {severity} : SKU {sku_str} — {int(new_stock)} unités restantes",
                     })
             except Exception as e:
-                logger.debug("[sale_broadcast] %s", e)
+                logger.debug("[RT_SYNC] broadcast: %s", e)
 
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.create_task(_sale_and_broadcast())
+            asyncio.create_task(_persist_and_broadcast())
 
     simulator.on_sale = _on_sale
     simulator.start()
@@ -292,7 +404,21 @@ async def startup_event():
 
     asyncio.create_task(_delayed_trigger_start())
     logger.info("✅ Orchestration préparée")
-    logger.info("🚀 All systems started — v4.0.0")
+
+    # ── TimesFM/Prophet preload (S5.5) — évite la latence au premier appel ─
+    async def _preload_timesfm():
+        try:
+            from mcp_servers.timefm.tools import TimesFMTools
+            _tfm = TimesFMTools()
+            await _tfm.load_model()
+            # Cache l'instance sur app.state pour réutilisation dans les routes
+            app.state.timefm_tools = _tfm
+            logger.info("✅ TimesFM/Prophet préchargé")
+        except Exception as e:
+            logger.warning(f"⚠️ TimesFM preload: {e}")
+
+    asyncio.create_task(_preload_timesfm())
+    logger.info("🚀 All systems started — v5.0.0")
 
 
 @app.on_event("shutdown")
@@ -427,7 +553,7 @@ async def _get_advisors_from_pg(store_id: str, cr: float, dt: float) -> list:
                         t.agent_id,
                         COALESCE(a.agent_name, t.agent_id::text) AS full_name,
                         SUM(t.lig_ttc) AS revenue_total
-                    FROM sales.transactions_history t
+                    FROM sales.transactions t
                     LEFT JOIN sales.agents a
                            ON a.agent_id = t.agent_id AND a.store_id = $1
                     WHERE t.store_id = $1 AND t.lig_ttc > 0
@@ -459,9 +585,7 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
     cycle_id = f"cycle-{uuid.uuid4().hex[:8]}"
     started  = datetime.utcnow()
 
-    print(f"\n{'='*60}")
-    print(f"  🤖 AGENT ANALYSTE — Cycle #{cycle} @ {datetime.now().strftime('%H:%M:%S')} | {store_id}")
-    print(f"{'='*60}")
+    logger.info("[CYCLE #%d] AGENT ANALYSTE @ %s | %s", cycle, datetime.now().strftime("%H:%M:%S"), store_id)
 
     provider = get_data_provider()
     try:
@@ -525,10 +649,10 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         gap_amt   = result.get("gap_amount", gap_amt)
         feo       = result.get("forecast_eod", feo)
         cov       = result.get("coverage", cov)
-        print(f"  💬 {analyst_summary[:100]}")
+        logger.info("[ANALYST] summary: %s", analyst_summary[:100])
     except (Exception, asyncio.CancelledError) as e:
         analyst_summary = _make_fallback_summary(gap_pct, urg_level, cr, dt_val, feo)
-        logger.warning(f"[ANALYST] Fallback: {str(e)[:80]}")
+        logger.warning("[ANALYST] Fallback: %s", str(e)[:80])
 
     analyst_output = {
         "pos_data": pos_data, "pos_history": pos_history, "prediction": prediction,
@@ -541,16 +665,17 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         "metrics": {"cycle_id": cycle_id, "store_id": store_id},
     }
 
-    print(f"\n  🎯 AGENT STRATÈGE — Cycle #{cycle}")
+    logger.info("[CYCLE #%d] AGENT STRATEGE", cycle)
     stratege_output: dict = {}
     try:
         stratege    = get_stratege_agent()
         strat_state = await stratege.ainvoke(analyst_output)
         ctx         = (strat_state.get("external_context") or {}).get("summary") or {}
         nb_actions  = len(strat_state.get("strategie_actions") or [])
-        print(f"  Météo   : {ctx.get('weather_icon','')} {ctx.get('weather_label','')}")
-        print(f"  Cause   : {str(strat_state.get('cause_racine',''))[:60]}")
-        print(f"  Actions : {nb_actions}")
+        logger.info("[STRATEGE] meteo=%s | cause=%s | actions=%d",
+                    ctx.get("weather_label",""),
+                    str(strat_state.get("cause_racine",""))[:60],
+                    nb_actions)
         stratege_output = {
             "strategie":          strat_state.get("strategie",""),
             "strategie_actions":  strat_state.get("strategie_actions",[]),
@@ -829,6 +954,70 @@ def _build_payload(analysis: dict) -> dict:
 # Séparé du handler WS → les reconnexions n'interrompent pas le cycle
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _broadcast_inventory_alerts(frontend_id: str, store_id: str) -> None:
+    """
+    S7.5 — Fetch critical stock items from inventory.stock_levels and
+    broadcast an 'inventory_alerts' WS event to the frontend.
+    Runs as fire-and-forget task after each agent cycle.
+    """
+    try:
+        alerts = await asyncio.get_event_loop().run_in_executor(
+            None, _fetch_critical_stock_sync, store_id
+        )
+        if not alerts:
+            return
+        nb_critical = sum(1 for a in alerts if a.get("severity") == "critical")
+        await _broadcast(frontend_id, json.dumps({
+            "type":        "inventory_alerts",
+            "store_id":    store_id,
+            "alerts":      alerts[:10],
+            "nb_critical": nb_critical,
+            "nb_warning":  len(alerts) - nb_critical,
+            "timestamp":   datetime.utcnow().isoformat(),
+        }, default=str))
+        if nb_critical > 0:
+            logger.info("[INV ALERTS] %s — %d critical alerts broadcasté", store_id, nb_critical)
+    except Exception as e:
+        logger.debug("[INV ALERTS] %s: %s", store_id, e)
+
+
+def _fetch_critical_stock_sync(store_id: str) -> list:
+    """Sync helper: query inventory.stock_levels for SKUs at risk."""
+    try:
+        import psycopg2, psycopg2.extras
+        conn = psycopg2.connect(**{
+            "host":     os.getenv("POSTGRES_HOST", "localhost"),
+            "port":     int(os.getenv("POSTGRES_PORT", 5432)),
+            "dbname":   os.getenv("POSTGRES_DB", "ooredoo_sales"),
+            "user":     os.getenv("POSTGRES_USER", "postgres"),
+            "password": os.getenv("POSTGRES_PASSWORD", "admin"),
+            "connect_timeout": 5,
+        })
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT sl.sku, p.nom AS product_name,
+                       COALESCE(sl.quantity_available, sl.quantity, 0) AS stock_qty,
+                       pm.lead_time_days,
+                       CASE
+                         WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 0  THEN 'critical'
+                         WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 3  THEN 'critical'
+                         WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 10 THEN 'warning'
+                       END AS severity
+                FROM inventory.stock_levels sl
+                LEFT JOIN sales.produits p ON p.sku = sl.sku
+                LEFT JOIN inventory.products pm ON pm.sku = sl.sku
+                WHERE sl.store_id = %s
+                  AND COALESCE(sl.quantity_available, sl.quantity, 0) <= 10
+                ORDER BY COALESCE(sl.quantity_available, sl.quantity, 0) ASC
+                LIMIT 20
+            """, (store_id,))
+            rows = cur.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 async def _agent_loop(mapped_id: str, frontend_id: str) -> None:
     """
     Boucle agent indépendante des connexions WS.
@@ -895,7 +1084,10 @@ async def _agent_loop(mapped_id: str, frontend_id: str) -> None:
             payload = _build_payload(analysis)
             await _broadcast(frontend_id, json.dumps(payload, default=str))
             nb_bytes = len(json.dumps(payload, default=str))
-            print(f"\n📤 Payload #{cycle} ({nb_bytes:,} bytes) — prochain dans 2min")
+            logger.info("[CYCLE #%d] Payload %s bytes -> %s", cycle, f"{nb_bytes:,}", frontend_id)
+
+            # S7.5 — Broadcast inventory alerts séparé si SKUs critiques ───────
+            asyncio.create_task(_broadcast_inventory_alerts(frontend_id, mapped_id))
         except Exception as e:
             logger.error(f"[AGENT LOOP] Cycle #{cycle} erreur: {e}")
 
@@ -918,7 +1110,7 @@ async def ws_store(websocket: WebSocket, store_id: str):
     await websocket.accept()
 
     mapped_id = STORE_MAP.get(store_id, "I63")
-    print(f"\n[WS] Frontend connecté → {store_id} (mapped={mapped_id})")
+    logger.info("[WS] Frontend connecte -> %s (mapped=%s)", store_id, mapped_id)
 
     # Enregistrer la connexion
     if store_id not in _store_connections:
@@ -956,7 +1148,7 @@ async def ws_store(websocket: WebSocket, store_id: str):
                 break
 
     except WebSocketDisconnect:
-        print(f"\n[WS] Déconnecté : {store_id}")
+        logger.info("[WS] Deconnecte : %s", store_id)
     except Exception as e:
         logger.error(f"[WS] Erreur: {e}")
     finally:
@@ -965,7 +1157,7 @@ async def ws_store(websocket: WebSocket, store_id: str):
             _store_connections[store_id].discard(websocket)
             nb = len(_store_connections[store_id])
             logger.info(f"[WS] {store_id} — {nb} connexion(s) restante(s)")
-        print(f"🔓 Connexion libérée → {store_id}")
+        logger.info("[WS] Connexion liberee -> %s", store_id)
 
 
 @app.websocket("/ws/advisor/{advisor_id}")

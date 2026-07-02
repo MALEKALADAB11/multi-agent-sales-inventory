@@ -9,7 +9,7 @@ Tables utilisees :
   sales.transactions, sales.transactions_rt
   sales.vw_ca_par_boutique, sales.vw_stock_enriched
   sales.vw_performance_agent, sales.vw_top_products
-  inventory.stock_levels, inventory.product_master
+  inventory.stock_levels, inventory.products
   inventory.stock_history, inventory.sales_history, inventory.promotions
   inventory.vw_stock_risk, inventory.vw_velocity
 
@@ -419,22 +419,22 @@ async def fetch_stock_enriched(store_id: str, limit: int = 200) -> list:
     try:
         rows = await conn.fetch("""
             SELECT sl.sku, p.nom AS product_name, p.categorie, p.famille,
-                   p.prix_ttc, p.marge_pct,
-                   sl.quantity, COALESCE(sl.quantity_reserved, 0) AS quantity_reserved,
-                   COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), sl.quantity, 0) AS stock_dispo,
+                   p.prix_ttc, p.marge_pct_calc AS marge_pct,
+                   COALESCE(sl.quantity_available, sl.quantity, 0) AS quantity,
+                   COALESCE(sl.quantity_available, sl.quantity, 0) AS stock_dispo,
                    CASE
-                       WHEN COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), 0) <= 0  THEN 'rupture'
-                       WHEN COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), 0) <= 5  THEN 'critical'
-                       WHEN COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), 0) <= 15 THEN 'warning'
+                       WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 0  THEN 'rupture'
+                       WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 5  THEN 'critical'
+                       WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 15 THEN 'warning'
                        ELSE 'ok'
                    END AS stock_risk,
-                   sl.last_received, sl.last_sold, sl.updated_at,
+                   sl.last_updated AS updated_at,
                    pm.lead_time_days, pm.moq, pm.unit_cost, pm.lifecycle_stage
             FROM inventory.stock_levels sl
-            JOIN sales.produits p ON p.sku = sl.sku
-            LEFT JOIN inventory.product_master pm ON pm.sku = sl.sku
+            LEFT JOIN sales.produits p ON p.sku = sl.sku
+            LEFT JOIN inventory.products pm ON pm.sku = sl.sku
             WHERE sl.store_id = $1
-            ORDER BY COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), 0) ASC
+            ORDER BY COALESCE(sl.quantity_available, sl.quantity, 0) ASC
             LIMIT $2
         """, sid, limit)
         return [dict(r) for r in rows]

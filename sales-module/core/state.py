@@ -93,6 +93,15 @@ class SalesAgentState(TypedDict, total=False):
     strategie_source: Optional[str]           # "success"|"cached"|"stale_cache"|"fallback"|"pre_loaded"
     strategie_cached: Optional[bool]          # True si retour depuis cache LRU
 
+    # Analyste TS robuste (v3) — nouveaux champs séries temporelles
+    trend_signal: Optional[str]               # "ACCELERATING"|"DECELERATING"|"STABLE"|"UNKNOWN"
+    seasonal_factor: Optional[float]          # facteur DOW × mois (>1 = haute saison)
+    autocorrelation_lag7: Optional[float]     # ACF lag-7 (0..1, >0.5 = forte périodicité)
+    is_atypical_day: Optional[bool]           # True si z-score journée > 1.5
+    overall_z_score: Optional[float]          # z-score global journée vs historique
+    forecast_ci: Optional[dict]               # {eod_ci_low, eod_ci_high} à 80%
+    react_source: Optional[str]               # "openrouter/..."|"ollama/..."|"fallback_static"
+
 
 AgentState = SalesAgentState
 
@@ -197,4 +206,13 @@ def initial_state(
         supervisor_routing=None,
         circuit_states=None,
         v5_extension=None,
+
+        # Analyste TS robuste (v3)
+        trend_signal=None,
+        seasonal_factor=None,
+        autocorrelation_lag7=None,
+        is_atypical_day=None,
+        overall_z_score=None,
+        forecast_ci=None,
+        react_source=None,
     )

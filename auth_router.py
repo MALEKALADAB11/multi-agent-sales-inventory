@@ -178,6 +178,50 @@ def _get_user_from_token(token: str) -> Optional[dict]:
         conn.close()
 
 
+async def validate_store_access(
+    token: Optional[str],
+    requested_store_id: str,
+    *,
+    raise_on_missing_token: bool = False,
+) -> Optional[dict]:
+    """
+    RBAC store-level check (S6.3).
+
+    Rules:
+      - No token         → allowed (backwards compat) unless raise_on_missing_token=True
+      - role=manager     → allowed on any store
+      - role=vendeur     → allowed only on their own store_id
+      - mismatch         → 403
+
+    Returns the user dict if allowed, None if no token and not required.
+    """
+    if not token:
+        if raise_on_missing_token:
+            raise HTTPException(status_code=401, detail="Token requis")
+        return None
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    user = await loop.run_in_executor(None, _get_user_from_token, token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Token invalide ou expiré")
+
+    if user["role"] == "manager":
+        return user  # manager can access any store
+
+    # Normalize: "I63" ↔ "store-lac2" style ids may differ — compare both raw and by suffix
+    def _norm(s: str) -> str:
+        return s.lower().replace("-", "").replace("_", "").replace("store", "")
+
+    if _norm(user["store_id"]) != _norm(requested_store_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Accès refusé — votre compte est lié à '{user['store_id']}', "
+                   f"pas à '{requested_store_id}'",
+        )
+    return user
+
+
 def _fmt(row: dict) -> dict:
     return {
         "id":        row["user_id"],

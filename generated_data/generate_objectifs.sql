@@ -8,15 +8,16 @@ SELECT
     NULL,
     d::date,
     CASE
-        WHEN b.ville IN ('TUNIS', 'Tunis') THEN 1200 + (random() * 400)::int
-        WHEN b.ville IN ('SOUSSE', 'Sousse', 'SFAX', 'Sfax') THEN 1000 + (random() * 300)::int
-        ELSE 700 + (random() * 300)::int
+        WHEN b.store_id = 'I63' THEN 8500 + (random() * 1500)::int   -- Lac 2 flagship
+        WHEN b.ville IN ('TUNIS', 'Tunis') THEN 6500 + (random() * 2000)::int
+        WHEN b.ville IN ('SOUSSE', 'Sousse', 'SFAX', 'Sfax') THEN 4500 + (random() * 1500)::int
+        ELSE 3000 + (random() * 1500)::int
     END,
     CASE
-        WHEN b.ville IN ('TUNIS', 'Tunis') THEN 12 + (random() * 8)::int
-        ELSE 8 + (random() * 6)::int
+        WHEN b.ville IN ('TUNIS', 'Tunis') THEN 50 + (random() * 30)::int
+        ELSE 30 + (random() * 20)::int
     END,
-    65 + (random() * 35)::int
+    120 + (random() * 60)::int
 FROM sales.boutiques b
 CROSS JOIN generate_series(CURRENT_DATE - INTERVAL '45 days', CURRENT_DATE + INTERVAL '14 days', '1 day') AS d
 WHERE b.active = true;

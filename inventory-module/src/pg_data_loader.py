@@ -277,8 +277,8 @@ def load_product_master(sku: int = None) -> pd.DataFrame:
                    pm.unit_cost, pm.unit_price, pm.lead_time_days,
                    pm.lead_time_std, pm.moq, pm.holding_cost_pct,
                    pm.order_cost, pm.lifecycle_stage
-            FROM inventory.product_master pm
-            JOIN sales.produits p ON p.sku = pm.sku
+            FROM inventory.products pm
+            LEFT JOIN sales.produits p ON p.sku = pm.sku
             WHERE pm.sku = %(sku)s
         """, {"sku": int(sku)})
     return _read_sql("""
@@ -286,8 +286,8 @@ def load_product_master(sku: int = None) -> pd.DataFrame:
                pm.unit_cost, pm.unit_price, pm.lead_time_days,
                pm.lead_time_std, pm.moq, pm.holding_cost_pct,
                pm.order_cost, pm.lifecycle_stage
-        FROM inventory.product_master pm
-        JOIN sales.produits p ON p.sku = pm.sku
+        FROM inventory.products pm
+        LEFT JOIN sales.produits p ON p.sku = pm.sku
     """)
 
 
@@ -359,26 +359,30 @@ def get_available_stores() -> List[str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_stock_levels(store_id: str = None) -> pd.DataFrame:
-    """Remplace toute lecture de stock_current/stock_centre."""
+    """Charge le snapshot stock actuel."""
     if store_id:
         return _read_sql("""
             SELECT sl.store_id, sl.sku, p.nom AS product_name, p.categorie AS category,
-                   sl.quantity, COALESCE(sl.quantity_reserved, 0) AS quantity_reserved,
-                   COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), 0) AS available,
-                   sl.last_received, sl.last_sold, sl.updated_at
+                   COALESCE(sl.quantity_available, sl.quantity, 0) AS quantity,
+                   COALESCE(sl.quantity_reserved, 0) AS quantity_reserved,
+                   COALESCE(sl.quantity_available, sl.quantity, 0) AS available,
+                   COALESCE(sl.last_updated, sl.updated_at) AS last_updated,
+                   sl.last_sold
             FROM inventory.stock_levels sl
-            JOIN sales.produits p ON p.sku = sl.sku
+            LEFT JOIN sales.produits p ON p.sku = sl.sku
             WHERE sl.store_id = %(store_id)s
-            ORDER BY sl.quantity ASC
+            ORDER BY COALESCE(sl.quantity_available, sl.quantity, 0) ASC
         """, {"store_id": store_id})
     return _read_sql("""
         SELECT sl.store_id, sl.sku, p.nom AS product_name, p.categorie AS category,
-               sl.quantity, COALESCE(sl.quantity_reserved, 0) AS quantity_reserved,
-               COALESCE(sl.quantity - COALESCE(sl.quantity_reserved, 0), 0) AS available,
-               sl.last_received, sl.last_sold
+               COALESCE(sl.quantity_available, sl.quantity, 0) AS quantity,
+               COALESCE(sl.quantity_reserved, 0) AS quantity_reserved,
+               COALESCE(sl.quantity_available, sl.quantity, 0) AS available,
+               COALESCE(sl.last_updated, sl.updated_at) AS last_updated,
+               sl.last_sold
         FROM inventory.stock_levels sl
-        JOIN sales.produits p ON p.sku = sl.sku
-        ORDER BY sl.store_id, sl.quantity ASC
+        LEFT JOIN sales.produits p ON p.sku = sl.sku
+        ORDER BY sl.store_id, COALESCE(sl.quantity_available, sl.quantity, 0) ASC
     """)
 
 

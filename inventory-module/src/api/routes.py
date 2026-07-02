@@ -37,6 +37,18 @@ _orchestrator_fast = None
 CACHE_TTL = 3600  # 1 hour — keeps data through a full work session without forcing a reload
 _store_cache: Dict[str, Dict[str, Any]] = {}
 
+import decimal as _decimal
+
+def _json_safe(obj: Any) -> Any:
+    """Recursively convert Decimal/non-serializable types for JSON."""
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, _decimal.Decimal):
+        return float(obj)
+    return obj
+
 # ── Demo / quality settings ──────────────────────────────────────────────────
 # Cap the number of SKUs analyzed per store. This directly controls:
 #   - pipeline duration (fewer SKUs = faster)
@@ -87,9 +99,10 @@ BROADCAST_DEBOUNCE_SECONDS = 2.0
 async def _broadcast_to_store(store_id: str, message: dict) -> None:
     connections = _active_ws_connections.get(store_id, [])
     dead = []
+    safe_message = _json_safe(message)
     for ws, _ in connections:
         try:
-            await ws.send_json(message)
+            await ws.send_json(safe_message)
         except Exception:
             dead.append(ws)
     for ws in dead:
@@ -559,13 +572,14 @@ def _enrich_with_product_master(results: List[Dict[str, Any]]) -> List[Dict[str,
             [["product_name", "category", "unit_cost", "moq", "lead_time_days"]]
             .rename(columns={"product_name": "name"})
         )
+        pm.index = pm.index.astype(str)
     except Exception as exc:
         logger.warning("Could not load product_master for enrichment: %s", exc)
         return results
 
     enriched = []
     for r in results:
-        sku = r.get("sku", "")
+        sku = str(r.get("sku", ""))
         if sku in pm.index:
             r = dict(r)
             r["product_info"] = pm.loc[sku].to_dict()
@@ -1186,12 +1200,12 @@ async def ws_inventory(
         cached = _get_cached(store_id, business_objective)
         if cached is not None:
             # Cache warm — send immediately
-            await websocket.send_json({
+            await websocket.send_json(_json_safe({
                 "type": "inventory_update",
                 "store_id": store_id,
                 "business_objective": business_objective,
                 **cached,
-            })
+            }))
             logger.info("Sent cached snapshot to WebSocket: %s (%d items)", store_id, len(cached.get("items", [])))
         else:
             # Cache cold — tell the frontend to use HTTP polling and wait

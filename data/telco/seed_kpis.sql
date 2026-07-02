@@ -156,16 +156,16 @@ SELECT
 FROM (
     SELECT
         store_id,
-        DATE_TRUNC('month', date_only) AS target_mois,
+        DATE_TRUNC('month', kpi_date) AS target_mois,
         SUM(ca_realise) AS monthly_ca,
         SUM(nb_sim_activations) AS monthly_sim,
         SUM(nb_postpaye) AS monthly_postpaye,
         SUM(nb_terminaux) AS monthly_terminaux
     FROM store_kpi_daily
     WHERE kpi_date >= CURRENT_DATE - INTERVAL '6 months'
-    GROUP BY store_id, DATE_TRUNC('month', date_only)
+    GROUP BY store_id, DATE_TRUNC('month', kpi_date)
 ) hist
-GROUP BY store_id, DATE_TRUNC('month', target_mois)
+GROUP BY store_id, target_mois
 ON CONFLICT DO NOTHING;
 
 SELECT 'telco_targets_monthly: ' || COUNT(*) || ' store targets' FROM telco_targets_monthly;

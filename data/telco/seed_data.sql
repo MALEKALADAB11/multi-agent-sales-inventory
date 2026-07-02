@@ -233,7 +233,7 @@ SELECT
          1.65 * COALESCE(STDDEV(daily.qty),0) * SQRT(COALESCE(p.lead_time_days,14))),
     GREATEST(1, CEIL(SQRT(
         2 * AVG(daily.qty) * 365 * COALESCE(p.order_cost,50) /
-        (COALESCE(p.prix_ttc,100) * 0.20)
+        (GREATEST(COALESCE(p.prix_ttc,100), 1) * 0.20)
     ))),
     0.95,
     30

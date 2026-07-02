@@ -28,8 +28,9 @@ from .react_tools import REACT_ANALYST_TOOLS
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL",   "llama3.2:latest")
+OLLAMA_URL        = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")
+OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",      "llama3.2:latest")
+ANALYST_LLM_MODEL = os.getenv("ANALYST_LLM_MODEL", "openai/gpt-4o-mini")
 
 MAX_REACT_STEPS  = 6
 CLOSING_HOUR     = 20
@@ -75,8 +76,11 @@ def _has_tool_calling() -> bool:
 # ══════════════════════════════════════════════════════════════════════════════
 
 REACT_SYSTEM_PROMPT = """\
-Tu es l'Agent Analyste Séries Temporelles pour Ooredoo Tunisie (magasin {store_id}).
+Tu es l'Agent Analyste Séries Temporelles Robuste pour Ooredoo Tunisie (magasin {store_id}).
 Objectif journalier : {daily_target} TND. Heure actuelle : {current_time}.
+
+Tu disposes de 11 outils d'analyse statistique avancée. Ta mission : produire une analyse
+temps réel complète couvrant performance actuelle, prévisions multi-horizon, anomalies et stock.
 
 ## CYCLE REACT — à chaque step :
 1. Observe les données disponibles
@@ -85,33 +89,64 @@ Objectif journalier : {daily_target} TND. Heure actuelle : {current_time}.
 4. Observe le résultat et itère
 
 ## OUTILS DISPONIBLES :
-- fetch_live_pos          : CA actuel, TX, panier moyen — appelle EN PREMIER et si tu veux rafraîchir
-- compute_eod_forecast    : Prévision EOD (linéaire + saisonnier + TimesFM)
-- compute_realtime_gap    : Gap vs objectif + urgency_score — appelle APRÈS forecast
-- get_intraday_trend      : Vélocité et accélération de l'heure courante
-- get_seasonal_context    : Facteurs saisonniers (DOW, mois, événements) depuis 3 ans d'historique
-- get_historical_comparison : Comparaison avec même jour semaine passée
+### Bloc 1 — Performance instantanée (appelle dans cet ordre)
+- fetch_live_pos            : CA actuel, TX, panier moyen — PREMIER APPEL OBLIGATOIRE
+- compute_eod_forecast      : Prévision EOD ensemble 4 méthodes (linéaire+saisonnier+vélocité+TimesFM)
+- compute_realtime_gap      : Gap vs objectif + urgency_score + faisabilité
 
-## RÈGLES :
-- Appelle toujours fetch_live_pos en premier
-- Appelle compute_eod_forecast avec le CA retourné par fetch_live_pos
-- Appelle compute_realtime_gap avec l'eod_weighted de compute_eod_forecast
-- Enrichis avec get_seasonal_context et get_intraday_trend pour affiner l'analyse
-- Max {max_steps} appels d'outils au total
+### Bloc 2 — Analyse intraday
+- get_intraday_trend        : Vélocité, accélération, z-score heure courante, peak hours
+- get_historical_comparison : Comparaison même DOW sur 4 semaines
+
+### Bloc 3 — Séries temporelles avancées (NOUVEAUX)
+- detect_sales_anomalies    : Détection anomalies z-score sur 28j de données horaires
+- compute_ts_decomposition  : STL-like : tendance 7j + saisonnalité DOW + autocorrélation lag-7
+- forecast_multi_horizon    : Prévisions J+1h, J+3h, EOD, demain avec IC à 80%
+
+### Bloc 4 — Stock & Vélocité produit (lien temps réel ventes→stock)
+- get_stock_alerts          : Ruptures + CA à risque
+- analyze_product_velocity  : Vélocité SKU (unités/jour) + jours avant rupture par produit
+
+### Bloc 5 — Contexte saisonnier
+- get_seasonal_context      : Facteurs saisonniers 3 ans (DOW, mois, événements Ramadan/Eid)
+
+## STRATÉGIE D'APPEL (MAX {max_steps} APPELS) :
+1. fetch_live_pos → toujours premier
+2. compute_eod_forecast (avec current_ca de l'étape 1)
+3. compute_realtime_gap (avec eod_weighted + daily_target)
+4. analyze_product_velocity → lien ventes temps réel ↔ stock
+5. detect_sales_anomalies OU compute_ts_decomposition selon urgence
+6. forecast_multi_horizon pour planification multi-horizon
+
+## RÈGLES MÉTIER :
+- Si stock_urgency_boost > 0 : ajoute-le à urgency_score (max 1.0)
+- Si nb_ruptures >= 2 et urgency_level "LOW" : monte à "MEDIUM"
+- Si trend_signal "DECELERATING" et gap_pct > 20 : monte urgence d'un niveau
+- Si overall_z_score > 2 (journée atypique) : mentionne-le dans analyst_summary
+- Si days_to_stockout <= 2 pour un top-produit : inclure dans strategy_query
 
 ## FORMAT DE CONCLUSION (JSON strict, dernier message) :
 {{
-  "urgency_level":  "LOW|MEDIUM|HIGH|CRITICAL",
-  "urgency_score":  0.0..1.0,
-  "gap_pct":        float,
-  "gap_amount":     float,
-  "eod_forecast":   float,
-  "daily_target":   float,
-  "coverage_pct":   float,
-  "analyst_summary": "résumé en français pour les conseillers (2-3 phrases)",
-  "strategy_query": "requête courte pour l'agent stratège",
-  "seasonal_factor": float,
-  "trend_signal":   "ACCELERATING|DECELERATING|STABLE|UNKNOWN"
+  "urgency_level":       "LOW|MEDIUM|HIGH|CRITICAL",
+  "urgency_score":       0.0..1.0,
+  "gap_pct":             float,
+  "gap_amount":          float,
+  "eod_forecast":        float,
+  "daily_target":        float,
+  "coverage_pct":        float,
+  "nb_ruptures":         int,
+  "nb_critical_stock":   int,
+  "revenue_at_risk_tnd": float,
+  "trend_signal":        "ACCELERATING|DECELERATING|STABLE|UNKNOWN",
+  "seasonal_factor":     float,
+  "autocorrelation_lag7": float,
+  "is_atypical_day":     bool,
+  "overall_z_score":     float,
+  "forecast_eod_ci_low":  float,
+  "forecast_eod_ci_high": float,
+  "nb_urgent_products":  int,
+  "analyst_summary":     "résumé en français 2-3 phrases : performance + tendance + anomalies + stock urgents",
+  "strategy_query":      "requête pour le stratège : gap + tendance + produits urgents + contexte saisonnier"
 }}
 """
 
@@ -184,7 +219,7 @@ async def _react_with_tool_calling(store_id: str, daily_target: float, llm) -> d
 # ══════════════════════════════════════════════════════════════════════════════
 
 MANUAL_REACT_PROMPT = """\
-Tu es l'Agent Analyste Séries Temporelles Ooredoo {store_id}.
+Tu es l'Agent Analyste Séries Temporelles Robuste Ooredoo {store_id}.
 Objectif: {daily_target} TND | Heure: {current_time}
 
 À chaque step, réponds avec UN JSON parmi :
@@ -192,10 +227,13 @@ Objectif: {daily_target} TND | Heure: {current_time}
   ou pour conclure :
   {{"thought":"...", "action":"FINISH", "result":{{...résultat final...}}}}
 
-Outils: fetch_live_pos, compute_eod_forecast, compute_realtime_gap,
-        get_intraday_trend, get_seasonal_context, get_historical_comparison
+Outils disponibles:
+  fetch_live_pos, compute_eod_forecast, compute_realtime_gap,
+  get_intraday_trend, get_seasonal_context, get_historical_comparison, get_stock_alerts,
+  detect_sales_anomalies, compute_ts_decomposition, forecast_multi_horizon, analyze_product_velocity
 
-Règle: fetch_live_pos en premier, puis compute_eod_forecast, puis compute_realtime_gap.
+Ordre recommandé: fetch_live_pos → compute_eod_forecast → compute_realtime_gap →
+                  analyze_product_velocity → detect_sales_anomalies → forecast_multi_horizon
 Max {max_steps} steps.
 
 Step 1 — commence maintenant :"""
@@ -327,8 +365,10 @@ async def node_react_analyst(state: SalesAgentState) -> dict:
     except Exception as e:
         logger.warning("[ANALYST ReAct] LLM failed (%s): %s — using static fallback", llm_mode, e)
 
-    # Fallback si réponse vide ou incomplète
-    if not react_result.get("urgency_level"):
+    # Fallback si réponse vide, incomplète, ou EOD aberrant
+    ca_now = float(pos_data.get("current_revenue", 0) or 0)
+    eod_returned = float(react_result.get("eod_forecast", 0) or 0)
+    if not react_result.get("urgency_level") or eod_returned <= 0 or eod_returned < ca_now * 0.5:
         react_result = _fallback_result(store_id, pos_data)
         react_result["_source"] = "fallback_static"
     else:
@@ -356,10 +396,24 @@ async def node_react_analyst(state: SalesAgentState) -> dict:
         "coverage":           float(react_result.get("coverage_pct", 100)),
         "analyst_summary":    react_result.get("analyst_summary", ""),
         "route_to":           "strategie",
-        # Champs enrichis pour le stratège
+        # Séries temporelles avancées
         "seasonal_factor":    float(react_result.get("seasonal_factor", 1.0)),
         "trend_signal":       react_result.get("trend_signal", "UNKNOWN"),
+        "autocorrelation_lag7": float(react_result.get("autocorrelation_lag7", 0.0)),
+        "is_atypical_day":    bool(react_result.get("is_atypical_day", False)),
+        "overall_z_score":    float(react_result.get("overall_z_score", 0.0)),
+        "forecast_ci": {
+            "eod_ci_low":  float(react_result.get("forecast_eod_ci_low", 0)),
+            "eod_ci_high": float(react_result.get("forecast_eod_ci_high", 0)),
+        },
         "react_source":       react_result.get("_source", "unknown"),
+        # Stock + vélocité produit (lien ventes→stock temps réel)
+        "inventory_snapshot": {
+            "nb_ruptures":         int(react_result.get("nb_ruptures", 0)),
+            "nb_critical_stock":   int(react_result.get("nb_critical_stock", 0)),
+            "revenue_at_risk_tnd": float(react_result.get("revenue_at_risk_tnd", 0.0)),
+            "nb_urgent_products":  int(react_result.get("nb_urgent_products", 0)),
+        },
         # Champs compatibilité anciens nodes (pour save_memory)
         "analysis_features":  {
             "nb_transactions": int(pos_data.get("nb_transactions_today", 0)),

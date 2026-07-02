@@ -57,8 +57,8 @@ charset-normalizer==3.4.0
 ollama==0.4.4
 
 # ── Forecasting ───────────────────────────────────────────────
-timesfm==1.2.9
-torch==2.1.2
+timesfm==2.0.1
+torch>=2.2.0
 utilsforecast==0.2.4
 huggingface-hub
 
@@ -102,6 +102,12 @@ filelock==3.16.1
 fsspec==2024.10.0
 sympy==1.13.3
 networkx==3.4.2
+
+# ── Rate Limiting ─────────────────────────────────────────────
+slowapi==0.1.9
+
+# ── Forecasting (optional statistical models) ─────────────────
+statsforecast==1.7.6
 
 # ── Testing ───────────────────────────────────────────────────
 pytest==8.3.4

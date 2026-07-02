@@ -737,3 +737,131 @@ def _try_publish_alert(decision: Dict[str, Any], state: Dict[str, Any]) -> None:
         logger.debug("[Decision] sales-module non accessible — alerte Redis non publiée")
     except Exception as exc:
         logger.debug("[Decision] _try_publish_alert: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Constraints Check Node (S4.5)
+# ═══════════════════════════════════════════════════════════════════════════
+
+import os as _os
+
+_BUDGET_CAP_DT = float(_os.getenv("INVENTORY_BUDGET_CAP_DT", "100000"))
+
+
+def _constraints_check_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pre-decide node: validate hard business constraints before the LLM/rule engine runs.
+
+    Checks:
+      1. Budget cap   — total_replenishment_cost > INVENTORY_BUDGET_CAP_DT
+      2. MOQ gap      — formula_order_qty < MOQ (auto-adjusts up or blocks)
+      3. Lead time vs days remaining — stockout-before-arrival detection
+      4. EOL/discontinued with high risk → escalate flag
+
+    Writes `constraints_violations` list and optionally `decision` to state
+    when a hard block applies (skipping the decide node for that case).
+    """
+    sku      = state.get("sku", "?")
+    store_id = state.get("store_id", "?")
+
+    (risk_level, days_remaining, formula_order_qty,
+     reorder_point, repl_cost, overstock_flag, lead_time_avg) = _extract_adjusted(state)
+    cons = _extract_constraints(state)
+
+    violations: list[Dict[str, Any]] = []
+    hard_block = False
+    block_reason = ""
+
+    # ── Check 1: Budget cap ───────────────────────────────────────────────
+    if repl_cost > _BUDGET_CAP_DT and formula_order_qty > 0:
+        violations.append({
+            "type":    "budget_cap",
+            "message": (
+                f"Order cost {repl_cost:,.0f} DT exceeds budget cap "
+                f"{_BUDGET_CAP_DT:,.0f} DT for SKU={sku}@{store_id}. "
+                f"Manual approval required."
+            ),
+            "severity": "hard",
+        })
+        hard_block   = True
+        block_reason = f"Budget cap exceeded ({repl_cost:,.0f} DT > {_BUDGET_CAP_DT:,.0f} DT)"
+        logger.warning("[constraints_check] Budget cap violated — %s@%s cost=%.0f", sku, store_id, repl_cost)
+
+    # ── Check 2: MOQ alignment ────────────────────────────────────────────
+    moq = cons["moq"]
+    if formula_order_qty > 0 and formula_order_qty < moq:
+        adjusted_qty = moq
+        adj_cost     = repl_cost * (moq / max(formula_order_qty, 1))
+        violations.append({
+            "type":    "moq_adjustment",
+            "message": (
+                f"Formula qty {formula_order_qty:.0f} < MOQ {moq:.0f} for SKU={sku}. "
+                f"Adjusted up to {adjusted_qty:.0f} (cost {adj_cost:,.0f} DT)."
+            ),
+            "severity":      "soft",
+            "adjusted_qty":  adjusted_qty,
+            "adjusted_cost": adj_cost,
+        })
+        # Inject adjusted qty back into adjusted_metrics so decide node sees it
+        adj_m = dict((state.get("adjusted_metrics") or {}).get("metrics") or {})
+        adj_m["formula_order_qty"] = float(adjusted_qty)
+        adj_metrics = dict(state.get("adjusted_metrics") or {})
+        adj_metrics["metrics"] = adj_m
+        state = {**state, "adjusted_metrics": adj_metrics}
+        logger.info("[constraints_check] MOQ adjusted %s→%s for %s@%s",
+                    formula_order_qty, adjusted_qty, sku, store_id)
+
+    # ── Check 3: Stockout-before-arrival ─────────────────────────────────
+    if days_remaining < lead_time_avg and not overstock_flag and risk_level in ("CRITICAL", "HIGH"):
+        deficit_days = lead_time_avg - days_remaining
+        violations.append({
+            "type":    "stockout_before_arrival",
+            "message": (
+                f"Stock runs out in {days_remaining:.0f}d but lead time is {lead_time_avg:.0f}d "
+                f"(deficit {deficit_days:.0f}d). Expedite order required for SKU={sku}@{store_id}."
+            ),
+            "severity":     "warning",
+            "deficit_days": round(deficit_days, 1),
+        })
+
+    # ── Check 4: EOL / discontinued ───────────────────────────────────────
+    if cons["lifecycle"] in ("end_of_life", "discontinued") and risk_level == "CRITICAL":
+        violations.append({
+            "type":    "eol_critical",
+            "message": (
+                f"SKU={sku} is {cons['lifecycle']} but CRITICAL risk — "
+                f"verify intentional drawdown before ordering."
+            ),
+            "severity": "hard",
+        })
+        hard_block   = True
+        block_reason = f"EOL/discontinued product at CRITICAL risk — human review required"
+
+    # ── Hard block → short-circuit decide ────────────────────────────────
+    if hard_block:
+        blocked_decision: Dict[str, Any] = {
+            "action":              "HOLD",
+            "order_qty":           None,
+            "order_qty_rationale": "Blocked by constraints_check node.",
+            "urgency":             "none",
+            "decision_rationale":  block_reason,
+            "confidence":          "low",
+            "trade_offs":          "Cannot proceed without human approval.",
+            "escalate_to_human":   True,
+            "escalation_reason":   block_reason,
+            "recommendation_text": f"Order blocked: {block_reason}",
+            "reasoning_source":    "constraints_check_block",
+        }
+        logger.warning("[constraints_check] Hard block on %s@%s — %s", sku, store_id, block_reason)
+        return {**state, "constraints_violations": violations, "decision": blocked_decision}
+
+    if violations:
+        logger.info("[constraints_check] %d soft violation(s) for %s@%s — proceeding to decide",
+                    len(violations), sku, store_id)
+
+    return {**state, "constraints_violations": violations}
+
+
+def create_constraints_check_node():
+    """Factory — returns the constraints_check node function."""
+    return _constraints_check_node

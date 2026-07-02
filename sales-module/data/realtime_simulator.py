@@ -104,7 +104,7 @@ class RealtimeSimulator:
                         COUNT(*) AS nb_tx,
                         ROUND(AVG(lig_ttc), 2) AS avg_ticket,
                         ROUND(SUM(lig_ttc), 2) AS ca_total
-                    FROM sales.transactions_history
+                    FROM sales.transactions
                     WHERE store_id = $1
                       AND agent_id IS NOT NULL
                     GROUP BY agent_id
@@ -123,15 +123,16 @@ class RealtimeSimulator:
 
                 sku_rows = await conn.fetch("""
                     SELECT
-                        cod_prod AS sku,
-                        des_produit,
-                        ROUND(AVG(lig_ttc), 2) AS avg_price,
+                        t.sku,
+                        COALESCE(p.nom, t.sku::text) AS des_produit,
+                        ROUND(AVG(t.lig_ttc), 2) AS avg_price,
                         COUNT(*) AS nb_ventes
-                    FROM sales.transactions_history
-                    WHERE store_id = $1
-                      AND cod_prod IS NOT NULL
-                      AND lig_ttc > 0
-                    GROUP BY cod_prod, des_produit
+                    FROM sales.transactions t
+                    LEFT JOIN sales.produits p ON p.sku = t.sku
+                    WHERE t.store_id = $1
+                      AND t.sku IS NOT NULL
+                      AND t.lig_ttc > 0
+                    GROUP BY t.sku, p.nom
                     ORDER BY nb_ventes DESC
                     LIMIT 20
                 """, self.store_id)

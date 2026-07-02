@@ -32,7 +32,7 @@ OLLAMA_URL        = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")
 OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",       "llama3.2:latest")
 OPENROUTER_KEY    = os.getenv("OPENROUTER_API_KEY", "")
 # Modèle héritage — fallback si factory non disponible
-OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL",   "openai/gpt-oss-120b:free")
+OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL",   "nvidia/nemotron-3-super-120b-a12b:free")
 OPENROUTER_URL    = "https://openrouter.ai/api/v1/chat/completions"
 MILVUS_URI        = "http://localhost:19530"
 EMBED_DIM         = 768
@@ -139,11 +139,10 @@ async def _get_critical_stock(store_id="I63", threshold=5):
         try:
             rows = await conn.fetch("""
                 SELECT s.sku,
-                       COALESCE(p.nom, s.sku::text) AS product_name,
-                       COALESCE(s.stock_dispo, 0)          AS stock_qty,
+                       s.product_name,
+                       COALESCE(s.stock_dispo, 0) AS stock_qty,
                        s.stock_risk
                 FROM sales.vw_stock_enriched s
-                LEFT JOIN sales.produits p ON s.sku = p.sku
                 WHERE s.store_id = $1
                   AND (s.stock_risk IN ('rupture','critical')
                        OR COALESCE(s.stock_dispo, 0) <= $2)
@@ -411,42 +410,55 @@ def _generate_alerts(gap_pct, urgency, hour, hrs_rem, w_eff, weather_label,
 # NODE 4 — Generate Strategy (OpenRouter ou Ollama)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_OR_MODEL_ROTATION = [
+    os.getenv("OPENROUTER_MODEL",          "nvidia/nemotron-3-super-120b-a12b:free"),
+    os.getenv("OPENROUTER_MODEL_FALLBACK", "openai/gpt-oss-120b:free"),
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+]
+
 async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
                                     urgency: str) -> tuple[str, float]:
-    """Appel OpenRouter pour la génération de stratégie JSON."""
+    """Appel OpenRouter avec rotation automatique sur rate-limit."""
     t0 = time.time()
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=45) as client:
-            resp = await client.post(
-                OPENROUTER_URL,
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_KEY}",
-                    "Content-Type":  "application/json",
-                    "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                    "X-Title":       "AI Sales Coach Ooredoo - Stratege",
-                },
-                json={
-                    "model":       OPENROUTER_MODEL,
-                    "max_tokens":  800,
-                    "temperature": 0.1,  # bas pour JSON cohérent
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user",   "content": user_msg},
-                    ],
-                },
-            )
-        data = resp.json()
-        if "error" in data:
-            logger.warning(f"[STRATEGE OR] Erreur: {data['error'].get('message','?')[:100]}")
-            return "", (time.time() - t0) * 1000
-        content = data["choices"][0]["message"]["content"].strip()
-        ms = (time.time() - t0) * 1000
-        logger.info(f"[STRATEGE OR] OK — {len(content)} chars | {ms:.0f}ms | {OPENROUTER_MODEL}")
-        return content, ms
-    except Exception as e:
-        logger.warning(f"[STRATEGE OR] {str(e)[:80]}")
-        return "", (time.time() - t0) * 1000
+    import httpx
+    for model in _OR_MODEL_ROTATION:
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                resp = await client.post(
+                    OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_KEY}",
+                        "Content-Type":  "application/json",
+                        "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                        "X-Title":       "AI Sales Coach Ooredoo - Stratege",
+                    },
+                    json={
+                        "model":       model,
+                        "max_tokens":  800,
+                        "temperature": 0.1,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_msg},
+                        ],
+                    },
+                )
+            data = resp.json()
+            if "error" in data:
+                code = data["error"].get("code", 0)
+                msg  = data["error"].get("message", "?")[:80]
+                logger.warning(f"[STRATEGE OR] {model} → {code}: {msg}")
+                if code in (429, 503):
+                    continue  # rate-limit → essayer le modèle suivant
+                return "", (time.time() - t0) * 1000
+            content = data["choices"][0]["message"]["content"].strip()
+            ms = (time.time() - t0) * 1000
+            logger.info(f"[STRATEGE OR] OK — {len(content)} chars | {ms:.0f}ms | {model}")
+            return content, ms
+        except Exception as e:
+            logger.warning(f"[STRATEGE OR] {model} exception: {str(e)[:60]}")
+            continue
+    return "", (time.time() - t0) * 1000
 
 
 async def node_generate_strategy(state: SalesAgentState) -> dict:
@@ -769,10 +781,38 @@ async def node_self_critique_stratege(state: SalesAgentState) -> dict:
     critique_passed = total_score >= 0.6
     critique_feedback = " | ".join(feedback_parts) if feedback_parts else "✓ Stratégie valide"
 
+    # ── HITL trigger : critique NOK + urgence critique + gap sévère ─────────
+    _HITL_THRESHOLD_GAP = 40.0
+    _HITL_URGENCIES = ("CRITICAL", "HIGH")
+    hitl_required = (
+        not critique_passed
+        and urgency in _HITL_URGENCIES
+        and gap_pct >= _HITL_THRESHOLD_GAP
+    )
+    if hitl_required:
+        try:
+            import asyncio
+            from hitl_router import submit_hitl_review
+            asyncio.create_task(submit_hitl_review(
+                store_id       = _store_id(state),
+                cycle_id       = _cycle_id(state),
+                urgency_level  = urgency,
+                gap_pct        = gap_pct,
+                critique_score = round(total_score, 3),
+                critique_feedback = critique_feedback,
+                strategie_summary = state.get("strategie", "") or state.get("strategie_data", {}).get("strategie_summary", ""),
+                actions        = state.get("strategie_actions", [])[:3],
+                source         = "sales",
+            ))
+            logger.warning("[HITL] Review soumis — urgency=%s gap=%.0f%% score=%.2f",
+                           urgency, gap_pct, total_score)
+        except Exception as _hitl_err:
+            logger.warning("[HITL] submit échoué (non-bloquant): %s", _hitl_err)
+
     duration = (time.time() - t0) * 1000
     logger.info(
-        "[STRATEGE] Self-critique — score=%.2f passed=%s | %s",
-        total_score, critique_passed, critique_feedback[:80],
+        "[STRATEGE] Self-critique — score=%.2f passed=%s hitl=%s | %s",
+        total_score, critique_passed, hitl_required, critique_feedback[:80],
     )
 
     output = {
@@ -782,6 +822,7 @@ async def node_self_critique_stratege(state: SalesAgentState) -> dict:
         "critique_checks":   checks,
         "critique_feedback": critique_feedback,
         "critique_cycles":   int(state.get("critique_cycles", 0)) + 1,
+        "hitl_required":     hitl_required,
     }
     log.node_done("self_critique", log_id, output, duration,
                   {"score": total_score, "passed": critique_passed})

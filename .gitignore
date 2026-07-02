@@ -62,6 +62,7 @@ coaching_scripts_v2.csv
 
 # Generated large data
 generated_data/transactions_6months.csv
+data_generer/
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
