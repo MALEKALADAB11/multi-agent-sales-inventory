@@ -32,7 +32,7 @@ OLLAMA_URL        = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")
 OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",      "llama3.2:latest")
 ANALYST_LLM_MODEL = os.getenv("ANALYST_LLM_MODEL", "openai/gpt-4o-mini")
 
-MAX_REACT_STEPS  = 6
+MAX_REACT_STEPS  = 4
 CLOSING_HOUR     = 20
 
 
@@ -43,11 +43,23 @@ CLOSING_HOUR     = 20
 def _build_llm():
     """
     Construit le LLM pour l'AnalystAgent ReAct.
-    Utilise la factory centralisée (OpenRouter FAST tier) avec fallback Ollama.
+    Force Ollama local — mesuré empiriquement plus rapide (~46s) que le tier
+    gratuit OpenRouter fast (nemotron-120b, 80-133s constaté) pour une boucle
+    ReAct qui fait jusqu'à MAX_REACT_STEPS aller-retours réseau séquentiels.
+    Un modèle 120B partagé/gratuit est un mauvais choix pour ce rôle — le reste
+    du pipeline (stratège, guardrail, coach) continue d'utiliser OpenRouter via
+    LLM_PROVIDER=openrouter, qui reste adapté aux appels uniques.
     """
+    try:
+        from langchain_ollama import ChatOllama
+        return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_URL, temperature=0.0,
+                          num_predict=400, num_ctx=2048)
+    except ImportError:
+        pass
+
+    # Fallback : factory centralisée (OpenRouter) si Ollama indisponible
     import sys
     from pathlib import Path
-    # Accès à la factory inventory-module si path non encore chargé
     inv_path = str(Path(__file__).resolve().parents[6] / "inventory-module")
     if inv_path not in sys.path:
         sys.path.insert(0, inv_path)
@@ -56,14 +68,6 @@ def _build_llm():
         from src.utils.llm_factory import get_fast_llm
         return get_fast_llm()
     except Exception:
-        pass
-
-    # Fallback : Ollama si llm_factory indisponible
-    try:
-        from langchain_ollama import ChatOllama
-        return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_URL, temperature=0.0,
-                          num_predict=400, num_ctx=2048)
-    except ImportError:
         return None
 
 

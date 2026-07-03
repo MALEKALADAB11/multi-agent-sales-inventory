@@ -59,14 +59,20 @@ async def node_sales_branch(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Run the Sales branch: AnalystAgent (ReAct) → StrategistAgent (Reflexion).
     Delegates to the existing cycle orchestration for the store.
+    Reuses the singleton CycleOrchestrator created at app startup (main.py)
+    instead of building a new one per cycle — CycleOrchestrator.__init__ takes
+    (json_svc, timefm), not store_id.
     """
     t0 = time.time()
     store_id = state.get("store_id", "I63")
 
     try:
-        from orchestration.graph import CycleOrchestrator
-        orchestrator = CycleOrchestrator(store_id=store_id)
-        result = await orchestrator.run_cycle(state)
+        from main import app as _main_app
+        orchestrator = _main_app.state.orchestrator
+        result = await orchestrator.run_cycle(
+            store_id=store_id,
+            triggered_by=state.get("trigger_type", "supervisor"),
+        )
         ms = round((time.time() - t0) * 1000)
         agents = list(state.get("agents_invoked", [])) + ["analyst", "strategist"]
         return {
@@ -162,14 +168,43 @@ async def node_inventory_branch(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         sys.path.insert(0, os.path.abspath(inv_path))
 
-        from src.api.routes import _run_inventory_pipeline
+        # analyze_store is a FastAPI route handler with Query(...) defaults —
+        # calling it directly requires passing every kwarg explicitly, otherwise
+        # unpassed params receive the Query() sentinel object instead of their
+        # literal default.
+        # fast=True: rule-based orchestrator, no per-SKU LLM call — measured
+        # fast=False at 143 SKUs to still be running past the 100s cycle budget
+        # (verification 2026-07-02). fast=True is what the route's own docstring
+        # recommends for WS broadcasts. EOQ/reorder-point/riskLevel are still
+        # computed deterministically; only the LLM-narrated recommendation text
+        # is unavailable in this mode.
+        from src.api.routes import analyze_store
         result = await asyncio.get_event_loop().run_in_executor(
-            None, _run_inventory_pipeline, store_id, "avoid_stockout"
+            None,
+            lambda: analyze_store(
+                store_id=store_id,
+                business_objective="avoid_stockout",
+                force_refresh=False,
+                fast=True,
+                page=1,
+                page_size=200,
+            ),
         )
         ms = round((time.time() - t0) * 1000)
         agents = list(state.get("agents_invoked", [])) + ["inventory_analysis", "inventory_decision"]
-        decisions = result.get("decisions", []) if isinstance(result, dict) else []
-        critical  = [d for d in decisions if d.get("decision", {}).get("urgency") in ("immediate", "this_week")]
+        items     = result.get("items", []) if isinstance(result, dict) else []
+        # fast=True doesn't populate decision_result (no LLM narration), so
+        # "recommendation" stays None — fall back to riskLevel/formulaOrderQty
+        # (still deterministic and actionable) to decide what counts as a decision.
+        decisions = [
+            it for it in items
+            if it.get("recommendation") or it.get("riskLevel") in ("critical", "high")
+        ]
+        critical  = [
+            it for it in items
+            if it.get("riskLevel") in ("critical", "high")
+            or it.get("orderTiming") in ("immediate", "this_week")
+        ]
 
         return {
             **state,

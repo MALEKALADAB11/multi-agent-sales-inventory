@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api.routes import router as inventory_router, invalidate_store
+from src.api.supply_routes import router as supply_router
 from src.tools.internal.stock_tools import _DataCache as InventoryDataCache
 from db.repositories.inventory_repo import InventoryRepo
 from db.stock_simulator import StockSimulator
@@ -114,6 +115,7 @@ except Exception as _e:
 
 app.include_router(auth_router)
 app.include_router(inventory_router, prefix="/api/inventory")
+app.include_router(supply_router)
 app.include_router(cycle_router)
 app.include_router(forecast_router)
 app.include_router(stores_router)
@@ -630,29 +632,47 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
             urg_level = "HIGH"; urg_score = max(urg_score, 0.85)
 
     analyst_summary = ""
+    supervisor_result: dict = {}
     try:
-        agent  = get_analyst_agent()
-        result = await agent.ainvoke({
-            "cycle_id": cycle_id, "store_id": store_id,
-            "pos_data": {**pos_data, "current_hour": hour},
-            "pos_history": pos_history, "timesfm_prediction": prediction,
-            "feedback_history": [],
-            "metrics": {"cycle_id":cycle_id,"store_id":store_id,
-                        "triggered_by":"websocket","nodes_executed":0},
-            "errors": [], "warnings": [],
-        })
-        raw             = result.get("analyst_summary","")
-        analyst_summary = _extract_summary(raw, gap_pct, urg_level, cr, dt_val, feo)
-        urg_level = result.get("urgency_level", urg_level)
-        urg_score = result.get("urgency_score", urg_score)
-        gap_pct   = result.get("gap_objectif", gap_pct)
-        gap_amt   = result.get("gap_amount", gap_amt)
-        feo       = result.get("forecast_eod", feo)
-        cov       = result.get("coverage", cov)
-        logger.info("[ANALYST] summary: %s", analyst_summary[:100])
-    except (Exception, asyncio.CancelledError) as e:
+        from orchestration.supervisor_agent import get_supervisor_graph
+        graph = get_supervisor_graph()
+        supervisor_result = await asyncio.wait_for(
+            graph.ainvoke({
+                "cycle_id":       cycle_id,
+                "store_id":       store_id,
+                "trigger_type":   "dashboard_loop",
+                "agents_invoked": [],
+                "errors":         [],
+                "metrics":        {"cycle_id": cycle_id, "store_id": store_id},
+            }),
+            # sales_branch (analyste + stratège) est séquentiel dans CycleOrchestrator
+            # (le stratège consomme la requête RAG construite par l'analyste — vraie
+            # dépendance de données, pas juste historique) et varie 43-108s selon la
+            # latence RAG/OpenRouter observée. 150s laisse une marge réaliste ; en cas
+            # de dépassement le fallback heuristique (PG seul) prend le relais proprement.
+            timeout=150.0,
+        ) or {}
+        raw             = supervisor_result.get("analyst_summary", "")
+        analyst_summary = (
+            _extract_summary(raw, gap_pct, urg_level, cr, dt_val, feo) if raw
+            else _make_fallback_summary(gap_pct, urg_level, cr, dt_val, feo)
+        )
+        urg_level = supervisor_result.get("urgency_level", urg_level)
+        urg_score = supervisor_result.get("urgency_score", urg_score)
+        gap_pct   = round(float(supervisor_result.get("gap_objectif", gap_pct) or gap_pct), 1)
+        gap_amt   = supervisor_result.get("gap_amount", gap_amt)
+        feo       = supervisor_result.get("forecast_eod", feo)
+        cov       = supervisor_result.get("coverage", cov)
+        att       = supervisor_result.get("attainment", att)
+        logger.info(
+            "[SUPERVISOR] agents=%s guardrail=%s summary: %s",
+            supervisor_result.get("agents_invoked", []),
+            supervisor_result.get("guardrail_status", "APPROVE"),
+            analyst_summary[:100],
+        )
+    except (Exception, asyncio.CancelledError, asyncio.TimeoutError) as e:
         analyst_summary = _make_fallback_summary(gap_pct, urg_level, cr, dt_val, feo)
-        logger.warning("[ANALYST] Fallback: %s", str(e)[:80])
+        logger.warning("[SUPERVISOR] Fallback: %s", str(e)[:120])
 
     analyst_output = {
         "pos_data": pos_data, "pos_history": pos_history, "prediction": prediction,
@@ -665,47 +685,41 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         "metrics": {"cycle_id": cycle_id, "store_id": store_id},
     }
 
-    logger.info("[CYCLE #%d] AGENT STRATEGE", cycle)
-    stratege_output: dict = {}
-    try:
-        stratege    = get_stratege_agent()
-        strat_state = await stratege.ainvoke(analyst_output)
-        ctx         = (strat_state.get("external_context") or {}).get("summary") or {}
-        nb_actions  = len(strat_state.get("strategie_actions") or [])
-        logger.info("[STRATEGE] meteo=%s | cause=%s | actions=%d",
-                    ctx.get("weather_label",""),
-                    str(strat_state.get("cause_racine",""))[:60],
-                    nb_actions)
-        stratege_output = {
-            "strategie":          strat_state.get("strategie",""),
-            "strategie_actions":  strat_state.get("strategie_actions",[]),
-            "cause_racine":       strat_state.get("cause_racine",""),
-            "context_heatmap":    strat_state.get("context_heatmap",{}),
-            "context_signals":    strat_state.get("context_signals",[]),
-            "external_context":   strat_state.get("external_context",{}),
-            "message_manager":    strat_state.get("message_manager",""),
-            "focus_produits":     strat_state.get("focus_produits",[]),
-            "rag_used":           strat_state.get("rag_used",False),
-            "nb_rag_scripts":     strat_state.get("nb_rag_scripts",0),
-            "real_time_alerts":   strat_state.get("real_time_alerts",[]),
-        }
-    except (Exception, asyncio.CancelledError) as e:
-        logger.warning(f"[STRATEGE] Fallback: {str(e)[:80]}")
-        stratege_output = {
-            "strategie":"","strategie_actions":[],
-            "cause_racine":f"Gap {gap_pct:.1f}%","context_heatmap":{},
-            "context_signals":[],"external_context":{},"message_manager":"",
-            "focus_produits":[],"rag_used":False,"nb_rag_scripts":0,
-            "real_time_alerts":[],
-        }
+    logger.info("[CYCLE #%d] STRATEGE + INVENTORY + GUARDRAIL (SupervisorAgent)", cycle)
+    stratege_output = {
+        "strategie":          supervisor_result.get("strategie", ""),
+        "strategie_actions":  supervisor_result.get("strategie_actions", []),
+        "cause_racine":       supervisor_result.get("cause_racine", f"Gap {gap_pct:.1f}%"),
+        "context_heatmap":    supervisor_result.get("context_heatmap", {}),
+        "context_signals":    supervisor_result.get("context_signals", []),
+        "external_context":   supervisor_result.get("external_context", {}),
+        "message_manager":    supervisor_result.get("message_manager", ""),
+        "focus_produits":     supervisor_result.get("focus_produits", []),
+        "rag_used":           supervisor_result.get("rag_used", False),
+        "nb_rag_scripts":     supervisor_result.get("nb_rag_scripts", 0),
+        "real_time_alerts":   supervisor_result.get("real_time_alerts", []),
+    }
+
+    # Enrichissement dashboard — sorties du raisonnement unifié multi-domaine
+    # (scoring cross-domaine, décisions stock, guardrail, HITL)
+    supervisor_enrichment = {
+        "guardrail_status":      supervisor_result.get("guardrail_status", "APPROVE"),
+        "guardrail_issues":      supervisor_result.get("guardrail_issues", []),
+        "scored_products":       supervisor_result.get("scored_products", [])[:5],
+        "coach_recommendation":  supervisor_result.get("coach_recommendation", {}),
+        "inventory_decisions":   supervisor_result.get("inventory_decisions", [])[:10],
+        "critical_stock_alerts": supervisor_result.get("critical_stock_alerts", [])[:5],
+        "hitl_required":         supervisor_result.get("hitl_required", False),
+        "agents_invoked":        supervisor_result.get("agents_invoked", []),
+    }
 
     try:
         from agent_logger import log_cycle
         total_ms = (datetime.utcnow() - started).total_seconds() * 1000
         log_cycle(
-            cycle_id=cycle_id, state={**analyst_output, **stratege_output},
+            cycle_id=cycle_id, state={**analyst_output, **stratege_output, **supervisor_enrichment},
             total_ms=total_ms, triggered_by="websocket", store_id=store_id,
-            nodes_executed=2, errors_count=0,
+            nodes_executed=len(supervisor_enrichment.get("agents_invoked", [])) or 2, errors_count=0,
             rag_used=stratege_output.get("rag_used",False),
             nb_rag_scripts=stratege_output.get("nb_rag_scripts",0),
         )
@@ -728,7 +742,7 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         )
     except Exception:
         pass
-    return {**analyst_output, **stratege_output}
+    return {**analyst_output, **stratege_output, **supervisor_enrichment}
 
 
 def _build_payload(analysis: dict) -> dict:
@@ -946,6 +960,14 @@ def _build_payload(analysis: dict) -> dict:
         "real_time_alerts":       analysis.get("real_time_alerts",[]),
         "ca_yesterday_same_hour": cr * 0.88,
         "last_cycle_id":          f"cycle_{datetime.now().strftime('%H%M%S')}",
+        "guardrail_status":       analysis.get("guardrail_status","APPROVE"),
+        "guardrail_issues":       analysis.get("guardrail_issues",[]),
+        "scored_products":        analysis.get("scored_products",[]),
+        "coach_recommendation":   analysis.get("coach_recommendation",{}),
+        "inventory_decisions":    analysis.get("inventory_decisions",[]),
+        "critical_stock_alerts":  analysis.get("critical_stock_alerts",[]),
+        "hitl_required":          analysis.get("hitl_required",False),
+        "agents_invoked":         analysis.get("agents_invoked",[]),
     }
 
 
@@ -1045,21 +1067,37 @@ async def _agent_loop(mapped_id: str, frontend_id: str) -> None:
         feo = prediction.get("forecast_end_of_day",0) or 0
         ul  = "HIGH" if gp>30 else "MEDIUM" if gp>15 else "LOW"
 
+        # ── Réutiliser le dernier cycle réel connu (CronTrigger) si dispo ────────
+        # Évite d'écraser une "Prochaine meilleure action" déjà calculée par un
+        # bootstrap vide à chaque (re)démarrage de _agent_loop — le frontend
+        # affichait "vide" pendant tout le premier cycle (jusqu'à ~2min) alors
+        # que des strategie_actions récentes existaient déjà côté serveur.
+        _trigger = getattr(app.state, "trigger", None)
+        _last    = (_trigger.last_result if _trigger else None) or {}
+        _reuse   = _last.get("store_id") == mapped_id and bool(_last.get("strategie_actions"))
+
         initial_payload = _build_payload({
             "pos_data":pos_data,"pos_history":pos_history,"prediction":prediction,
             "urgency_level":ul,"urgency_score":round(min(1.0,gp/60),3),
             "gap_pct":gp,"gap_amount":ga,
-            "analyst_summary":f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt_:,.0f} TND. Analyse en cours...",
+            "analyst_summary": _last.get("analyst_summary") or
+                f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt_:,.0f} TND. Analyse en cours...",
             "current_revenue":cr,"daily_target":dt_,"forecast_eod":feo,
             "attainment":round((cr/dt_)*100,1) if dt_>0 else 0,
             "coverage":100.0,"mape":14.3,
-            "strategie":"","strategie_actions":[],"cause_racine":"",
-            "context_heatmap":{},"context_signals":[],"external_context":{},
-            "message_manager":"","focus_produits":[],"timesfm_prediction":prediction,
+            "strategie":         _last.get("strategie","")          if _reuse else "",
+            "strategie_actions": _last.get("strategie_actions",[])  if _reuse else [],
+            "cause_racine":      _last.get("cause_racine","")       if _reuse else "",
+            "context_heatmap":   _last.get("context_heatmap",{})    if _reuse else {},
+            "context_signals":   _last.get("context_signals",[])    if _reuse else [],
+            "external_context":  _last.get("external_context",{})   if _reuse else {},
+            "message_manager":   _last.get("message_manager","")    if _reuse else "",
+            "focus_produits":    _last.get("focus_produits",[])     if _reuse else [],
+            "timesfm_prediction":prediction,
             "feedback_history":[],"_sellers_cache":sellers,
         })
         await _broadcast(frontend_id, json.dumps(initial_payload, default=str))
-        logger.info(f"[AGENT LOOP] Payload initial broadcasté pour {mapped_id}")
+        logger.info(f"[AGENT LOOP] Payload initial broadcasté pour {mapped_id} (reuse_last_cycle={_reuse})")
     except Exception as e:
         logger.warning(f"[AGENT LOOP] Payload initial échoué: {e}")
 

@@ -117,32 +117,32 @@ def _build_recommendation_text(
     # ── S1: What to do and when ───────────────────────────────────────────
     if action == "EXPEDITE":
         s1 = (
-            f"Expedite {order_qty:,} units today — stock runs out in {adj_days:.0f} days "
-            f"and the standard lead time is {lead_time:.0f} days, so a stockout is guaranteed "
-            f"before a normal order arrives."
+            f"Expédier {order_qty:,} unités aujourd'hui — le stock s'épuise dans {adj_days:.0f} jours "
+            f"et le délai de livraison standard est de {lead_time:.0f} jours, une rupture est donc "
+            f"garantie avant l'arrivée d'une commande normale."
         )
     elif action == "ORDER":
-        urgency_phrase = {"immediate": "today", "this_week": "this week",
-                          "this_month": "this month"}.get(urgency, urgency)
+        urgency_phrase = {"immediate": "aujourd'hui", "this_week": "cette semaine",
+                          "this_month": "ce mois-ci"}.get(urgency, urgency)
         s1 = (
-            f"Order {order_qty:,} units {urgency_phrase} — stock is at {adj_days:.0f} days "
-            f"against a reorder point of {rop:.0f} units and a {lead_time:.0f}-day lead time."
+            f"Commander {order_qty:,} unités {urgency_phrase} — le stock est à {adj_days:.0f} jours "
+            f"contre un point de commande de {rop:.0f} unités et un délai de livraison de {lead_time:.0f} jours."
         )
     elif action == "MONITOR":
         s1 = (
-            f"No order yet — stock is at {adj_days:.0f} days, approaching but not past "
-            f"the reorder point of {rop:.0f} units."
+            f"Pas de commande pour l'instant — le stock est à {adj_days:.0f} jours, "
+            f"proche mais pas encore sous le point de commande de {rop:.0f} unités."
         )
     else:  # HOLD
         if base_risk.get("overstock_flag"):
             s1 = (
-                f"Do not order — stock is above the maximum threshold at {adj_days:.0f} days, "
-                f"adding more inventory would increase holding costs with no service benefit."
+                f"Ne pas commander — le stock dépasse le seuil maximal à {adj_days:.0f} jours, "
+                f"un ajout de stock augmenterait les coûts de stockage sans bénéfice de service."
             )
         else:
             s1 = (
-                f"No action needed — stock is at {adj_days:.0f} days, "
-                f"well above the {rop:.0f}-unit reorder point."
+                f"Aucune action requise — le stock est à {adj_days:.0f} jours, "
+                f"bien au-dessus du point de commande de {rop:.0f} unités."
             )
 
     sentences.append(s1)
@@ -155,54 +155,54 @@ def _build_recommendation_text(
         # Give the binding constraint
         if adj_days < lead_time:
             s2 = (
-                f"At current demand, the shelf will be empty in {adj_days:.0f} days — "
-                f"{lead_time:.0f} days before any standard replenishment could arrive."
+                f"Au rythme de demande actuel, le rayon sera vide dans {adj_days:.0f} jours — "
+                f"{lead_time:.0f} jours avant qu'un réapprovisionnement standard puisse arriver."
             )
         else:
             s2 = (
-                f"Stock dropped below the reorder point of {rop:.0f} units; "
-                f"an order placed now will arrive with approximately "
-                f"{max(0, adj_days - lead_time):.0f} days of buffer remaining."
+                f"Le stock est passé sous le point de commande de {rop:.0f} unités ; "
+                f"une commande passée maintenant arrivera avec environ "
+                f"{max(0, adj_days - lead_time):.0f} jours de marge restante."
             )
         sentences.append(s2)
 
         if adj_cost > 0:
             sentences.append(
-                f"Replenishment cost is {adj_cost:,.0f} DT for {order_qty:,} units."
+                f"Le coût de réapprovisionnement est de {adj_cost:,.0f} DT pour {order_qty:,} unités."
             )
 
     elif action == "MONITOR":
         sentences.append(
-            f"Review again before stock drops below {rop:.0f} units — "
-            f"if demand accelerates or lead time extends, move to ORDER."
+            f"Revoir avant que le stock ne passe sous {rop:.0f} unités — "
+            f"si la demande accélère ou si le délai s'allonge, basculer en commande."
         )
 
     else:  # HOLD
         sentences.append(
-            f"Next review at the scheduled inventory check or if demand trend changes."
+            f"Prochaine revue lors du contrôle d'inventaire programmé ou si la tendance de demande change."
         )
 
     # ── S4: Context influence ─────────────────────────────────────────────
     if uplift != 0.0 and dominant != "none":
         day_delta = adj_days - base_days
         s_ctx = (
-            f"A {uplift:+.1f}% demand uplift from {dominant} (confidence: {ctx_conf}) "
-            f"was applied, reducing adjusted days from {base_days:.0f} to {adj_days:.0f}."
+            f"Une hausse de demande de {uplift:+.1f}% liée à {dominant} (confiance : {ctx_conf}) "
+            f"a été appliquée, réduisant les jours ajustés de {base_days:.0f} à {adj_days:.0f}."
         )
         sentences.append(s_ctx)
     elif action in ("ORDER", "EXPEDITE") and dominant == "none":
         # Only mention lack of signals for ORDER/EXPEDITE where it's relevant
         sentences.append(
-            f"No demand signals this week — the decision rests on inventory math alone."
+            f"Aucun signal de demande cette semaine — la décision repose uniquement sur le calcul de stock."
         )
 
     # ── S5: Escalation flag ───────────────────────────────────────────────
     if escalate and esc_reason:
-        sentences.append(f"Escalate to manager before placing: {esc_reason}")
+        sentences.append(f"Escalader au manager avant de commander : {esc_reason}")
     elif cons["obj_conflict"] and action in ("ORDER", "EXPEDITE"):
         sentences.append(
-            "This order may conflict with the active business objective — "
-            "review with the category manager."
+            "Cette commande peut entrer en conflit avec l'objectif business actif — "
+            "à revoir avec le category manager."
         )
 
     return " ".join(sentences)
@@ -228,44 +228,44 @@ def _rule_based_decide(state: Dict[str, Any]) -> Dict[str, Any]:
     if overstock_flag:
         action, urgency = "HOLD", "none"
         rationale = (
-            f"Stock exceeds the maximum threshold — adding more inventory "
-            f"increases holding costs with no service benefit."
+            f"Le stock dépasse le seuil maximal — un ajout de stock "
+            f"augmenterait les coûts de stockage sans bénéfice de service."
         )
     elif risk_level == "CRITICAL" and days_remaining < lead_time_avg:
         action, urgency = "EXPEDITE", "immediate"
         rationale = (
-            f"Stock runs out in {days_remaining:.0f}d but replenishment takes "
-            f"{lead_time_avg:.0f}d — stockout is guaranteed before standard order arrives."
+            f"Le stock s'épuise dans {days_remaining:.0f}j mais le réapprovisionnement prend "
+            f"{lead_time_avg:.0f}j — une rupture est garantie avant l'arrivée d'une commande standard."
         )
     elif risk_level in ("CRITICAL", "HIGH"):
         action  = "ORDER"
         urgency = "immediate" if risk_level == "CRITICAL" else "this_week"
         rationale = (
-            f"{risk_level} risk: {days_remaining:.1f}d remaining against "
-            f"{lead_time_avg:.0f}d lead time, reorder point {reorder_point:.0f} units."
+            f"Risque {risk_level} : {days_remaining:.1f}j restants contre "
+            f"{lead_time_avg:.0f}j de délai de livraison, point de commande {reorder_point:.0f} unités."
         )
     elif risk_level == "MEDIUM":
         action, urgency = "MONITOR", "this_month"
         rationale = (
-            f"MEDIUM risk: {days_remaining:.1f}d remaining, approaching reorder point "
-            f"of {reorder_point:.0f} units but not yet there."
+            f"Risque MOYEN : {days_remaining:.1f}j restants, proche du point de commande "
+            f"de {reorder_point:.0f} unités mais pas encore atteint."
         )
     else:
         action, urgency = "HOLD", "none"
-        rationale = f"LOW risk: {days_remaining:.1f}d of stock — no action required."
+        rationale = f"Risque FAIBLE : {days_remaining:.1f}j de stock — aucune action requise."
 
     order_qty = int(formula_order_qty) if action in ("ORDER", "EXPEDITE") else None
 
     # ── Trade-offs ───────────────────────────────────────────────────────
     if action in ("ORDER", "EXPEDITE"):
         trade_offs = (
-            f"Ordering {formula_order_qty:.0f} units costs {repl_cost:,.0f} DT; "
-            f"not ordering risks a stockout in {days_remaining:.0f}d."
+            f"Commander {formula_order_qty:.0f} unités coûte {repl_cost:,.0f} DT ; "
+            f"ne pas commander risque une rupture dans {days_remaining:.0f}j."
         )
     elif action == "HOLD":
-        trade_offs = "Holding preserves capital; monitor if demand spikes unexpectedly."
+        trade_offs = "Conserver préserve la trésorerie ; surveiller en cas de pic de demande imprévu."
     else:
-        trade_offs = "Monitoring delays commitment; re-evaluate if demand accelerates."
+        trade_offs = "Attendre retarde l'engagement ; réévaluer si la demande accélère."
 
     # ── Escalation ───────────────────────────────────────────────────────
     escalate: bool            = False
@@ -273,16 +273,16 @@ def _rule_based_decide(state: Dict[str, Any]) -> Dict[str, Any]:
 
     if action in ("ORDER", "EXPEDITE") and repl_cost > 50_000:
         escalate   = True
-        esc_reason = f"Order cost {repl_cost:,.0f} DT exceeds 50,000 DT — human approval required."
+        esc_reason = f"Coût de commande {repl_cost:,.0f} DT dépasse 50 000 DT — validation manager requise."
     elif lifecycle in ("end_of_life", "discontinued") and risk_level == "CRITICAL":
         escalate   = True
-        esc_reason = "CRITICAL on EOL/discontinued product — verify intentional drawdown before ordering."
+        esc_reason = "CRITIQUE sur produit en fin de vie/discontinué — vérifier l'écoulement intentionnel avant de commander."
     elif override == "ESCALATE":
         escalate   = True
-        esc_reason = "Analysis agent flagged a cross-dimensional conflict — human review required."
+        esc_reason = "L'agent d'analyse a signalé un conflit multi-dimensionnel — révision humaine requise."
     elif action in ("ORDER", "EXPEDITE") and cons["high_cost_flag"] and cons["obj_conflict"]:
         escalate   = True
-        esc_reason = "High-cost order conflicts with active business objective — sign-off needed."
+        esc_reason = "Commande à coût élevé en conflit avec l'objectif business actif — validation requise."
 
     # ── Confidence ───────────────────────────────────────────────────────
     ctx          = state.get("context_report", {})
@@ -316,7 +316,7 @@ def _rule_based_decide(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "action":               action,
         "order_qty":            order_qty,
-        "order_qty_rationale":  f"max(EOQ={formula_order_qty:.0f}, MOQ={cons['moq']:.0f}) adjusted for demand uplift.",
+        "order_qty_rationale":  f"max(EOQ={formula_order_qty:.0f}, MOQ={cons['moq']:.0f}) ajusté selon la hausse de demande.",
         "urgency":              urgency,
         "decision_rationale":   rationale,
         "confidence":           confidence,

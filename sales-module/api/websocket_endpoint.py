@@ -384,6 +384,21 @@ async def run_analyst_with_logs(store_id: str, cycle: int) -> dict:
 # BUILD PAYLOAD FRONTEND
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_offer_script(offer: dict) -> str:
+    """Argumentaire court prêt-à-dire pour une offre Ooredoo scrapée."""
+    title   = offer.get("title", "").strip()
+    price   = offer.get("price", "").strip()
+    details = offer.get("details", "").strip()
+
+    pitch = f"Présentez « {title} »" if title else "Présentez cette offre"
+    if price:
+        pitch += f" au tarif {price}"
+    pitch += "."
+    if details:
+        pitch += f" {details}."
+    return pitch
+
+
 def build_payload_from_analysis(analysis: dict) -> dict:
     if analysis is None:
         analysis = {}
@@ -440,12 +455,24 @@ def build_payload_from_analysis(analysis: dict) -> dict:
         f"🎯 {len(all_promos)} offre(s) active(s) Ooredoo"
         if all_promos else ""
     )
+    active_offers = [
+        {
+            "title":    offer.get("title", ""),
+            "category": offer.get("category", ""),
+            "type":     offer.get("type", ""),
+            "price":    offer.get("price", ""),
+            "details":  offer.get("details", ""),
+            "script":   _build_offer_script(offer),
+        }
+        for offer in all_promos[:4]
+    ]
 
     store_context = {
-        "weather":     weather_str or "⛅ Météo en cours...",
-        "event":       event_str,
-        "promo":       promo_str,
-        "stock_alert": "📦 iPhone 15 — 3 unités restantes",
+        "weather":       weather_str or "⛅ Météo en cours...",
+        "event":         event_str,
+        "promo":         promo_str,
+        "stock_alert":   "📦 iPhone 15 — 3 unités restantes",
+        "active_offers": active_offers,
     }
 
     # ── Visitors dynamique ────────────────────────────────
@@ -485,12 +512,15 @@ def build_payload_from_analysis(analysis: dict) -> dict:
     hourly_rate     = current_revenue / max(hours_elapsed, 1)
 
     # Données réelles depuis historique
+    # fetch_pos_history() renvoie un champ entier "hour" (0-23), jamais de
+    # "transaction_time" — ce mismatch de clé faisait que hourly_dict restait
+    # toujours vide, donc le graphique "Performance horaire" n'affichait aucune
+    # barre "Réel" malgré un CA du jour réel non nul.
     hourly_dict: dict[int, float] = {}
     for tx in pos_history:
-        tx_time = tx.get("transaction_time")
-        if tx_time and hasattr(tx_time, "hour"):
-            h = tx_time.hour
-            hourly_dict[h] = hourly_dict.get(h, 0.0) + tx.get("revenue", 0.0)
+        h = tx.get("hour")
+        if h is not None:
+            hourly_dict[int(h)] = hourly_dict.get(int(h), 0.0) + float(tx.get("revenue", 0.0) or 0.0)
 
     hourly_performance = []
 
@@ -1137,10 +1167,11 @@ async def get_store_metrics(store_id: str):
         "visitors_h":  pos_data.get("nb_transactions_today", 0),
         "agents_live": pos_data.get("active_sellers", 4),
         "store_context": {
-            "weather":     "⛅ Météo en cours...",
-            "event":       "",
-            "promo":       "",
-            "stock_alert": "📦 iPhone 15 — 3 unités restantes",
+            "weather":       "⛅ Météo en cours...",
+            "event":         "",
+            "promo":         "",
+            "stock_alert":   "📦 iPhone 15 — 3 unités restantes",
+            "active_offers": [],
         },
         "ca_yesterday_same_hour": cr * 0.88,
     })

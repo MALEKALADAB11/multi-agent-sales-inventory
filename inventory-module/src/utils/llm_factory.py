@@ -115,6 +115,45 @@ def get_llm(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # MISTRAL — API directe La Plateforme (compatible OpenAI, quota indépendant
+    # d'OpenRouter — pas de dépendance langchain-mistralai nécessaire)
+    # ══════════════════════════════════════════════════════════════════════════
+    if provider == "mistral":
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError("langchain-openai requis: pip install langchain-openai")
+
+        resolved_key = api_key or settings.mistral_api_key
+        if not resolved_key:
+            raise ValueError(
+                "MISTRAL_API_KEY manquante dans .env\n"
+                "  → Crée un compte sur https://console.mistral.ai et ajoute :\n"
+                "    MISTRAL_API_KEY=..."
+            )
+
+        if model:
+            resolved_model = model
+        elif role == "fast":
+            resolved_model = settings.mistral_model_fast
+        elif role == "smart":
+            resolved_model = settings.mistral_model_smart
+        elif role == "guardian":
+            resolved_model = settings.mistral_model_guardian
+        else:
+            resolved_model = settings.mistral_model_smart
+
+        logger.info("[LLMFactory] Mistral model=%s", resolved_model)
+
+        return ChatOpenAI(
+            api_key=resolved_key,
+            model=resolved_model,
+            base_url=settings.mistral_base_url,
+            temperature=temperature,
+            **kwargs,
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # GROQ — inference ultra-rapide
     # ══════════════════════════════════════════════════════════════════════════
     elif provider == "groq":
@@ -196,33 +235,36 @@ def get_llm(
     else:
         raise ValueError(
             f"Provider '{provider}' non supporté. "
-            "Valeurs valides: openrouter, groq, ollama, openai, anthropic"
+            "Valeurs valides: mistral, openrouter, groq, ollama, openai, anthropic"
         )
 
 
 # ── Helpers tiérés — utilisés directement par les agents ─────────────────────
+# Providers avec sélection de modèle par rôle (fast/smart/guardian)
+_TIERED_PROVIDERS = ("openrouter", "mistral")
+
 
 def get_fast_llm(**kwargs) -> BaseChatModel:
     """LLM FAST — pour analyse/contexte/signals (rapide, économique)."""
     from config.settings import settings
-    if settings.llm_provider == "openrouter":
-        return get_llm(provider="openrouter", role="fast", **kwargs)
+    if settings.llm_provider in _TIERED_PROVIDERS:
+        return get_llm(provider=settings.llm_provider, role="fast", **kwargs)
     return get_llm(**kwargs)
 
 
 def get_smart_llm(**kwargs) -> BaseChatModel:
     """LLM SMART — pour décision/coach/synthèse (précis, raisonnement fort)."""
     from config.settings import settings
-    if settings.llm_provider == "openrouter":
-        return get_llm(provider="openrouter", role="smart", **kwargs)
+    if settings.llm_provider in _TIERED_PROVIDERS:
+        return get_llm(provider=settings.llm_provider, role="smart", **kwargs)
     return get_llm(**kwargs)
 
 
 def get_guardian_llm(**kwargs) -> BaseChatModel:
     """LLM GUARDIAN — pour guardrail/critique/validation (fiable, structuré)."""
     from config.settings import settings
-    if settings.llm_provider == "openrouter":
-        return get_llm(provider="openrouter", role="guardian", **kwargs)
+    if settings.llm_provider in _TIERED_PROVIDERS:
+        return get_llm(provider=settings.llm_provider, role="guardian", **kwargs)
     return get_llm(**kwargs)
 
 

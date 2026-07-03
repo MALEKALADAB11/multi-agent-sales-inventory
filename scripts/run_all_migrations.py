@@ -58,6 +58,7 @@ MIGRATIONS = [
     ("migration", "migration_005.sql"),
     ("migration", "migration_006_kpi.sql"),
     ("migration", "migration_007_coaching_ops.sql"),
+    ("migration", "migration_011_purchase_orders_board.sql"),
 ]
 
 SEEDS = [

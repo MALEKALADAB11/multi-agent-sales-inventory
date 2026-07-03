@@ -184,14 +184,19 @@ async def get_live_analysis(store_id: str):
             for m in raw_mix
         ]
 
-    # Prévision horaire
+    # Prévision horaire — CA réel par heure (mix_data) au lieu de 0 constant
     hourly_perf = []
     from datetime import datetime
     now_h = datetime.now().hour
+    hourly_actual = {
+        int(row["hour"].rstrip("h")): row.get("actual")
+        for row in (mix_data or [])
+        if row.get("actual") is not None
+    }
     for h in range(9, 21):
         hourly_perf.append({
             "hour":     f"{h}h",
-            "revenue":  0,
+            "revenue":  hourly_actual.get(h, 0),
             "target":   round(objectif / 12, 2),
             "forecast": round(eod / 12, 2),
             "risk":     h <= now_h and ca_today < objectif * 0.5,

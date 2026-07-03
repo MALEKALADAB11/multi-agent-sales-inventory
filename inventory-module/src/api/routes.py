@@ -800,6 +800,7 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
     """
     # ── Classify every actionable item ───────────────────────────────────────
     candidates: List[Dict[str, Any]] = []
+    at_risk_skus: set = set()
     for item in items:
         if item.get("error"):
             continue
@@ -844,6 +845,7 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
         if not alert_type:
             continue
 
+        at_risk_skus.add(sku)
         candidates.append({
             "sku":                sku,
             "store_id":           store_id,
@@ -857,6 +859,12 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
         })
 
     if not candidates:
+        if store_id:
+            try:
+                from db.repositories.inventory_repo import SyncInventoryRepo
+                SyncInventoryRepo.resolve_stale_alerts(store_id, at_risk_skus)
+            except Exception as exc:
+                logger.warning("_build_alerts: resolve_stale_alerts failed for %s: %s", store_id, exc)
         return []
 
     # ── Cap alerts to the most actionable ones ────────────────────────────────
@@ -896,6 +904,12 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
                 )
         except Exception as exc:
             logger.warning("_build_alerts: batch upsert failed for %s: %s", store_id, exc)
+
+        try:
+            from db.repositories.inventory_repo import SyncInventoryRepo
+            SyncInventoryRepo.resolve_stale_alerts(store_id, at_risk_skus)
+        except Exception as exc:
+            logger.warning("_build_alerts: resolve_stale_alerts failed for %s: %s", store_id, exc)
 
     # ── Assemble final alert list — skip already-actioned ones ────────────────
     alerts = []

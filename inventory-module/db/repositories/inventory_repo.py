@@ -1438,6 +1438,44 @@ class SyncInventoryRepo:
             conn.close()
 
     @staticmethod
+    def resolve_stale_alerts(store_id: str, current_skus: set) -> int:
+        """
+        Auto-resolve pending alerts for SKUs no longer at risk.
+
+        Root cause of the "pending alert count keeps growing forever" bug:
+        alerts were only ever moved out of 'pending' by an explicit operator
+        action (validate/reject/dismiss). If a SKU's risk cleared naturally
+        (e.g. restocked) between two pipeline runs, its old alert stayed
+        'pending' indefinitely — the /alerts/{storeId} count drifted away
+        from the live risk snapshot returned by /store/{storeId}.
+
+        Called by _build_alerts() after each upsert with the current set of
+        (still) at-risk SKUs for the store — anything pending outside that
+        set gets status='resolved' with resolved_at=NOW().
+
+        Returns the number of rows resolved.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE inventory.alerts
+                    SET status = 'resolved', resolved_at = NOW()
+                    WHERE store_id = %s
+                      AND status = 'pending'
+                      AND NOT (sku = ANY(%s))
+                """, (store_id, list(current_skus)))
+                conn.commit()
+                return cur.rowcount
+        except Exception as exc:
+            logger.warning("SyncInventoryRepo.resolve_stale_alerts(%s): %s", store_id, exc)
+            return 0
+        finally:
+            conn.close()
+
+    @staticmethod
     def get_non_pending_alert_ids(uuids: set) -> set:
         """
         Given a set of alert UUIDs, return the subset whose current status is

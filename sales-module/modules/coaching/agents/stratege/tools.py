@@ -372,19 +372,23 @@ async def fetch_full_context(store_id: str) -> dict:
     """
     logger.info(f"[STRATEGE] fetch_full_context pour {store_id}...")
 
+    from .scraper import scrape_ooredoo_events
+
     weather_task  = asyncio.create_task(fetch_weather(store_id))
     holidays_task = asyncio.create_task(fetch_holidays())
     market_task   = asyncio.create_task(fetch_market_intelligence_pg(store_id))
+    events_task   = asyncio.create_task(scrape_ooredoo_events())
 
     try:
-        weather, holidays, market = await asyncio.gather(
-            weather_task, holidays_task, market_task, return_exceptions=False
+        weather, holidays, market, ooredoo_events = await asyncio.gather(
+            weather_task, holidays_task, market_task, events_task, return_exceptions=False
         )
     except Exception as e:
         logger.warning(f"[STRATEGE] fetch_full_context gather: {e}")
-        weather  = await fetch_weather(store_id)
-        holidays = {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}
-        market   = {}
+        weather        = await fetch_weather(store_id)
+        holidays       = {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}
+        market         = {}
+        ooredoo_events = {"promotions": [], "new_offers": [], "tarifs": [], "events": []}
 
     summary = weather.get("summary", {})
     if holidays.get("is_holiday_today"):
@@ -413,6 +417,7 @@ async def fetch_full_context(store_id: str) -> dict:
         "hourly":             weather.get("hourly", {}),
         "holidays":           holidays,
         "market":             market,
+        "events":             ooredoo_events,
         "events_actifs":      events_actifs,
         "seasonal_factors":   market.get("seasonal_factors", {}),
         "competitors":        market.get("competitors", []),

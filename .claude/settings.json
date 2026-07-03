@@ -3,12 +3,26 @@
     "allow": [
       "Bash(git rm *)",
       "Bash(git -C \"d:/backend/multi-agent-sales-inventory\" status --short)",
-      "Read(//c/Program Files/PostgreSQL/17/bin/**)"
+      "Read(//c/Program Files/PostgreSQL/17/bin/**)",
+      "Bash(rm -f \"C:/Windows/TEMP/claude/d--backend-multi-agent-sales-inventory/da801bc8-8b49-4361-84a9-ba39dee5b62d/scratchpad/uvicorn4.log\")",
+      "Bash(python -m uvicorn main:app --port 8000 --log-level info)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Read(//tmp/**)",
+      "Bash(rm -f /tmp/tsc_out.txt)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('monitoring_router.py',encoding='utf-8'\\).read\\(\\)\\); print\\('monitoring_router.py OK'\\)\")",
+      "Bash(ls package.json tsconfig.json)",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('scripts:',Object.keys\\(p.scripts||{}\\).join\\(', '\\)\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('sales-module/modules/coaching/agents/coach/coach_chat.py', encoding='utf-8-sig'\\).read\\(\\)\\)\")"
     ],
     "additionalDirectories": [
       "D:\\frontend\\PFE\\src\\app\\layout\\sidebar",
       "D:\\frontend\\PFE\\src\\app\\layout\\navbar",
-      "D:\\frontend\\PFE\\src\\app"
+      "D:\\frontend\\PFE\\src\\app",
+      "\\tmp",
+      "D:\\frontend\\PFE\\src\\app\\features\\dashboard",
+      "D:\\frontend\\PFE\\src\\app\\features\\monitoring"
     ]
   }
 }

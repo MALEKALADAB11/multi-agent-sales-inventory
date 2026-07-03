@@ -110,19 +110,15 @@ def _update_metrics(state, key, value):
 
 def get_llm():
     """
-    Retourne le LLM SMART tier (OpenRouter) pour la génération de stratégie.
-    Fallback vers Ollama si factory indisponible.
+    Fallback local Ollama — appelé uniquement après échec d'OpenRouter
+    (_call_openrouter_stratege) dans node_generate_strategy.
+
+    NE PAS appeler get_smart_llm() ici : cette factory route elle-même vers
+    OpenRouter dès que LLM_PROVIDER=openrouter (cas par défaut du projet),
+    donc "le fallback" retombait en réalité sur OpenRouter — quand OpenRouter
+    est rate-limited (429 free-models-per-day), ce fallback échouait avec la
+    même erreur au lieu de basculer vers un modèle local indépendant.
     """
-    import sys
-    from pathlib import Path
-    inv_path = str(Path(__file__).resolve().parents[6] / "inventory-module")
-    if inv_path not in sys.path:
-        sys.path.insert(0, inv_path)
-    try:
-        from src.utils.llm_factory import get_smart_llm
-        return get_smart_llm()
-    except Exception:
-        pass
     return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_URL,
                       temperature=0.2, num_predict=600, num_ctx=3500)
 
@@ -461,6 +457,59 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
     return "", (time.time() - t0) * 1000
 
 
+MISTRAL_KEY = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+_MISTRAL_MODEL_ROTATION = [
+    os.getenv("MISTRAL_MODEL_SMART", "mistral-large-latest"),
+    os.getenv("MISTRAL_MODEL",       "mistral-small-latest"),
+]
+
+
+async def _call_mistral_stratege(system_prompt: str, user_msg: str,
+                                 urgency: str) -> tuple[str, float]:
+    """Appel Mistral direct (quota indépendant d'OpenRouter) — tentative 1."""
+    t0 = time.time()
+    if not MISTRAL_KEY:
+        return "", 0.0
+    import httpx
+    for model in _MISTRAL_MODEL_ROTATION:
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                resp = await client.post(
+                    MISTRAL_URL,
+                    headers={
+                        "Authorization": f"Bearer {MISTRAL_KEY}",
+                        "Content-Type":  "application/json",
+                    },
+                    json={
+                        "model":       model,
+                        "max_tokens":  800,
+                        "temperature": 0.1,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_msg},
+                        ],
+                    },
+                )
+            if resp.status_code == 429:
+                logger.warning(f"[STRATEGE MISTRAL] {model} → 429 rate limit")
+                continue
+            data = resp.json()
+            if resp.status_code >= 400:
+                err = data.get("error")
+                msg = err.get("message") if isinstance(err, dict) else data.get("message", "?")
+                logger.warning(f"[STRATEGE MISTRAL] {model} → {resp.status_code}: {str(msg)[:80]}")
+                return "", (time.time() - t0) * 1000
+            content = data["choices"][0]["message"]["content"].strip()
+            ms = (time.time() - t0) * 1000
+            logger.info(f"[STRATEGE MISTRAL] OK — {len(content)} chars | {ms:.0f}ms | {model}")
+            return content, ms
+        except Exception as e:
+            logger.warning(f"[STRATEGE MISTRAL] {model} exception: {str(e)[:60]}")
+            continue
+    return "", (time.time() - t0) * 1000
+
+
 async def node_generate_strategy(state: SalesAgentState) -> dict:
     cid = _cycle_id(state); sid = _store_id(state)
     log = AgentLogger("stratege", cid, sid)
@@ -520,13 +569,19 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
     strategie_data = {}; llm_ok = False; llm_latency_ms = 0.0
     llm_response = ""; model_used = ""
 
-    # ── Essayer OpenRouter d'abord, fallback Ollama ───────────────────────────
-    if USE_OPENROUTER:
+    # ── Essayer Mistral d'abord (quota indépendant), puis OpenRouter, puis Ollama ──
+    if MISTRAL_KEY:
+        logger.info("[STRATEGE] Node 4 — Appel Mistral direct...")
+        llm_response, llm_latency_ms = await _call_mistral_stratege(
+            system_with_rag, user_msg, urgency_level)
+        model_used = "mistral"
+
+    if not llm_response and USE_OPENROUTER:
         logger.info(f"[STRATEGE] Node 4 — Appel OpenRouter ({OPENROUTER_MODEL})...")
         llm_response, llm_latency_ms = await _call_openrouter_stratege(
             system_with_rag, user_msg, urgency_level)
         model_used = OPENROUTER_MODEL
-    
+
     if not llm_response:
         logger.info(f"[STRATEGE] Node 4 — Appel Ollama ({OLLAMA_MODEL})...")
         try:
@@ -896,6 +951,12 @@ def _build_context_signals(context, factors):
         "label":f"{summary.get('weather_icon','☀️')} {summary.get('weather_label','Normal')} — {w_eff:+.0%} trafic","value":w_eff})
     if holidays.get("is_holiday_today"):
         signals.append({"type":"holiday","level":"high","label":f"🎉 {holidays.get('today_holiday',{}).get('name','')}","value":1.0})
+    else:
+        next_hol = holidays.get("next_holiday") or {}
+        if next_hol.get("name"):
+            days = next_hol.get("days_until", 0)
+            signals.append({"type":"holiday","level":"med" if days<=7 else "low",
+                "label":f"📅 {next_hol['name']} dans {days}j","value":0.5 if days<=7 else 0.2})
     all_promos = (events.get("promotions",[]) or []) + (events.get("new_offers",[]) or [])
     if all_promos:
         signals.append({"type":"event","level":"med","label":f"🎯 {len(all_promos)} offre(s) — {all_promos[0].get('title','')[:40]}","value":0.3})

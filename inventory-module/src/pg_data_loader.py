@@ -271,9 +271,15 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
 
 def load_product_master(sku: int = None) -> pd.DataFrame:
     """Remplace pd.read_csv(PRODUCT_MASTER_PATH)."""
+    # p.categorie is a raw numeric code ("20", "30", "88"...) — not presentable.
+    # p.gamme_libelle holds the human label seeded for exactly this code
+    # (data/telco/seed_data.sql: 20→SIM_KIT, 88→FORFAIT, 50→TERMINAL, ...).
+    # INITCAP + underscore→space turns "FORFAIT_BOX" into "Forfait Box".
+    # Falls back to the raw code only if gamme_libelle was never seeded.
+    _CATEGORY_SQL = "INITCAP(REPLACE(COALESCE(p.gamme_libelle, p.categorie), '_', ' ')) AS category"
     if sku:
-        return _read_sql("""
-            SELECT pm.sku, p.nom AS product_name, p.categorie AS category,
+        return _read_sql(f"""
+            SELECT pm.sku, p.nom AS product_name, {_CATEGORY_SQL},
                    pm.unit_cost, pm.unit_price, pm.lead_time_days,
                    pm.lead_time_std, pm.moq, pm.holding_cost_pct,
                    pm.order_cost, pm.lifecycle_stage
@@ -281,8 +287,8 @@ def load_product_master(sku: int = None) -> pd.DataFrame:
             LEFT JOIN sales.produits p ON p.sku = pm.sku
             WHERE pm.sku = %(sku)s
         """, {"sku": int(sku)})
-    return _read_sql("""
-        SELECT pm.sku, p.nom AS product_name, p.categorie AS category,
+    return _read_sql(f"""
+        SELECT pm.sku, p.nom AS product_name, {_CATEGORY_SQL},
                pm.unit_cost, pm.unit_price, pm.lead_time_days,
                pm.lead_time_std, pm.moq, pm.holding_cost_pct,
                pm.order_cost, pm.lifecycle_stage

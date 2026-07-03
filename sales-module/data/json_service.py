@@ -287,13 +287,18 @@ class JsonDataService:
 
         hourly   = {int(r["heure"]): float(r["ca"]) for r in rows}
         objectif = self._objectif()
-        now_h    = datetime.now().hour
 
+        # "actual" = None seulement pour les heures sans aucune transaction
+        # enregistrée (heure pas encore atteinte). On se base sur la présence
+        # réelle en base plutôt que sur l'horloge murale (datetime.now().hour) :
+        # le RealtimeSimulator peut générer les ventes d'une journée plus vite
+        # que le temps réel, ce qui rendait "h <= now_h" faux-négatif et
+        # masquait des heures ayant pourtant déjà du CA réel.
         result = []
         for h in range(9, 21):
             result.append({
                 "hour":   f"{h}h",
-                "actual": round(hourly.get(h, 0), 2) if h <= now_h else None,
+                "actual": round(hourly[h], 2) if h in hourly else None,
                 "target": round(objectif / 12, 2),
             })
         return result

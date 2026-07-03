@@ -82,10 +82,10 @@ async def supervisor_run(body: SupervisorRunRequest):
     try:
         result = await asyncio.wait_for(
             graph.ainvoke(initial_state),
-            timeout=30.0,
+            timeout=150.0,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Supervisor cycle timed out (30s)")
+        raise HTTPException(status_code=504, detail="Supervisor cycle timed out (150s)")
     except Exception as e:
         logger.error("[Supervisor] Cycle error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,7 +148,7 @@ async def supervisor_run_async(body: SupervisorRunRequest):
                 "errors":         [],
                 "metrics":        {},
             }
-            result = await asyncio.wait_for(graph.ainvoke(initial), timeout=30.0)
+            result = await asyncio.wait_for(graph.ainvoke(initial), timeout=150.0)
             _last_run[mapped_id] = {
                 "cycle_id":         cycle_id,
                 "guardrail_status": result.get("guardrail_status", "APPROVE"),

@@ -89,6 +89,17 @@ class Settings:
     anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
+    # ── Mistral (API directe La Plateforme — quota indépendant d'OpenRouter) ──
+    mistral_api_key:  Optional[str] = os.getenv("MISTRAL_API_KEY")
+    mistral_base_url: str = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+    _mistral_default: str = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+    # FAST     — analyse/contexte (rapide + économique)
+    mistral_model_fast:     str = os.getenv("MISTRAL_MODEL_FAST",     "open-mistral-nemo")
+    # SMART    — décision/coach/stratégie (raisonnement fort)
+    mistral_model_smart:    str = os.getenv("MISTRAL_MODEL_SMART",    "mistral-large-latest")
+    # GUARDIAN — guardrail/critique (fiable + structuré)
+    mistral_model_guardian: str = os.getenv("MISTRAL_MODEL_GUARDIAN", _mistral_default)
+
     # ── OpenRouter (accès unifié à tous les modèles) ──────────────────────
     openrouter_api_key:   Optional[str] = os.getenv("OPENROUTER_API_KEY")
     openrouter_base_url:  str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

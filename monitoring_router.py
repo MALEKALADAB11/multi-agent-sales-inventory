@@ -18,8 +18,13 @@ router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
 AGENT_MAP = {
     "analyste": "APP02", "stratege": "APP05",
-    "coach": "APP07",    "rag": "APP10",
+    "coach": "APP07",    "rag": "APP10", "guardrail": "APP08",
+    "analysis_agent": "INV-A", "context_agent": "INV-C", "decision_agent": "INV-D",
 }
+
+# Les 3 seuls noms d'agent inventaire valides (contrainte CHECK sur
+# inventory.agent_runs — voir db/migrations/versions/001_inv_initial.py)
+INVENTORY_AGENT_NAMES = ("analysis_agent", "context_agent", "decision_agent")
 
 
 def _clean(obj):
@@ -40,6 +45,47 @@ def _last(request: Request) -> dict:
     if trigger is None:
         return {}
     return trigger.last_result or {}
+
+
+# ── Helpers page Monitoring (statut / niveau de log / I-O) ─────────────────────
+
+def _log_level(status: str) -> str:
+    """Mappe le status d'un node vers un niveau de log frontend."""
+    return {
+        "completed": "success",
+        "error":     "error",
+        "fallback":  "warn",
+        "started":   "info",
+    }.get((status or "").lower(), "info")
+
+
+def _io_keys(state) -> list:
+    """Retourne les clés d'un state JSONB (input/output) sans les valeurs lourdes."""
+    if not isinstance(state, dict):
+        return []
+    return [k for k in state.keys() if not str(k).startswith("_")]
+
+
+def _io_preview(state, max_len: int = 80) -> dict:
+    """Aperçu compact clé→valeur d'un state (valeurs tronquées, listes/dicts résumés)."""
+    out = {}
+    if not isinstance(state, dict):
+        return out
+    for k, v in state.items():
+        if str(k).startswith("_"):
+            continue
+        if isinstance(v, (dict,)):
+            out[k] = f"{{{len(v)} champs}}"
+        elif isinstance(v, (list, tuple)):
+            out[k] = f"[{len(v)} éléments]"
+        elif isinstance(v, bool):
+            out[k] = v
+        elif isinstance(v, (int, float)):
+            out[k] = v
+        else:
+            s = str(v)
+            out[k] = s if len(s) <= max_len else s[:max_len] + "…"
+    return out
 
 
 @router.get("/cycles")
@@ -101,17 +147,320 @@ async def get_logs(limit: int = 100, store_id: str = "I63",
             params.append(limit)
             cur.execute(f"""
                 SELECT id, cycle_id, agent_name, node_name, status,
-                       duration_ms, error_msg, metadata, created_at
+                       duration_ms, error_msg, metadata,
+                       input_state, output_state, created_at
                 FROM agent_logs
                 WHERE {' AND '.join(where)}
                 ORDER BY created_at DESC
                 LIMIT %s
             """, params)
-            logs = [dict(r) for r in cur.fetchall()]
+            logs = [_clean(dict(r)) for r in cur.fetchall()]
         conn.close()
         return JSONResponse({"logs": logs, "total": len(logs)})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _inventory_agents(conn, sid: str, hours: int, runs_per_agent: int) -> list:
+    """
+    Télémétrie réelle des 3 agents inventaire depuis inventory.agent_runs.
+    Granularité "run" (pas de JSONB input/output par node comme agent_logs —
+    seulement les colonnes réellement persistées : status, items/alerts/
+    recommendations générés, erreur).
+    """
+    from psycopg2.extras import RealDictCursor
+    out = []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT agent_name,
+                       COUNT(*)                                              AS nb_runs,
+                       AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)
+                                                                              AS avg_ms,
+                       SUM(CASE WHEN status='failed'  THEN 1 ELSE 0 END)     AS errors,
+                       SUM(CASE WHEN status='running' THEN 1 ELSE 0 END)     AS running,
+                       MAX(started_at)                                      AS last_run
+                FROM inventory.agent_runs
+                WHERE store_id = %s AND started_at >= NOW() - INTERVAL '%s hours'
+                GROUP BY agent_name
+            """, (sid, hours))
+            aggregates = cur.fetchall()
+
+            for a in aggregates:
+                name = a["agent_name"]
+                nb   = int(a["nb_runs"]  or 0)
+                errs = int(a["errors"]   or 0)
+                running = int(a["running"] or 0)
+                ms   = float(a["avg_ms"] or 0)
+                succ = round(1 - errs / max(nb, 1), 3)
+
+                cur.execute("""
+                    SELECT status, started_at, completed_at, error_message,
+                           items_processed, alerts_generated, recommendations_generated
+                    FROM inventory.agent_runs
+                    WHERE store_id = %s AND agent_name = %s
+                    ORDER BY started_at DESC
+                    LIMIT %s
+                """, (sid, name, runs_per_agent))
+                rows = cur.fetchall()
+
+                logs = []
+                for r in rows:
+                    ts = r["started_at"]
+                    st = (r["status"] or "").lower()
+                    if st == "failed":
+                        msg = f"run failed — {str(r['error_message'] or 'erreur')[:120]}"
+                        level = "error"
+                    elif st == "running":
+                        msg = "run en cours…"
+                        level = "info"
+                    else:
+                        msg = (f"run terminé — {r['items_processed'] or 0} items, "
+                               f"{r['alerts_generated'] or 0} alerts, "
+                               f"{r['recommendations_generated'] or 0} recos")
+                        level = "success"
+                    logs.append({
+                        "time": ts.strftime("%I:%M %p") if hasattr(ts, "strftime") else str(ts),
+                        "level": level, "message": msg, "node": "run",
+                    })
+
+                last_row = rows[0] if rows else None
+                last_output = {}
+                if last_row:
+                    last_output = {
+                        "status": last_row["status"],
+                        "items_processed": last_row["items_processed"],
+                        "alerts_generated": last_row["alerts_generated"],
+                        "recommendations_generated": last_row["recommendations_generated"],
+                    }
+                    if last_row["error_message"]:
+                        last_output["error_message"] = last_row["error_message"][:200]
+
+                if running > 0:
+                    status = "LIVE"
+                elif errs > 0 and errs / max(nb, 1) >= 0.5:
+                    status = "ERROR"
+                elif nb > 0:
+                    status = "DONE"
+                else:
+                    status = "IDLE"
+
+                last_run = a["last_run"]
+                out.append({
+                    "agent_id": AGENT_MAP.get(name, name.upper()), "agent_name": name,
+                    "status": status,
+                    "avg_latency_ms": round(ms, 1), "avg_latency_s": round(ms / 1000, 2),
+                    "total_runs": nb, "error_count": errs, "success_rate": succ,
+                    "last_run": last_run.strftime("%I:%M %p") if hasattr(last_run, "strftime") else str(last_run),
+                    "inputs": ["store_id"], "outputs": ["status", "items_processed",
+                              "alerts_generated", "recommendations_generated"],
+                    "last_input": {"store_id": sid, "agent_name": name},
+                    "last_output": last_output,
+                    "logs": logs,
+                    "granularity": "run",
+                    "metrics": [
+                        {"label": "Avg duration", "value": f"{ms/1000:.2f}s"},
+                        {"label": "Runs", "value": str(nb)},
+                        {"label": "Errors", "value": str(errs),
+                         "color": "#E74C3C" if errs else "#00B894"},
+                        {"label": "Success", "value": f"{succ*100:.0f}%",
+                         "color": "#00B894" if succ >= 0.95 else "#F9A825"},
+                    ],
+                })
+    except Exception as e:
+        # Schema inventory.agent_runs indisponible (module inventaire éteint) — non bloquant
+        pass
+    return out
+
+
+@router.get("/agents")
+async def get_agents(request: Request, store_id: str = None,
+                     hours: int = 24, logs_per_agent: int = 6):
+    """
+    Vue consolidée par agent pour la page Monitoring : statut temps réel,
+    latence, logs récents ET input/output réels.
+    Source : agent_logs (agents sales — JSONB node I/O) +
+             inventory.agent_runs (agents inventaire — granularité run).
+    Aucune donnée mockée.
+    """
+    from agent_logger import _get_conn
+    from psycopg2.extras import RealDictCursor
+
+    last = _last(request)
+    sid  = store_id or last.get("store_id", "I63")
+
+    # Statut LangGraph du cycle courant (enrichit le statut LIVE)
+    live_map = {
+        "analyste": bool(last.get("analyst_summary")),
+        "analyst":  bool(last.get("analyst_summary")),
+        "stratege": bool(last.get("strategie_actions")),
+        "coach":    bool(last.get("conseil_final")),
+        "rag":      bool(last.get("rag_used")),
+    }
+
+    agents = []
+    try:
+        conn = _get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Agrégat par agent sur la fenêtre
+            cur.execute("""
+                SELECT agent_name,
+                       COUNT(*)                                   AS nb_logs,
+                       AVG(duration_ms)                           AS avg_ms,
+                       MAX(created_at)                            AS last_run,
+                       SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors
+                FROM agent_logs
+                WHERE store_id = %s
+                  AND created_at >= NOW() - INTERVAL '%s hours'
+                GROUP BY agent_name
+                ORDER BY MAX(created_at) DESC
+            """, (sid, hours))
+            aggregates = cur.fetchall()
+
+            for a in aggregates:
+                name = (a["agent_name"] or "unknown").strip()
+                nb   = int(a["nb_logs"] or 0)
+                errs = int(a["errors"]  or 0)
+                ms   = float(a["avg_ms"] or 0)
+                succ = round(1 - errs / max(nb, 1), 3)
+
+                # Logs récents (avec input/output réels)
+                cur.execute("""
+                    SELECT node_name, status, duration_ms, error_msg,
+                           input_state, output_state, metadata, created_at
+                    FROM agent_logs
+                    WHERE store_id = %s AND agent_name = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (sid, name, logs_per_agent))
+                rows = cur.fetchall()
+
+                logs = []
+                last_input, last_output = {}, {}
+                for r in rows:
+                    ts = r["created_at"]
+                    node = r["node_name"] or "node"
+                    st   = (r["status"] or "").lower()
+                    dur  = float(r["duration_ms"] or 0)
+                    if st == "error":
+                        msg = f"{node} — {str(r['error_msg'] or 'erreur')[:120]}"
+                    elif st == "fallback":
+                        msg = f"{node} — fallback ({dur:.0f}ms)"
+                    elif st == "started":
+                        msg = f"{node} démarré…"
+                    else:
+                        msg = f"{node} terminé ({dur:.0f}ms)"
+                    logs.append({
+                        "time":  ts.strftime("%I:%M %p") if hasattr(ts, "strftime") else str(ts),
+                        "level": _log_level(st),
+                        "message": msg,
+                        "node":  node,
+                    })
+                    # Premier log complet trouvé → snapshot I/O réel
+                    if not last_output and isinstance(r["output_state"], dict) and r["output_state"]:
+                        last_output = _io_preview(r["output_state"])
+                    if not last_input and isinstance(r["input_state"], dict) and r["input_state"]:
+                        last_input = _io_preview(r["input_state"])
+
+                # Clés I/O agrégées (union sur les logs récents)
+                in_keys, out_keys = set(), set()
+                for r in rows:
+                    in_keys.update(_io_keys(r["input_state"]))
+                    out_keys.update(_io_keys(r["output_state"]))
+
+                # Statut
+                if live_map.get(name):
+                    status = "LIVE"
+                elif errs > 0 and errs / max(nb, 1) >= 0.5:
+                    status = "ERROR"
+                elif nb > 0:
+                    status = "DONE"
+                else:
+                    status = "IDLE"
+
+                last_run = a["last_run"]
+                agents.append({
+                    "agent_id":     AGENT_MAP.get(name, name.upper()),
+                    "agent_name":   name,
+                    "status":       status,
+                    "avg_latency_ms": round(ms, 1),
+                    "avg_latency_s":  round(ms / 1000, 2),
+                    "total_runs":   nb,
+                    "error_count":  errs,
+                    "success_rate": succ,
+                    "last_run":     last_run.strftime("%I:%M %p") if hasattr(last_run, "strftime") else str(last_run),
+                    "inputs":       sorted(in_keys),
+                    "outputs":      sorted(out_keys),
+                    "last_input":   last_input,
+                    "last_output":  last_output,
+                    "logs":         logs,
+                    "granularity":  "node",
+                    "metrics": [
+                        {"label": "Avg latency", "value": f"{ms/1000:.2f}s"},
+                        {"label": "Runs (24h)",  "value": str(nb)},
+                        {"label": "Errors",      "value": str(errs),
+                         "color": "#E74C3C" if errs else "#00B894"},
+                        {"label": "Success",     "value": f"{succ*100:.0f}%",
+                         "color": "#00B894" if succ >= 0.95 else "#F9A825"},
+                    ],
+                })
+
+            # ── Agents inventaire réels (analysis_agent / context_agent / decision_agent) ──
+            agents.extend(_inventory_agents(conn, sid, hours, logs_per_agent))
+        conn.close()
+    except Exception as e:
+        return JSONResponse({"error": str(e), "agents": []}, status_code=500)
+
+    return JSONResponse({
+        "agents":    agents,
+        "total":     len(agents),
+        "store_id":  sid,
+        "hours":     hours,
+        "source":    "agent_logs+inventory.agent_runs",
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+
+
+@router.get("/guardrail-events")
+async def get_guardrail_events(limit: int = 20, store_id: str = "I63"):
+    """
+    Historique des évaluations guardrail (agent_logs, agent_name='guardrail').
+    Permet au panneau "Guardrail Events" de la page Monitoring d'afficher les
+    incidents passés dès le chargement, sans attendre un nouveau push WebSocket
+    dans la session courante.
+    """
+    from agent_logger import _get_conn
+    from psycopg2.extras import RealDictCursor
+    try:
+        conn = _get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT input_state, output_state, created_at
+                FROM agent_logs
+                WHERE store_id = %s AND agent_name = 'guardrail'
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (store_id, limit))
+            rows = [_clean(dict(r)) for r in cur.fetchall()]
+        conn.close()
+
+        events = []
+        for r in rows:
+            out = r.get("output_state") or {}
+            inp = r.get("input_state") or {}
+            status = out.get("status", "APPROVE")
+            if status == "APPROVE":
+                continue  # ne montrer que les incidents (REWRITE/ESCALATE/BLOCK)
+            events.append({
+                "status":    status,
+                "advisor":   inp.get("advisor", ""),
+                "issues":    out.get("issues", []),
+                "urgency":   inp.get("urgency", ""),
+                "timestamp": r.get("created_at", ""),
+            })
+        return JSONResponse({"events": events, "total": len(events)})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "events": []}, status_code=500)
 
 
 @router.get("/rag-stats")

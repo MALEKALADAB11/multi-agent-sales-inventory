@@ -13,7 +13,9 @@ Sources :
 
 import logging
 import os
+import socket
 import requests
+import urllib3.util.connection as _urllib3_conn
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +23,25 @@ import psycopg2
 import psycopg2.extras
 
 logger = logging.getLogger(__name__)
+
+
+def _requests_get_ipv4_only(url: str, **kwargs) -> requests.Response:
+    """
+    requests.get() with IPv6 addresses excluded from DNS resolution for the
+    duration of this call only.
+
+    Some Windows networks resolve a working IPv4 address AND an IPv6 address
+    for a host, but have no real IPv6 route — urllib3 then tries the IPv6
+    address first and fails with WSAENETUNREACH instead of falling back,
+    even though the site is reachable over IPv4. Forcing AF_INET here avoids
+    that failure mode for hosts affected by it (seen on date.nager.at).
+    """
+    original_family = _urllib3_conn.allowed_gai_family
+    _urllib3_conn.allowed_gai_family = lambda: socket.AF_INET
+    try:
+        return requests.get(url, **kwargs)
+    finally:
+        _urllib3_conn.allowed_gai_family = original_family
 
 _DB_CONFIG = {
     "host":     os.getenv("POSTGRES_HOST", "localhost"),
@@ -38,6 +59,23 @@ _WMO_LABELS: Dict[int, str] = {
 
 _weather_cache: Dict[str, Dict[str, Any]] = {}
 _holiday_cache: Dict[str, List[dict]] = {}
+
+# The batch pipeline fans out to several worker threads (see Orchestrator
+# workers=8) that each call get_upcoming_holidays() for the same store/year.
+# Without a lock they all miss the cache at once and fire the same request
+# to date.nager.at in parallel, multiplying the odds of a timeout. One lock
+# per cache key makes the other threads wait for the first fetch instead of
+# each doing their own network call.
+import threading as _threading
+_holiday_cache_locks: Dict[str, _threading.Lock] = {}
+_holiday_cache_locks_guard = _threading.Lock()
+
+
+def _get_holiday_cache_lock(key: str) -> _threading.Lock:
+    with _holiday_cache_locks_guard:
+        if key not in _holiday_cache_locks:
+            _holiday_cache_locks[key] = _threading.Lock()
+        return _holiday_cache_locks[key]
 
 
 def _get_conn():
@@ -359,15 +397,19 @@ def get_upcoming_holidays(country: str = "TN", days_ahead: int = 7) -> List[dict
     year    = today.year
     key     = f"{country}-{year}"
     if key not in _holiday_cache:
-        try:
-            resp = requests.get(
-                f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country}", timeout=8
-            )
-            resp.raise_for_status()
-            _holiday_cache[key] = resp.json()
-        except Exception as e:
-            logger.warning("Holiday API failed %s/%d: %s", country, year, e)
-            _holiday_cache[key] = []
+        with _get_holiday_cache_lock(key):
+            # Re-check inside the lock — another thread may have already
+            # populated the cache while this one was waiting.
+            if key not in _holiday_cache:
+                try:
+                    resp = _requests_get_ipv4_only(
+                        f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country}", timeout=8
+                    )
+                    resp.raise_for_status()
+                    _holiday_cache[key] = resp.json()
+                except Exception as e:
+                    logger.warning("Holiday API failed %s/%d: %s", country, year, e)
+                    _holiday_cache[key] = []
     upcoming = []
     for h in _holiday_cache[key]:
         try:

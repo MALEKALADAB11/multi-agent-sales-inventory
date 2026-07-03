@@ -176,10 +176,13 @@ TON STYLE :
 
 JAMAIS :
 • Inventer un prix, une offre ou un SKU hors catalogue ci-dessous
+• Inventer un CLIENT, une SITUATION DE VENTE ou un SCÉNARIO qui n'est pas donné dans le bloc SITUATION ci-dessous — si la question du conseiller ne décrit aucun client réel, tu n'en inventes pas un
 • Répondre hors vente / stock / Ooredoo Tunisie
 • Écrire "je n'ai pas accès" ou "consulte le tableau de bord"
 • Produire du JSON, du code, des balises HTML
 • Répéter deux fois la même information dans la même réponse
+
+SI TU NE COMPRENDS PAS LA QUESTION, ou si elle ne correspond à aucune situation de vente/stock réelle (message ambigu, hors-sujet non filtré, une question sans rapport) : NE PAS halluciner un client ou un script. Demande une clarification courte en 1 phrase, du style [clarification] ci-dessous.
 
 CATALOGUE OFFICIEL OOREDOO (seuls prix autorisés) :
 {catalog}
@@ -190,7 +193,8 @@ EXEMPLES DE RÉPONSES PARFAITES :
 [objection trop cher] → «Réponds : "1 299 TND sur 24 mois = 54 TND/mois — moins qu'un café par jour. Et dans 2 ans valeur revente 400+ TND." Close : "Noir titane ou blanc naturel ?" À toi !»
 [bilan du jour] → «CA {{ca}} / {{target}} TND ({{perf}}%). Top : {{produit}} ({{qty}} vendus/7j). Dernière vente {{heure}}h. {{conseil Stratège en 1 ligne}}. Allez !»
 [rupture stock] → «{{produit}} en rupture = {{nb}} ventes perdues en risque. Met le {{alternatif}} (349 TND) en avant + appelle le manager pour la commande. Maintenant !»
-[closing] → «Choix forcé : "Lequel vous correspond le mieux, noir ou blanc ?" Si résistance : "Il nous reste 2 unités — l'offre 0% expire ce soir." Silence 3 secondes. À toi !»"""
+[closing] → «Choix forcé : "Lequel vous correspond le mieux, noir ou blanc ?" Si résistance : "Il nous reste 2 unités — l'offre 0% expire ce soir." Silence 3 secondes. À toi !»
+[clarification — question incomprehensible ou sans client réel décrit] → «Je ne suis pas sûr de te suivre — tu veux un script de vente, un point sur le stock, ou un coup de main pour ton objectif du jour ? Dis-m'en un peu plus !»"""
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DEDUP CACHE (évite doublons sur envoi rapide — 20 secondes)
@@ -253,8 +257,16 @@ _RECAP_KW = [
     "ventes du jour", "ca du jour", "ou en sont", "etat des ventes",
     "montre moi", "qu est ce qui se vend", "comment se passe", "bilan du jour",
     "resultat", "performance du jour", "rapport du jour", "synthese", "comment on est",
-    "comment ca va les ventes",
+    "comment ca va les ventes", "derniere vente", "dernier vente", "dernieres ventes",
+    "dernier achat", "derniere transaction", "vente recente", "achat recent",
+    "qui a achete", "dernier client", "quel produit vendu", "top vendeur",
+    "top produit", "meilleur produit", "meilleures ventes",
 ]
+
+# Détection floue : toute question "dernier/dernière X" où X référence une
+# vente/transaction/client — capte les formulations non prévues dans la liste ci-dessus
+_RECAP_FUZZY_ANCHORS = ["dernier", "derniere", "recent", "recente"]
+_RECAP_FUZZY_NOUNS   = ["vente", "achat", "transaction", "client", "produit vendu"]
 
 _OFF_KW = [
     "cybersecurite", "crypto", "bitcoin", "politique", "recette", "cuisine",
@@ -304,7 +316,11 @@ def _classify_intent(message: str) -> dict:
         return {"mode": "off_topic", "domain": "none", "type": "off_topic", "confidence": 0.96}
 
     recap_hits = sum(1 for k in _RECAP_KW if k in msg)
-    if recap_hits >= 1:
+    recap_fuzzy = (
+        any(a in msg for a in _RECAP_FUZZY_ANCHORS)
+        and any(n in msg for n in _RECAP_FUZZY_NOUNS)
+    )
+    if recap_hits >= 1 or recap_fuzzy:
         return {"mode": "conversation", "domain": "sales", "type": "recap",
                 "confidence": min(0.93, 0.72 + recap_hits * 0.08)}
 
@@ -788,10 +804,24 @@ def _build_situation(
         if ruptures > 0:
             lines.append(f"Alerte : {ruptures} rupture(s) en cours")
 
-    else:  # conversation générale
+    else:  # conversation générale — aucun mot-clé métier détecté dans le message
+        # Filet de sécurité : même mal classée, la question peut porter sur des
+        # données réelles déjà chargées (dernière vente, top produits...). On les
+        # expose systématiquement pour éviter que le coach ignore la DB/les agents.
+        if recent_tx:
+            r0 = recent_tx[0]
+            lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
+        if top_sellers:
+            t3 = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:3])
+            lines.append(f"Top produits (7j) : {t3}")
         if actions:
             a = actions[0]
             lines.append(f"Action du jour : {a.get('action','')} → {a.get('produit_cible','')}")
+        lines.append(
+            "Note : si des données ci-dessus répondent à la question, utilise-les. "
+            "Sinon, si la question est incomprehensible ou hors-sujet, demande une "
+            "clarification en 1 phrase — n'invente aucun client ni situation."
+        )
 
     return "\n".join(lines)
 
@@ -863,6 +893,72 @@ async def _call_openrouter(
     return "", (time.time() - t0) * 1000
 
 
+# ── Mistral (API directe La Plateforme — quota indépendant d'OpenRouter) ─────
+MISTRAL_KEY = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+_MISTRAL_MODEL_ROTATION = [
+    os.getenv("MISTRAL_MODEL_SMART", "mistral-large-latest"),
+    os.getenv("MISTRAL_MODEL",       "mistral-small-latest"),
+    os.getenv("MISTRAL_MODEL_FAST",  "open-mistral-nemo"),
+]
+
+
+async def _call_mistral(
+    system: str,
+    user_msg: str,
+    max_tokens: int,
+    temperature: float,
+    history: list,
+) -> tuple[str, float]:
+    t0 = time.time()
+    if not MISTRAL_KEY:
+        return "", 0.0
+    import httpx
+    messages = [{"role": "system", "content": system}]
+    if history:
+        messages.extend(history[-8:])
+    messages.append({"role": "user", "content": user_msg})
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_KEY}",
+        "Content-Type":  "application/json; charset=utf-8",
+    }
+    for model in _MISTRAL_MODEL_ROTATION:
+        try:
+            body = json.dumps({
+                "model": model, "max_tokens": max_tokens,
+                "temperature": temperature, "messages": messages,
+            }, ensure_ascii=False).encode("utf-8")
+            async with httpx.AsyncClient(timeout=28.0) as client:
+                resp = await client.post(MISTRAL_URL, headers=headers, content=body)
+            if resp.status_code == 429:
+                logger.warning("[COACH MISTRAL] %s → 429 rate limit", model)
+                continue
+            if resp.status_code >= 500:
+                logger.warning("[COACH MISTRAL] %s → %s server error", model, resp.status_code)
+                continue
+            data = resp.json()
+            if resp.status_code >= 400:
+                err = data.get("error")
+                msg = err.get("message") if isinstance(err, dict) else data.get("message", "?")
+                logger.warning("[COACH MISTRAL] %s → %s: %.60s", model, resp.status_code, str(msg))
+                return "", (time.time() - t0) * 1000
+            raw = data["choices"][0]["message"]["content"].strip()
+            for pfx in ["Reponse:", "Coach:", "CoachIA:", "Réponse :", "RÉPONSE :",
+                        "Here is", "Based on", "Voici ma", "D'accord,"]:
+                if raw.lower().startswith(pfx.lower()):
+                    raw = raw[len(pfx):].strip()
+            if raw.startswith("{"):
+                m = re.search(r'"(?:reply|response|conseil|text|message)"\s*:\s*"([^"]+)"', raw)
+                raw = m.group(1).strip() if m else ""
+            ms = (time.time() - t0) * 1000
+            logger.info("[COACH MISTRAL] %dc | %.0fms | %s", len(raw), ms, model)
+            return raw, ms
+        except Exception as e:
+            logger.warning("[COACH MISTRAL] %s exception: %.60s", model, str(e))
+            continue
+    return "", (time.time() - t0) * 1000
+
+
 async def _call_ollama_fallback(system: str, user_msg: str, max_tokens: int) -> str:
     try:
         import httpx
@@ -919,6 +1015,11 @@ def _build_intent_fallback(
                     "bien parti. On attaque le gap ?")
         return (f"Salut {name} ! {perf:.0f}% de l'objectif, {hours_left}h, c'est large. "
                 "Qu'est-ce qu'on attaque ?")
+
+    if mode == "conversation" and qtype == "general":
+        return ("Je ne suis pas sûr de te suivre — tu veux un script de vente, "
+                "un point sur le stock, ou un coup de main pour ton objectif du jour ? "
+                "Dis-m'en un peu plus !")
 
     if qtype == "recap":
         top = f"Top : {top_sellers[0]['nom']} ({top_sellers[0]['qty']} vendus)." if top_sellers else ""
@@ -1099,14 +1200,16 @@ async def coach_chat(request: Request, body: dict):
     recent_tx   = sales_detail.get("recent_tx", [])
 
     # ── RAG (coaching seulement) ─────────────────────────────────────────────
-    rag_scripts, rag_relevant = [], False
+    rag_scripts, rag_relevant, rag_query, rag_ms = [], False, "", 0.0
     if mode == "coaching" or qtype in ("script","objection","closing","upsell","forfait","objectif"):
         rag_query = f"{message} {qtype} vente telecom Ooredoo"
         if gap > target * 0.4:
             rag_query += " gap critique urgent"
+        _rag_t0 = time.time()
         rag_scripts, rag_relevant = await loop.run_in_executor(
             None, _search_rag_sync, rag_query, hour, 2
         )
+        rag_ms = (time.time() - _rag_t0) * 1000
 
     # ── Prompt (système lean + situation sélective) ─────────────────────────
     system_prompt = _build_system_prompt(catalog)
@@ -1132,13 +1235,20 @@ async def coach_chat(request: Request, body: dict):
     else:
         max_tokens, temp = 350, 0.22
 
-    # ── Tentative 1 : OpenRouter full ───────────────────────────────────────
-    reply, llm_ms = await _call_openrouter(system_prompt, user_message, max_tokens, temp, day_history)
-    model_used = OPENROUTER_MODEL if _is_valid_reply(reply) else ""
+    # ── Tentative 1 : Mistral direct (quota indépendant d'OpenRouter) ───────
+    reply, llm_ms = await _call_mistral(system_prompt, user_message, max_tokens, temp, day_history)
+    model_used = "mistral" if _is_valid_reply(reply) else ""
 
-    # ── Tentative 2 : OpenRouter stripped ───────────────────────────────────
+    # ── Tentative 2 : OpenRouter full ───────────────────────────────────────
     if not _is_valid_reply(reply):
-        logger.warning("[COACH] Attempt 1 failed (%.0fms) — retry stripped", llm_ms)
+        if MISTRAL_KEY:
+            logger.warning("[COACH] Mistral failed (%.0fms) — retry OpenRouter", llm_ms)
+        reply, llm_ms = await _call_openrouter(system_prompt, user_message, max_tokens, temp, day_history)
+        model_used = OPENROUTER_MODEL if _is_valid_reply(reply) else ""
+
+    # ── Tentative 3 : OpenRouter stripped ───────────────────────────────────
+    if not _is_valid_reply(reply):
+        logger.warning("[COACH] Attempt 2 failed (%.0fms) — retry stripped", llm_ms)
         await asyncio.sleep(0.6 + random.uniform(0, 0.8))
 
         min_user = (
@@ -1150,8 +1260,8 @@ async def coach_chat(request: Request, body: dict):
         if _is_valid_reply(reply):
             model_used = f"{OPENROUTER_MODEL}+stripped"
         else:
-            # ── Tentative 3 : Ollama local ───────────────────────────────────
-            logger.warning("[COACH] Attempt 2 failed — trying Ollama")
+            # ── Tentative 4 : Ollama local ───────────────────────────────────
+            logger.warning("[COACH] Attempt 3 failed — trying Ollama")
             reply = await _call_ollama_fallback(system_prompt, min_user, min(max_tokens, 220))
             model_used = "ollama" if _is_valid_reply(reply) else ""
 
@@ -1322,6 +1432,59 @@ async def coach_chat(request: Request, body: dict):
             )
         except Exception:
             pass
+        # ── Télémétrie /api/monitoring/agents (agent_logs) — coach/rag/guardrail
+        # réels, visibles dynamiquement sur la page Monitoring (pas de mock) ──
+        try:
+            from agent_logger import log_node_start, log_node_complete
+            _cycle_id = f"chat-{advisor_name[:20]}-{int(t0*1000)}"
+
+            _lid = log_node_start(
+                cycle_id=_cycle_id, agent_name="coach", node_name="chat_reply",
+                input_state={"message": message[:200], "advisor": advisor_name,
+                             "mode": mode, "qtype": qtype, "urgency": urgency},
+                store_id=store_id,
+            )
+            log_node_complete(
+                _lid,
+                output_state={"reply_preview": reply[:200], "model": model_used,
+                              "confidence": confidence, "rag_used": rag_relevant,
+                              "nb_rag_scripts": len(rag_scripts)},
+                duration_ms=total_ms,
+                metadata={"guardrail_status": _grd.get("status", "APPROVE")},
+                status="error" if model_used in ("", "guardrail_block") else "completed",
+            )
+
+            if rag_query:
+                _rid = log_node_start(
+                    cycle_id=_cycle_id, agent_name="rag", node_name="search",
+                    input_state={"query": rag_query[:150], "hour": hour},
+                    store_id=store_id,
+                )
+                log_node_complete(
+                    _rid,
+                    output_state={"nb_scripts": len(rag_scripts), "relevant": rag_relevant,
+                                  "top_score": rag_scripts[0]["score"] if rag_scripts else 0},
+                    duration_ms=rag_ms,
+                    status="completed" if rag_relevant else "fallback",
+                )
+
+            _grd_status = _grd.get("status", "APPROVE")
+            _gid = log_node_start(
+                cycle_id=_cycle_id, agent_name="guardrail", node_name="evaluate_guardrails",
+                input_state={"advisor": advisor_name, "confidence": confidence,
+                             "rag_used": rag_relevant, "urgency": urgency},
+                store_id=store_id,
+            )
+            log_node_complete(
+                _gid,
+                output_state={"status": _grd_status, "issues": _grd.get("issues", [])[:3],
+                              "requires_hitl": _grd.get("requires_human_validation", False)},
+                duration_ms=0.0,
+                status={"APPROVE": "completed", "REWRITE": "completed",
+                        "ESCALATE": "fallback", "BLOCK": "error"}.get(_grd_status, "completed"),
+            )
+        except Exception as _tel_err:
+            logger.debug("[COACH] Monitoring telemetry skipped: %s", _tel_err)
 
     asyncio.create_task(_persist())
 
@@ -1396,6 +1559,7 @@ async def coach_chat_stream(request: Request, body: dict):
     """SSE streaming variant — same logic as /chat but yields tokens progressively."""
     from fastapi.responses import StreamingResponse as _SR
 
+    t0 = time.time()
     message      = (body.get("message") or "").strip()
     advisor_name = (body.get("advisor_name") or "Conseiller").strip()
     store_id     = _normalize_store(body.get("store_id") or "I63")
@@ -1512,14 +1676,16 @@ async def coach_chat_stream(request: Request, body: dict):
     top_sellers = sales_detail.get("top_sellers", [])
     recent_tx   = sales_detail.get("recent_tx", [])
 
-    rag_scripts, rag_relevant = [], False
+    rag_scripts, rag_relevant, rag_query, rag_ms = [], False, "", 0.0
     if mode == "coaching" or qtype in ("script", "objection", "closing", "upsell", "forfait", "objectif"):
         rag_query = f"{message} {qtype} vente telecom Ooredoo"
         if gap > target * 0.4:
             rag_query += " gap critique urgent"
+        _rag_t0 = time.time()
         rag_scripts, rag_relevant = await loop.run_in_executor(
             None, _search_rag_sync, rag_query, hour, 2
         )
+        rag_ms = (time.time() - _rag_t0) * 1000
 
     system_prompt   = _build_system_prompt(catalog)
     situation_block = _build_situation(
@@ -1646,6 +1812,97 @@ async def coach_chat_stream(request: Request, body: dict):
                 final_reply = _sgrd["safe_fallback"]
         except Exception:
             pass
+
+        total_ms = (time.time() - t0) * 1000
+
+        # ── Persistance + télémétrie monitoring (non-bloquant) ──────────────
+        # Le endpoint /stream est celui réellement utilisé par le CoachAgent
+        # frontend (chat.ts) — sans ceci, ni coach_interactions ni agent_logs
+        # ne voyaient jamais ces échanges, d'où "NO TELEMETRY" sur la page
+        # Monitoring pour Coach/RAG/Guardrail malgré une activité réelle.
+        async def _persist_stream():
+            try:
+                from modules.coaching.agents.coach.tools import save_interaction
+                save_interaction(
+                    advisor_name=advisor_name, store_id=store_id,
+                    message=message, response=final_reply,
+                    gap_pct=round(gap/target*100, 1) if target else 0,
+                    urgency=urgency, rag_used=rag_relevant,
+                    nb_rag_scripts=len(rag_scripts),
+                    conseil_type=f"{domain}/{qtype}", confidence=0.80,
+                )
+            except Exception:
+                pass
+            try:
+                from agent_logger import log_node_start, log_node_complete
+                _cycle_id = f"stream-{advisor_name[:20]}-{int(t0*1000)}"
+
+                _lid = log_node_start(
+                    cycle_id=_cycle_id, agent_name="coach", node_name="chat_reply",
+                    input_state={"message": message[:200], "advisor": advisor_name,
+                                 "mode": mode, "qtype": qtype, "urgency": urgency},
+                    store_id=store_id,
+                )
+                log_node_complete(
+                    _lid,
+                    output_state={"reply_preview": final_reply[:200], "model": model_used,
+                                  "rag_used": rag_relevant, "nb_rag_scripts": len(rag_scripts)},
+                    duration_ms=total_ms,
+                    metadata={"guardrail_status": _sgrd.get("status", "APPROVE")},
+                    status="error" if not model_used else "completed",
+                )
+
+                if rag_query:
+                    _rid = log_node_start(
+                        cycle_id=_cycle_id, agent_name="rag", node_name="search",
+                        input_state={"query": rag_query[:150], "hour": hour},
+                        store_id=store_id,
+                    )
+                    log_node_complete(
+                        _rid,
+                        output_state={"nb_scripts": len(rag_scripts), "relevant": rag_relevant,
+                                      "top_score": rag_scripts[0]["score"] if rag_scripts else 0},
+                        duration_ms=rag_ms,
+                        status="completed" if rag_relevant else "fallback",
+                    )
+
+                _sgrd_status = _sgrd.get("status", "APPROVE")
+                _gid = log_node_start(
+                    cycle_id=_cycle_id, agent_name="guardrail", node_name="evaluate_guardrails",
+                    input_state={"advisor": advisor_name, "rag_used": rag_relevant,
+                                 "urgency": urgency},
+                    store_id=store_id,
+                )
+                log_node_complete(
+                    _gid,
+                    output_state={"status": _sgrd_status, "issues": _sgrd.get("issues", [])[:3],
+                                  "requires_hitl": _sgrd.get("requires_human_validation", False)},
+                    duration_ms=0.0,
+                    status={"APPROVE": "completed", "REWRITE": "completed",
+                            "ESCALATE": "fallback", "BLOCK": "error"}.get(_sgrd_status, "completed"),
+                )
+            except Exception as _tel_err:
+                logger.debug("[COACH STREAM] Monitoring telemetry skipped: %s", _tel_err)
+
+            # ── Push WS temps réel — le panneau "Guardrail Events" du Monitoring
+            # écoutait déjà ce message mais /stream ne l'émettait jamais (seul
+            # /chat le faisait), donc aucun incident réel n'apparaissait en live.
+            if _sgrd.get("status") in ("BLOCK", "ESCALATE"):
+                try:
+                    from main import _broadcast
+                    await _broadcast(store_id, json.dumps({
+                        "type":      "guardrail_event",
+                        "status":    _sgrd["status"],
+                        "store_id":  store_id,
+                        "advisor":   advisor_name,
+                        "issues":    _sgrd.get("issues", []),
+                        "urgency":   urgency,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }))
+                except Exception:
+                    pass
+
+        asyncio.create_task(_persist_stream())
 
         yield f'data: {json.dumps({"done": True, "reply": final_reply, "rag_used": rag_relevant, "source": f"v10_{model_used}", "model": model_used, "guardrail_status": _sgrd.get("status", "APPROVE"), "guardrail_issues": _sgrd.get("issues", []), "requires_hitl": _sgrd.get("requires_human_validation", False)})}\n\n'
 
