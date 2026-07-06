@@ -52,6 +52,12 @@ _sale_overrides: Dict[str, Dict[str, Any]] = {}
 
 _pool: Optional[ThreadedConnectionPool] = None
 
+try:
+    from db.repositories.inventory_repo import SyncInventoryRepo
+    _DB_AVAILABLE = True
+except Exception:
+    _DB_AVAILABLE = False
+    logger.warning("SyncInventoryRepo not importable — DB reads disabled, using CSVs only.")
 
 def _get_pool() -> ThreadedConnectionPool:
     global _pool
