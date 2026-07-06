@@ -59,6 +59,9 @@ MIGRATIONS = [
     ("migration", "migration_006_kpi.sql"),
     ("migration", "migration_007_coaching_ops.sql"),
     ("migration", "migration_011_purchase_orders_board.sql"),
+    ("migration", "migration_012_drop_reco_stock_trigger.sql"),
+    ("migration", "migration_013_alerts_reco_hardening.sql"),
+    ("migration", "migration_014_fk_hardening.sql"),
 ]
 
 SEEDS = [

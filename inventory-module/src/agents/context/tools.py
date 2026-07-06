@@ -78,6 +78,21 @@ def _get_holiday_cache_lock(key: str) -> _threading.Lock:
         return _holiday_cache_locks[key]
 
 
+# Same race condition as _holiday_cache: several SKU-worker threads for the
+# same store can all miss _weather_cache at once and each fire their own
+# request to open-meteo.com. One lock per store_id serializes the first
+# fetch; everyone else reuses the cached result instead of racing.
+_weather_cache_locks: Dict[str, _threading.Lock] = {}
+_weather_cache_locks_guard = _threading.Lock()
+
+
+def _get_weather_cache_lock(key: str) -> _threading.Lock:
+    with _weather_cache_locks_guard:
+        if key not in _weather_cache_locks:
+            _weather_cache_locks[key] = _threading.Lock()
+        return _weather_cache_locks[key]
+
+
 def _get_conn():
     return psycopg2.connect(**_DB_CONFIG, connect_timeout=8)
 
@@ -321,69 +336,75 @@ def get_weather(store_id: str) -> Dict[str, Any]:
     if store_id in _weather_cache:
         return _weather_cache[store_id]
 
-    loc = _store_location(store_id)
-    try:
-        resp = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude":  loc["lat"],
-                "longitude": loc["lon"],
-                "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
-                "timezone":      loc["timezone"],
-                "forecast_days": 7,
-            },
-            timeout=8,
-        )
-        resp.raise_for_status()
-        raw = resp.json().get("daily", {})
-        dates    = raw.get("time", [])
-        temp_max = raw.get("temperature_2m_max", [])
-        temp_min = raw.get("temperature_2m_min", [])
-        precip   = raw.get("precipitation_sum", [])
-        codes    = raw.get("weathercode", [])
-        days = []
-        for i, d in enumerate(dates):
-            t_max = float(temp_max[i]) if i < len(temp_max) and temp_max[i] is not None else None
-            t_min = float(temp_min[i]) if i < len(temp_min) and temp_min[i] is not None else None
-            rain  = float(precip[i])   if i < len(precip)   and precip[i]   is not None else 0.0
-            code  = int(codes[i])      if i < len(codes)     and codes[i]    is not None else 0
-            days.append({
-                "date":             d,
-                "temp_max":         t_max,
-                "temp_min":         t_min,
-                "precipitation_mm": round(rain, 1),
-                "weather_label":    _wmo_label(code),
-                "is_bad_weather":   rain > 5.0,
-            })
-        valid_temps  = [d["temp_max"] for d in days if d["temp_max"] is not None]
-        avg_temp_max = round(sum(valid_temps) / len(valid_temps), 1) if valid_temps else None
-        total_precip = round(sum(d["precipitation_mm"] for d in days), 1)
-        bad_days     = sum(1 for d in days if d["is_bad_weather"])
-        t_str = f"{avg_temp_max}°C" if avg_temp_max else "N/A"
-        summary = (
-            f"Mostly wet — {bad_days}/7 days heavy rain" if bad_days >= 4 else
-            f"Mixed — {bad_days} days heavy rain" if bad_days >= 2 else
-            f"Very hot — avg max {t_str}" if avg_temp_max and avg_temp_max > 35 else
-            f"Normal — avg max {t_str}, {total_precip}mm"
-        )
-        result = {
-            "summary": summary,
-            "avg_temp_max": avg_temp_max,
-            "total_precip_mm": total_precip,
-            "bad_weather_days": bad_days,
-            "days": days,
-            "city": loc.get("city", "Tunis"),
-            "source": "open-meteo",
-        }
-    except Exception as e:
-        logger.warning("Weather API failed store=%s: %s", store_id, e)
-        result = {
-            "summary": "Weather data unavailable", "avg_temp_max": None,
-            "total_precip_mm": None, "bad_weather_days": 0,
-            "days": [], "city": loc.get("city", "Tunis"), "source": "unavailable",
-        }
-    _weather_cache[store_id] = result
-    return result
+    with _get_weather_cache_lock(store_id):
+        # Re-check inside the lock — another thread may have already
+        # populated the cache while this one was waiting.
+        if store_id in _weather_cache:
+            return _weather_cache[store_id]
+
+        loc = _store_location(store_id)
+        try:
+            resp = requests.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude":  loc["lat"],
+                    "longitude": loc["lon"],
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
+                    "timezone":      loc["timezone"],
+                    "forecast_days": 7,
+                },
+                timeout=8,
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("daily", {})
+            dates    = raw.get("time", [])
+            temp_max = raw.get("temperature_2m_max", [])
+            temp_min = raw.get("temperature_2m_min", [])
+            precip   = raw.get("precipitation_sum", [])
+            codes    = raw.get("weathercode", [])
+            days = []
+            for i, d in enumerate(dates):
+                t_max = float(temp_max[i]) if i < len(temp_max) and temp_max[i] is not None else None
+                t_min = float(temp_min[i]) if i < len(temp_min) and temp_min[i] is not None else None
+                rain  = float(precip[i])   if i < len(precip)   and precip[i]   is not None else 0.0
+                code  = int(codes[i])      if i < len(codes)     and codes[i]    is not None else 0
+                days.append({
+                    "date":             d,
+                    "temp_max":         t_max,
+                    "temp_min":         t_min,
+                    "precipitation_mm": round(rain, 1),
+                    "weather_label":    _wmo_label(code),
+                    "is_bad_weather":   rain > 5.0,
+                })
+            valid_temps  = [d["temp_max"] for d in days if d["temp_max"] is not None]
+            avg_temp_max = round(sum(valid_temps) / len(valid_temps), 1) if valid_temps else None
+            total_precip = round(sum(d["precipitation_mm"] for d in days), 1)
+            bad_days     = sum(1 for d in days if d["is_bad_weather"])
+            t_str = f"{avg_temp_max}°C" if avg_temp_max else "N/A"
+            summary = (
+                f"Mostly wet — {bad_days}/7 days heavy rain" if bad_days >= 4 else
+                f"Mixed — {bad_days} days heavy rain" if bad_days >= 2 else
+                f"Very hot — avg max {t_str}" if avg_temp_max and avg_temp_max > 35 else
+                f"Normal — avg max {t_str}, {total_precip}mm"
+            )
+            result = {
+                "summary": summary,
+                "avg_temp_max": avg_temp_max,
+                "total_precip_mm": total_precip,
+                "bad_weather_days": bad_days,
+                "days": days,
+                "city": loc.get("city", "Tunis"),
+                "source": "open-meteo",
+            }
+        except Exception as e:
+            logger.warning("Weather API failed store=%s: %s", store_id, e)
+            result = {
+                "summary": "Weather data unavailable", "avg_temp_max": None,
+                "total_precip_mm": None, "bad_weather_days": 0,
+                "days": [], "city": loc.get("city", "Tunis"), "source": "unavailable",
+            }
+        _weather_cache[store_id] = result
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════

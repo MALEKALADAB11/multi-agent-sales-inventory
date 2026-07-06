@@ -153,92 +153,105 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
     conn = _conn()
     try:
         with conn.cursor() as cur:
-            # Baseline : jours hors events, hors promo (3 ans)
+            # Query 1/2 (was 1 & 6): baseline stats + 6-month trend combined via
+            # FILTER — both are single-row aggregates over the same base rows
+            # (sku, store_id, quantity_sold > 0), each with its own extra
+            # exclusion applied per-column instead of per-query, so this is a
+            # mechanical 2-query-in-1 merge with identical semantics to before.
             cur.execute("""
-                SELECT AVG(quantity_sold) AS avg_base,
-                       STDDEV(quantity_sold) AS std_base,
-                       COUNT(*) AS n_days,
-                       COUNT(DISTINCT year_num) AS n_years
+                SELECT
+                    AVG(quantity_sold) FILTER (
+                        WHERE NOT COALESCE(is_promo, FALSE)
+                          AND NOT COALESCE(is_event_day, FALSE)
+                    ) AS avg_base,
+                    STDDEV(quantity_sold) FILTER (
+                        WHERE NOT COALESCE(is_promo, FALSE)
+                          AND NOT COALESCE(is_event_day, FALSE)
+                    ) AS std_base,
+                    COUNT(DISTINCT year_num) FILTER (
+                        WHERE NOT COALESCE(is_promo, FALSE)
+                          AND NOT COALESCE(is_event_day, FALSE)
+                    ) AS n_years,
+                    AVG(quantity_sold) FILTER (
+                        WHERE record_date >= CURRENT_DATE - INTERVAL '180 days'
+                          AND record_date < CURRENT_DATE
+                    ) AS recent_6m,
+                    AVG(quantity_sold) FILTER (
+                        WHERE record_date >= CURRENT_DATE - INTERVAL '360 days'
+                          AND record_date < CURRENT_DATE - INTERVAL '180 days'
+                    ) AS prev_6m
                 FROM inventory.sales_history
-                WHERE sku = %s AND store_id = %s
-                  AND NOT COALESCE(is_promo, FALSE)
-                  AND NOT COALESCE(is_event_day, FALSE)
-                  AND quantity_sold > 0
+                WHERE sku = %s AND store_id = %s AND quantity_sold > 0
             """, (int(sku), store_id))
             base_row = cur.fetchone()
             avg_base = float(base_row[0] or 1.0)
             std_base = float(base_row[1] or avg_base * 0.3)
-            n_years  = int(base_row[3] or 1)
-
-            # Facteurs par mois (saisonnalité annuelle)
-            cur.execute("""
-                SELECT month_num, AVG(quantity_sold) AS avg_qty
-                FROM inventory.sales_history
-                WHERE sku = %s AND store_id = %s AND quantity_sold > 0
-                  AND NOT COALESCE(is_promo, FALSE)
-                GROUP BY month_num
-                ORDER BY month_num
-            """, (int(sku), store_id))
-            by_month = {
-                r[0]: round(float(r[1] or 0) / avg_base, 3)
-                for r in cur.fetchall()
-            }
-
-            # Facteurs par type d'événement
-            cur.execute("""
-                SELECT event_type, AVG(quantity_sold) AS avg_qty, COUNT(*) AS n
-                FROM inventory.sales_history
-                WHERE sku = %s AND store_id = %s
-                  AND event_type IS NOT NULL AND quantity_sold > 0
-                GROUP BY event_type
-            """, (int(sku), store_id))
-            by_event = {
-                r[0]: {"uplift": round(float(r[1] or 0) / avg_base, 3), "n_days": int(r[2])}
-                for r in cur.fetchall() if r[1]
-            }
-
-            # Facteurs par saison
-            cur.execute("""
-                SELECT season, AVG(quantity_sold) AS avg_qty
-                FROM inventory.sales_history
-                WHERE sku = %s AND store_id = %s AND quantity_sold > 0
-                  AND season IS NOT NULL
-                GROUP BY season
-            """, (int(sku), store_id))
-            by_season = {
-                r[0]: round(float(r[1] or 0) / avg_base, 3)
-                for r in cur.fetchall() if r[1]
-            }
-
-            # Facteur par jour de semaine (0=Lundi ... 6=Dimanche)
-            cur.execute("""
-                SELECT day_of_week, AVG(quantity_sold) AS avg_qty
-                FROM inventory.sales_history
-                WHERE sku = %s AND store_id = %s AND quantity_sold > 0
-                  AND day_of_week IS NOT NULL
-                  AND NOT COALESCE(is_event_day, FALSE)
-                GROUP BY day_of_week
-                ORDER BY day_of_week
-            """, (int(sku), store_id))
-            by_dow = {
-                r[0]: round(float(r[1] or 0) / avg_base, 3)
-                for r in cur.fetchall() if r[1]
-            }
-
-            # Tendance 6 mois vs 6 mois précédents
-            cur.execute("""
-                SELECT
-                    AVG(CASE WHEN record_date >= CURRENT_DATE - INTERVAL '180 days'
-                              AND record_date < CURRENT_DATE THEN quantity_sold END) AS recent_6m,
-                    AVG(CASE WHEN record_date >= CURRENT_DATE - INTERVAL '360 days'
-                              AND record_date < CURRENT_DATE - INTERVAL '180 days'
-                              THEN quantity_sold END) AS prev_6m
-                FROM inventory.sales_history
-                WHERE sku = %s AND store_id = %s AND quantity_sold > 0
-            """, (int(sku), store_id))
-            trend_row = cur.fetchone()
-            recent, prev = float(trend_row[0] or 0), float(trend_row[1] or 0)
+            n_years  = int(base_row[2] or 1)
+            recent, prev = float(base_row[3] or 0), float(base_row[4] or 0)
             trend_6m_pct = round((recent - prev) / prev * 100, 1) if prev > 0 else 0.0
+
+            # Query 2/2 (was 4 separate GROUP BY queries — by_month, by_event,
+            # by_season, by_dow): each kept as its own CTE with its ORIGINAL
+            # WHERE clause (different exclusion rules per dimension can't be
+            # safely merged into one shared WHERE/GROUPING SETS without
+            # changing which rows count for which aggregate), then combined
+            # with UNION ALL so it's one network round-trip instead of four.
+            cur.execute("""
+                WITH by_month_q AS (
+                    SELECT 'month'::text AS dim, month_num::text AS key,
+                           AVG(quantity_sold) AS avg_qty, COUNT(*) AS n
+                    FROM inventory.sales_history
+                    WHERE sku = %s AND store_id = %s AND quantity_sold > 0
+                      AND NOT COALESCE(is_promo, FALSE)
+                    GROUP BY month_num
+                ),
+                by_event_q AS (
+                    SELECT 'event'::text AS dim, event_type::text AS key,
+                           AVG(quantity_sold) AS avg_qty, COUNT(*) AS n
+                    FROM inventory.sales_history
+                    WHERE sku = %s AND store_id = %s
+                      AND event_type IS NOT NULL AND quantity_sold > 0
+                    GROUP BY event_type
+                ),
+                by_season_q AS (
+                    SELECT 'season'::text AS dim, season::text AS key,
+                           AVG(quantity_sold) AS avg_qty, COUNT(*) AS n
+                    FROM inventory.sales_history
+                    WHERE sku = %s AND store_id = %s AND quantity_sold > 0
+                      AND season IS NOT NULL
+                    GROUP BY season
+                ),
+                by_dow_q AS (
+                    SELECT 'dow'::text AS dim, day_of_week::text AS key,
+                           AVG(quantity_sold) AS avg_qty, COUNT(*) AS n
+                    FROM inventory.sales_history
+                    WHERE sku = %s AND store_id = %s AND quantity_sold > 0
+                      AND day_of_week IS NOT NULL
+                      AND NOT COALESCE(is_event_day, FALSE)
+                    GROUP BY day_of_week
+                )
+                SELECT * FROM by_month_q
+                UNION ALL SELECT * FROM by_event_q
+                UNION ALL SELECT * FROM by_season_q
+                UNION ALL SELECT * FROM by_dow_q
+            """, (int(sku), store_id) * 4)
+
+            by_month: dict = {}
+            by_event: dict = {}
+            by_season: dict = {}
+            by_dow: dict = {}
+            for dim, key, avg_qty, n in cur.fetchall():
+                if avg_qty is None:
+                    continue
+                factor = round(float(avg_qty) / avg_base, 3)
+                if dim == "month":
+                    by_month[int(key)] = factor
+                elif dim == "event":
+                    by_event[key] = {"uplift": factor, "n_days": int(n)}
+                elif dim == "season":
+                    by_season[key] = factor
+                elif dim == "dow":
+                    by_dow[int(key)] = factor
 
             return {
                 "sku":              int(sku),

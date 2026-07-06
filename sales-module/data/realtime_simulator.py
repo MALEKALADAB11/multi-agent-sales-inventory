@@ -298,7 +298,10 @@ class RealtimeSimulator:
         # Fire inventory callback
         if self.on_sale:
             try:
-                self.on_sale(self.store_id, sku["sku"], 1)
+                self.on_sale(
+                    self.store_id, sku["sku"], 1,
+                    product_name=sku["name"], amount=price,
+                )
             except Exception as e:
                 logger.debug("[SIM] on_sale callback: %s", e)
 

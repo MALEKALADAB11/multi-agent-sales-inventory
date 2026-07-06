@@ -282,7 +282,7 @@ async def startup_event():
         "password": os.getenv("POSTGRES_PASSWORD", "admin"),
     }
 
-    def _on_sale(store_id: str, sku: str, units: int) -> None:
+    def _on_sale(store_id: str, sku: str, units: int, product_name: str = None, amount: float = None) -> None:
         """
         Callback temps réel : une vente vient d'être enregistrée dans transactions_rt.
         1. Décrémente quantity_available dans inventory.stock_levels (persistence PG)
@@ -346,17 +346,21 @@ async def startup_event():
                     logger.debug("[RT_SYNC] PG decrement skipped: %s", e)
 
             # Broadcast immédiat vers le frontend — event dédié temps réel
+            label = product_name or f"SKU {sku_str}"
+            amount_str = f" — {amount:.0f} DT" if amount is not None else ""
             rt_event = json.dumps({
-                "type":       "realtime_stock_update",
-                "sku":        sku_str,
-                "store_id":   store_id,
-                "units_sold": units,
+                "type":         "realtime_stock_update",
+                "sku":          sku_str,
+                "store_id":     store_id,
+                "product_name": product_name,
+                "amount":       amount,
+                "units_sold":   units,
                 "stock_before": round(current),
                 "stock_after":  round(new_stock),
-                "severity":   severity,
-                "timestamp":  datetime.utcnow().isoformat(),
+                "severity":     severity,
+                "timestamp":    datetime.utcnow().isoformat(),
                 "message":    (
-                    f"Vente SKU {sku_str} : stock {int(current)}→{int(new_stock)} unités"
+                    f"Vente : {label}{amount_str} — stock {int(current)}→{int(new_stock)} unités"
                     + (" ⚠️ RUPTURE" if severity == "rupture" else
                        " 🔴 CRITIQUE" if severity == "critical" else
                        " 🟡 BAS" if severity == "warning" else "")

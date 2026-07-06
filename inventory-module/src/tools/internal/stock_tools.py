@@ -493,6 +493,25 @@ class _DataCache:
             return pd.DataFrame(columns=["sku", "store_id", "predicted_demand"])
 
     @classmethod
+    def record_sale(cls, sku: str, store_id: str, units: int) -> None:
+        """
+        Decrement the in-memory stock override for one SKU/store after a
+        real-time sale, so the next `_to_inventory_item()` read (which checks
+        `_stock_overrides` first) reflects the sale immediately instead of
+        waiting for the next batch pipeline cycle.
+        """
+        key = (str(sku), store_id)
+        current = cls._stock_overrides.get(key)
+        if current is None:
+            try:
+                from db.repositories.inventory_repo import SyncInventoryRepo
+                row = SyncInventoryRepo.get_stock_level(str(sku), store_id)
+                current = float(row.get("stock_current") or 0) if row else 0.0
+            except Exception:
+                current = 0.0
+        cls._stock_overrides[key] = max(0.0, current - units)
+
+    @classmethod
     def invalidate(cls):
         cls._stock_overrides.clear()
         cls._cache.clear()

@@ -11,9 +11,9 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_transactions_rt_store_time
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_transactions_rt_store_date
     ON sales.transactions_rt (store_id, date_only);
 
--- Advisor-specific queries (advisor profile S3.3)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_transactions_rt_advisor
-    ON sales.transactions_rt (store_id, advisor_name, created_at DESC);
+-- (removed idx_transactions_rt_advisor — sales.transactions_rt has no
+-- advisor_name column, only agent_id; advisor-name lookups are served by
+-- idx_coach_interactions_advisor_day below instead)
 
 -- ── sales.transactions (historical) ───────────────────────────────────────
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_transactions_store_date
@@ -36,9 +36,8 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_coach_interactions_advisor_day
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_recommendations_store_status
     ON inventory.recommendations (store_id, status, created_at DESC);
 
--- ── monitoring.advisor_profile ────────────────────────────────────────────
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_advisor_profile_store
-    ON monitoring.advisor_profile (store_id, advisor_name);
+-- (removed idx_advisor_profile_store — monitoring.advisor_profile does not
+-- exist in this database)
 
 -- ── Partial index: only active/recent recommendations ─────────────────────
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_recommendations_active
