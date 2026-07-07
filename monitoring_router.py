@@ -92,7 +92,8 @@ def _io_preview(state, max_len: int = 80) -> dict:
 async def get_cycles(limit: int = 20, store_id: str = "I63"):
     """Derniers cycles d'orchestration — pour l'agent monitoring."""
     from agent_logger import get_recent_cycles
-    cycles = get_recent_cycles(limit=limit, store_id=store_id)
+    from fastapi.encoders import jsonable_encoder
+    cycles = jsonable_encoder(get_recent_cycles(limit=limit, store_id=store_id))
     return JSONResponse({
         "cycles":    cycles,
         "total":     len(cycles),
@@ -105,7 +106,8 @@ async def get_cycles(limit: int = 20, store_id: str = "I63"):
 async def get_errors(limit: int = 50, store_id: str = "I63"):
     """Erreurs récentes non résolues — pour alerting monitoring."""
     from agent_logger import get_recent_errors
-    errors = get_recent_errors(limit=limit, store_id=store_id)
+    from fastapi.encoders import jsonable_encoder
+    errors = jsonable_encoder(get_recent_errors(limit=limit, store_id=store_id))
     return JSONResponse({
         "errors":    errors,
         "total":     len(errors),
@@ -118,7 +120,8 @@ async def get_errors(limit: int = 50, store_id: str = "I63"):
 async def get_stats(store_id: str = "I63", hours: int = 24):
     """Statistiques complètes des agents sur les X dernières heures."""
     from agent_logger import get_agent_stats
-    stats = get_agent_stats(store_id=store_id, hours=hours)
+    from fastapi.encoders import jsonable_encoder
+    stats = jsonable_encoder(get_agent_stats(store_id=store_id, hours=hours))
     return JSONResponse({
         "stats":     stats,
         "store_id":  store_id,

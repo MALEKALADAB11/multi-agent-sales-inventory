@@ -91,3 +91,5 @@ volumes/minio/
 volumes/milvus/
 sales-module/.env
 .env
+backups/
+data-archive/
