@@ -221,6 +221,16 @@ class InventoryDecisionAgent:
                 agent_run_id=agent_run_id or own_run_id,
             )
 
+            # Auto-suggest on the purchase-order Kanban — the card appears the
+            # moment the agent decides, before any human has approved anything.
+            # Best-effort only: a failure here must never break the decision
+            # pipeline, the recommendation above is already committed.
+            if recommendation_id:
+                self._suggest_purchase_order(
+                    recommendation_id=recommendation_id,
+                    agent_run_id=agent_run_id or own_run_id,
+                )
+
             final = {
                 "sku":                    sku,
                 "store_id":               store_id,
@@ -380,6 +390,36 @@ class InventoryDecisionAgent:
                 sku, store_id, e,
             )
             return None
+
+    def _suggest_purchase_order(
+        self,
+        recommendation_id: str,
+        agent_run_id: Optional[str],
+    ) -> None:
+        """
+        Auto-creates a SUGGERE purchase order from the recommendation just
+        persisted, and pushes it to the Kanban over WebSocket in real time.
+        Never raises — logged as a warning on failure.
+        """
+        try:
+            from db.repositories.supply_repo import SyncPurchaseOrderRepo
+            from src.services.po_ws_bus import broadcast_po_suggested_sync
+
+            po = SyncPurchaseOrderRepo.create_suggestion_from_recommendation(
+                recommendation_id=recommendation_id,
+                agent_run_id=agent_run_id,
+            )
+            if po:
+                broadcast_po_suggested_sync(po)
+                logger.info(
+                    "[DecisionAgent] purchase order suggested: po_id=%s recommendation_id=%s",
+                    po.get("po_id"), recommendation_id,
+                )
+        except Exception as e:
+            logger.warning(
+                "[DecisionAgent] _suggest_purchase_order failed for recommendation %s: %s",
+                recommendation_id, e,
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

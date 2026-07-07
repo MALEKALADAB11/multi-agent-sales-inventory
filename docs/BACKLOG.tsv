@@ -1,0 +1,101 @@
+[Sprint 0] Structure modulaire sales-module + inventory-module	Done
+[Sprint 0] Agent Analyste (vente) LangGraph + WebSocket	Done
+[Sprint 0] AnalysisAgent inventaire (fetch/compute/reason)	Done
+[Sprint 0] ContextAgent inventaire (events/promos/saisonnalité)	Done
+[Sprint 0] DecisionAgent inventaire (recommandations)	Done
+[Sprint 0] InventoryOrchestrator (batch 8 workers)	Done
+[Sprint 0] Agent Stratège + CoachAgent LLM + météo + scraper	Done
+[Sprint 0] Données réelles Ooredoo I63	Done
+[Sprint 0] Login / authentification	Done
+[Sprint 0] Agent Coach + RAG chat	Done
+[Sprint 0] Monitoring (dashboard initial)	Done
+[Sprint 0] Fix schémas DB sales/inventory/monitoring	Done
+[Sprint 1] Rebuild sales_history journalier (1.49M lignes)	Done
+[Sprint 1] Backfill synthétique 2022-2024	Done
+[Sprint 1] get_seasonal_demand_profile (agents inventaire)	Done
+[Sprint 2] Dashboard UI Plan Stratégique/Coaching Cards	Done
+[Sprint 2] Coach streaming SSE	Done
+[Sprint 2] Seed RAG Milvus (200+ scripts)	Done
+[Sprint 2] Fallback SQL du forecast	Done
+[Sprint 3] Outil ReAct get_stock_alerts	Done
+[Sprint 3] Enrichissement urgence stock_urgency_boost	Done
+[Sprint 3] Profil conseiller enrichi	Done
+[Sprint 3] Cache forecast Redis	Done
+[Sprint 3] Index PostgreSQL performance	Done
+[Sprint 4] Backend + panel Angular HITL	Done
+[Sprint 4] Rate limiting slowapi	Done
+[Sprint 4] Tests unitaires agents	Done
+[Sprint 4] constraints_check_node (DecisionAgent inventaire)	Done
+[Sprint 5] Agent Guardrail/Critic (7 règles)	Done
+[Sprint 5] Cross-domain scoring produit	Done
+[Sprint 5] RetailState unifié	Done
+[Sprint 5] SupervisorAgent LangGraph (12 nœuds)	Done
+[Sprint 5] Préchargement TimesFM/Prophet	Done
+[Sprint 6] Guardrail câblé dans /chat	Done
+[Sprint 6] scored_products dans /chat	Done
+[Sprint 6] RBAC store-level	Done
+[Sprint 6] Fix URL prod frontend	Done
+[Sprint 6] Tests guardrail	Done
+[Sprint 7] Badge guardrail chat UI	Done
+[Sprint 7] Événements guardrail WebSocket	Done
+[Sprint 7] Responsive mobile	Done
+[Sprint 7] Tests E2E Playwright	Done
+[Sprint 7] WS alertes inventaire	Done
+[Sprint 8] SupervisorAgent exposé via API	Done
+[Sprint 8] CI/CD GitHub Actions	Done
+[Sprint 8] Panel historique guardrail monitoring	Done
+[Sprint 8] Tests unitaires Angular + backend coach_chat	Done
+[Sprint 9] Responsive mobile complet	Done
+[Sprint 9] Loading skeletons Dashboard	Done
+[Sprint 9] Auto-refresh token JWT	Done
+[Sprint 9] Bannière offline	Done
+[Sprint 9] Fix transactions -> transactions_rt	Done
+[Sprint 10] 4 outils ReAct (anomalies/STL/multi-horizon/vélocité)	Done
+[Sprint 10] Fix bug statistique AVG vs SUM	Done
+[Sprint 10] Séparation transactions vs transactions_rt	Done
+[Sprint 11] Board Kanban achats (/purchase-board)	Done
+[Sprint 11] Backend supply_routes.py + supply_repo.py	Done
+[Sprint 11] Fix corruption stock (trigger trg_sync_stock_on_reco)	Done
+[Sprint 11] Durcissement agents inventaire (N+1, verrous cache)	Done
+[Sprint 11] 8 index PostgreSQL + 8 clés étrangères manquantes	Done
+[Sprint 11] Dédoublonnage recommandations + contraintes CHECK	Done
+[Sprint 11] Fix bug critique record_sale (temps réel)	Done
+[Sprint 11] Ticker Ventes en direct + badge LIVE honnête	Done
+[Sprint 11] docs/DATA_ARCHITECTURE.md	Done
+[Backlog RT] Retirer websocket_endpoint.py si mort	Todo
+[Backlog RT] Abonné réel sur bus Redis alertes	Todo
+[Backlog RT] Chemin rapide Redis Coach (snapshot inventaire)	Todo
+[Backlog RT] Recalcul ciblé par SKU (pas tout le store)	Todo
+[Backlog RT] CronTrigger : implémenter le déclenchement sur alerte promis par la docstring	Todo
+[Backlog RT] SupervisorAgent 2min : forcer un recalcul au lieu de retomber sur le cache	Todo
+[Backlog RT] Board Kanban alertes/recommandations	Todo
+[Backlog RT] Coach Chat abonné live à l'inventaire	Todo
+[Backlog RT] Frontend : gérer les messages WS ignorés (processing, coach_recommendation)	Todo
+[Backlog DB] Lien causal alerte/recommandation -> vente déclenchante manquant	Todo
+[Backlog DB] stock_movements.reference_id/type jamais remplis pour réception PO	Todo
+[Backlog DB] Logique réception PO -> incrément stock jamais construite	Todo
+[Backlog DB] transactions_rt.cod_prod incohérent avec sku, sans FK	Todo
+[Backlog DB] transactions_rt.des_produit contient parfois le SKU brut	Todo
+[Backlog DB] Tables temps réel jamais testées multi-store (I63 uniquement)	Todo
+[Backlog DB] Supprimer le schéma agent mort (8 tables, 0 ligne)	Todo
+[Backlog DB] Aucune table catalogue fournisseur-produit	Todo
+[Backlog DB] customer.churn_signals vide, non implémenté	Todo
+[Backlog DB] Tables coaching.* quasi vides sauf coaching_events	Todo
+[Backlog Agents] Agent Stratège ne lit jamais les signaux stock	Todo
+[Backlog Agents] Agent Coach retombe toujours sur le chemin lent DB	Todo
+[Backlog Agents] Variante batch get_seasonal_demand_profile jamais câblée au pipeline	Todo
+[Backlog Agents] DecisionAgent régénère des recommandations déjà actives (cause racine)	Todo
+[Backlog Agents] Aucun agent ne recalcule le gap par vente individuelle	Todo
+[Backlog Agents] agent_run_id jamais threadé sur les alertes	Todo
+[Backlog Dette] Consolider les 17-21 accès DB dupliqués	Todo
+[Backlog Dette] Unifier les 5 conventions de variables d'environnement DB	Todo
+[Backlog Dette] Fusionner les deux agent_logger.py divergents	Todo
+[Backlog Dette] Retirer postgres_repo.py (cible asc_db fantôme)	Todo
+[Backlog Dette] Retirer monitoring-module/ (mock jamais branché)	Todo
+[Backlog Dette] Retirer les deux configs Alembic mortes	Todo
+[Backlog Dette] Réconcilier json_service.py vs postgres_provider.py	Todo
+[Backlog Dette] Supprimer les modèles Pydantic jamais importés	Todo
+[Backlog Dette] Décider d'une source de vérité unique pour les migrations	Todo
+[Backlog Sécurité] RBAC absent sur les endpoints inventory/supply	Todo
+[Backlog Sécurité] Rate limiting absent sur les endpoints inventory/supply	Todo
+[Backlog Sécurité] Vérifier rotation des clés API commitées historiquement dans .env	Todo

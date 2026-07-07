@@ -1,1057 +1,1747 @@
-# Architecture Base de Données — Ooredoo Tunisia Agentic Retail Platform
+# Schema de base de donnees - Ooredoo Sales & Inventory AI
 
-**Base de données :** `ooredoo_sales` (PostgreSQL 15+)  
-**Version :** 2026-06-30 (Post-Migration 008)  
-**Mise à jour :** Dynamique temps réel — agents multi-domaines
+**Regenere le 2026-07-06 par introspection directe de la base `ooredoo_sales`, apres la migration de nettoyage du meme jour** (suppression de 27 tables mortes + 3 schemas vides `agent`/`context`/`forecasting`, ajout de 7 cles etrangeres manquantes — voir memoire projet `db_cleanup_2026-07-06`).
 
----
+> Ce document reflete l'etat REEL de la base, obtenu par introspection (`information_schema`/`pg_catalog`), pas par lecture des fichiers de migration Alembic — ceux-ci restent desynchronises de la base vivante pour ce projet (plusieurs configs de migration coexistent sans source de verite unique). Regenerez ce document par introspection si le schema change encore, plutot que de l'editer a la main.
 
-## Table des matières
+**Perimetre** : 7 schemas applicatifs, 50 tables, 923 colonnes, 27 cles etrangeres declarees.
 
-1. [Vue d'ensemble des schémas](#1-vue-densemble-des-schémas)
-2. [Diagramme des relations](#2-diagramme-des-relations)
-3. [Schéma `sales` — Core POS & Référentiels](#3-schéma-sales--core-pos--référentiels)
-4. [Schéma `inventory` — Stock & Prévisions](#4-schéma-inventory--stock--prévisions)
-5. [Schéma `supply` — Supply Chain](#5-schéma-supply--supply-chain)
-6. [Schéma `market` — Intelligence Marché](#6-schéma-market--intelligence-marché)
-7. [Schéma `customer` — Clients & Feedback](#7-schéma-customer--clients--feedback)
-8. [Schéma `coaching` — Agents Coaching](#8-schéma-coaching--agents-coaching)
-9. [Schéma `context` — Contexte Temps Réel *(Nouveau)*](#9-schéma-context--contexte-temps-réel-nouveau)
-10. [Schéma `forecasting` — Features Prévision *(Nouveau)*](#10-schéma-forecasting--features-prévision-nouveau)
-11. [Tables KPI (schema public)](#11-tables-kpi-schema-public)
-12. [Schéma `monitoring` — Vues Observabilité](#12-schéma-monitoring--vues-observabilité)
-13. [Index critiques](#13-index-critiques)
-14. [Flux temps réel par agent](#14-flux-temps-réel-par-agent)
-15. [Règles de qualité des données](#15-règles-de-qualité-des-données)
+## Sommaire
+
+- [Schema `coaching`](#schema-coaching) (1 tables)
+- [Schema `customer`](#schema-customer) (2 tables)
+- [Schema `inventory`](#schema-inventory) (12 tables)
+- [Schema `market`](#schema-market) (5 tables)
+- [Schema `public`](#schema-public) (17 tables)
+- [Schema `sales`](#schema-sales) (7 tables)
+- [Schema `supply`](#schema-supply) (6 tables)
+- [Carte globale des relations (cles etrangeres)](#carte-globale-des-relations-cles-etrangeres)
+- [Historique du nettoyage du 2026-07-06](#historique-du-nettoyage-du-2026-07-06)
 
 ---
 
-## 1. Vue d'ensemble des schémas
+## Schema `coaching`
 
-| Schéma | Nb tables | Rôle | Alimentation |
-|---|---|---|---|
-| `sales` | 9 | POS temps réel, référentiels boutiques/produits/agents | Transactions live + ETL nuit |
-| `inventory` | 7 | Stock, historique ventes, promotions, recommandations | Agents + calcul nuit |
-| `supply` | 6 | Commandes, mouvements stock, fournisseurs, n° série | Agents + WMS |
-| `market` | 6 | Événements, concurrence, saisonnalité, réseau | ETL + API externe |
-| `customer` | 3 | Segments, churn, NPS/CSAT | Enquêtes + agents |
-| `coaching` | 5 | Events coaching, escalations, HITL, mémoire agents | Agents coaching |
-| `context` | 1 | Contexte météo/trafic/réseau par boutique/heure | API temps réel *(Mig 008)* |
-| `forecasting` | 1 | Features lag/rolling/forecast précalculées | Job nuit *(Mig 008)* |
-| `monitoring` | 5 vues | Observabilité multi-agents, dashboard | Vues sur tables live |
-| `public` | 6 | KPI agents/boutiques, cycles agents, interactions | Calcul nuit + agents |
+Coaching commercial : evenements de coaching actifs (coaching_events). Les tables agent_memory/coaching_recommendations/escalations/hitl_requests ont ete retirees le 2026-07-06 (0 ligne, 0 reference code, superseees par public.agent_memory et public.hitl_reviews).
 
-**Total : ~44 tables + vues**
+### `coaching.coaching_events`
 
----
+*Lignes (COUNT exact, 2026-07-06) : 105*
 
-## 2. Diagramme des relations
+**Cle primaire** : `id`
 
-```
-sales.boutiques ◄──────────────────────── clé étrangère store_id ─────────────────────────────►
-       │
-       ├── sales.transactions_rt  (POS temps réel)
-       ├── sales.transactions      (historique)
-       ├── sales.objectifs         (objectifs global store/agent)
-       ├── sales.daily_objectives_category (objectifs par catégorie) ← [Mig 008]
-       ├── context.context_hourly_store     (météo/trafic/réseau)    ← [Mig 008]
-       ├── inventory.stock_levels
-       ├── inventory.stock_snapshot_enriched                          ← [Mig 008]
-       ├── inventory.recommendations_computed                         ← [Mig 008]
-       ├── forecasting.forecast_features_daily                        ← [Mig 008]
-       ├── coaching.coaching_events
-       ├── coaching.coaching_recommendations                          ← [Mig 008]
-       ├── coaching.escalations
-       ├── coaching.hitl_requests
-       ├── coaching.agent_memory
-       ├── agent_kpi_daily
-       ├── store_kpi_daily
-       └── supply.transfers (store_source / store_dest)
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | UUID | non | `uuid_generate_v4()` | PK |
+| `advisor_id` | INT4 | non | `` |  |
+| `store_id` | VARCHAR(50) | non | `` |  |
+| `cycle_id` | VARCHAR(100) | oui | `` |  |
+| `urgency_level` | VARCHAR(10) | non | `` |  |
+| `urgency_score` | NUMERIC(5,2) | oui | `0` |  |
+| `gap_pct` | NUMERIC(7,2) | oui | `` |  |
+| `gap_amount` | NUMERIC(12,2) | oui | `` |  |
+| `forecast_eod` | NUMERIC(12,2) | oui | `` |  |
+| `advice_text` | TEXT | oui | `` |  |
+| `produit_a_pousser` | VARCHAR(200) | oui | `` |  |
+| `produit_a_eviter` | VARCHAR(200) | oui | `` |  |
+| `strategie` | TEXT | oui | `` |  |
+| `cause_racine` | TEXT | oui | `` |  |
+| `rag_used` | BOOL | oui | `false` |  |
+| `nb_rag_scripts` | INT4 | oui | `0` |  |
+| `script_ids` | JSONB | oui | `'[]'::jsonb` |  |
+| `context_hash` | VARCHAR(64) | oui | `` |  |
+| `weather_label` | VARCHAR(100) | oui | `` |  |
+| `weather_temp_c` | NUMERIC(4,1) | oui | `` |  |
+| `weather_effect` | NUMERIC(5,2) | oui | `` |  |
+| `event_name` | VARCHAR(200) | oui | `` |  |
+| `event_proximity_km` | NUMERIC(6,2) | oui | `` |  |
+| `guardrail_status` | VARCHAR(20) | oui | `'APPROVE'::character varying` |  |
+| `guardrail_rule` | VARCHAR(100) | oui | `` |  |
+| `feedback_score` | INT4 | oui | `` |  |
+| `was_effective` | BOOL | oui | `` |  |
+| `ca_after_coaching` | NUMERIC(12,2) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-sales.agents ◄────────────────────────── agent_id ────────────────────────────────────────────►
-       │
-       ├── sales.transactions_rt (agent_id)
-       ├── sales.transactions    (agent_id)
-       ├── sales.objectifs       (agent_id)
-       ├── agent_kpi_daily       (agent_id)
-       ├── coaching.coaching_events (advisor_id)
-       ├── coaching.hitl_requests   (approver_id)
-       └── customer.nps_csat        (agent_id)
+**Contraintes CHECK** :
+- `coaching_events_feedback_score_check` : CHECK (((feedback_score >= 1) AND (feedback_score <= 5)))
+- `coaching_events_guardrail_status_check` : CHECK (((guardrail_status)::text = ANY ((ARRAY['APPROVE'::character varying, 'BLOCK'::character varying, 'REWRITE'::character varying])::text[])))
+- `coaching_events_urgency_level_check` : CHECK (((urgency_level)::text = ANY ((ARRAY['HIGH'::character varying, 'MEDIUM'::character varying, 'LOW'::character varying])::text[])))
 
-sales.produits ◄──────────────────────── sku ─────────────────────────────────────────────────►
-       │
-       ├── sales.transactions (sku)
-       ├── inventory.stock_levels (sku)
-       ├── inventory.sales_history (sku)
-       ├── supply.purchase_orders (sku)
-       ├── supply.stock_movements (sku)
-       ├── supply.serial_numbers  (sku)
-       └── supply.reorder_params  (sku)
-```
+**Index (hors PK)** :
+- `idx_ce_advisor`
+- `idx_ce_cycle`
+- `idx_ce_rag`
+- `idx_ce_store`
+- `idx_ce_urgency`
+
 
 ---
 
-## 3. Schéma `sales` — Core POS & Référentiels
+## Schema `customer`
 
-### 3.1 `sales.boutiques`
-Table maître des 202 boutiques Ooredoo Tunisie.
+Donnees client : NPS/CSAT, segmentation. churn_signals retiree le 2026-07-06 (jamais implementee).
 
-| Colonne | Type | Description |
-|---|---|---|
-| `store_id` | VARCHAR(50) PK | Identifiant boutique (ex: `I63`, `M01`, `S47`) |
-| `nom` | VARCHAR(200) | Nom commercial de la boutique |
-| `type_boutique` | VARCHAR(5) | I=Indirect, M=Officielle, S=Sous-franchise, C=B2B, T=Online |
-| `canal` | VARCHAR(20) | `PHYSIQUE`, `ONLINE`, `B2B` |
-| `region` | VARCHAR(100) | Région commerciale (Grand Tunis, Sahel, Sud…) |
-| `wilaya` | VARCHAR(100) | Wilaya administrative (Tunis, Sousse, Sfax…) |
-| `zone_commerciale` | VARCHAR(100) | Zone précise (Tunisia Mall Lac2, Géant Tunis…) |
-| `latitude` | NUMERIC(10,7) | Coordonnée GPS latitude |
-| `longitude` | NUMERIC(10,7) | Coordonnée GPS longitude |
-| `capacite_conseillers` | INTEGER | Nombre de postes conseillers |
-| `date_ouverture` | DATE | Date d'ouverture |
-| `is_officielle` | BOOLEAN | TRUE si boutique officielle Ooredoo (M-prefix) |
-| `rang_ca_region` | INTEGER | Rang CA dans la région |
-| `statut` | VARCHAR(20) | `ACTIVE`, `CLOSED`, `TEMP_CLOSED` |
-| `email_store` | VARCHAR(200) | Email boutique |
+### `customer.nps_csat`
 
-**Index :** `store_id` (PK), `wilaya`, `type_boutique`
+*Lignes (COUNT exact, 2026-07-06) : 342*
 
----
+**Cle primaire** : `id`
 
-### 3.2 `sales.produits`
-Catalogue complet des 4 212 produits Ooredoo enrichi.
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('customer.nps_csat_id_seq'::regclass)` | PK |
+| `store_id` | VARCHAR(50) | oui | `` |  |
+| `agent_id` | INT4 | oui | `` |  |
+| `feedback_date` | DATE | non | `` |  |
+| `type_enquete` | VARCHAR(10) | non | `` |  |
+| `score` | NUMERIC(5,2) | oui | `` |  |
+| `verbatim` | TEXT | oui | `` |  |
+| `categorie_motif` | VARCHAR(100) | oui | `` |  |
+| `canal` | VARCHAR(20) | oui | `'POST_VENTE'::character varying` |  |
+| `resolu` | BOOL | oui | `false` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-| Colonne | Type | Description |
-|---|---|---|
-| `sku` | INTEGER PK | Code SKU produit |
-| `nom` | VARCHAR(500) | Nom produit complet |
-| `categorie` | VARCHAR(10) | Code catégorie (50=Terminal, 88=Forfait, 30=Recharge…) |
-| `gamme_libelle` | VARCHAR(100) | TERMINAL, FORFAIT, SIM_KIT, RECHARGE, ACCESSOIRE… |
-| `famille_libelle` | VARCHAR(100) | Famille produit |
-| `marque` | VARCHAR(100) | Samsung, Apple, Xiaomi, Huawei, Ooredoo… |
-| `modele` | VARCHAR(200) | Référence modèle |
-| `prix_ht` | NUMERIC(12,4) | Prix hors taxe TND |
-| `prix_ttc` | NUMERIC(12,4) | Prix TTC TND |
-| `pa_ht` | NUMERIC(12,4) | Prix d'achat HT calculé |
-| `marge_pct_calc` | NUMERIC(6,2) | Marge calculée en % |
-| `flag_terminal` | BOOLEAN | Terminal smartphone/tablette |
-| `flag_forfait` | BOOLEAN | Forfait postpayé/prépayé |
-| `flag_sim` | BOOLEAN | SIM/eSIM |
-| `flag_recharge` | BOOLEAN | Recharge crédit |
-| `flag_5g` | BOOLEAN | Compatible 5G |
-| `flag_4g` | BOOLEAN | Compatible 4G/Box |
-| `serialisable` | BOOLEAN | Nécessite numéro de série (IMEI) |
-| `stockable` | BOOLEAN | Gestion physique en stock |
-| `lead_time_days` | INTEGER | Délai approvisionnement en jours |
-| `lead_time_std` | INTEGER | Écart-type délai |
-| `moq` | INTEGER | Quantité minimum de commande |
-| `lifecycle_stage` | VARCHAR(20) | `mature`, `launch`, `declining`, `discontinued` |
-| `actif` | BOOLEAN | Produit actif |
+**Contraintes CHECK** :
+- `nps_csat_type_enquete_check` : CHECK (((type_enquete)::text = ANY ((ARRAY['NPS'::character varying, 'CSAT'::character varying, 'CES'::character varying])::text[])))
 
-**Catégories codes :** 50=Terminal, 88=Forfait postpayé, 80=Box/Fixe, 20=SIM Kit, 40=SIM Service, 30=Recharge, 70=Accessoire, 32=Accessoire Premium, 99=Service, 90=Digital, 10=Business
+**Index (hors PK)** :
+- `idx_nps_store_date`
+
+
+### `customer.segments`
+
+*Lignes (COUNT exact, 2026-07-06) : 8*
+
+**Cle primaire** : `segment_id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `segment_id` | VARCHAR(20) | non | `` | PK |
+| `libelle` | VARCHAR(100) | non | `` |  |
+| `description` | TEXT | oui | `` |  |
+| `arpu_moyen_tnd` | NUMERIC(10,2) | oui | `` |  |
+| `arpu_std_tnd` | NUMERIC(10,2) | oui | `` |  |
+| `churn_rate_base` | NUMERIC(6,4) | oui | `` |  |
+| `duree_vie_mois` | INT4 | oui | `` |  |
+| `canal_prefere` | VARCHAR(20) | oui | `` |  |
+| `products_preferes` | JSONB | oui | `` |  |
+| `nb_clients_estime` | INT4 | oui | `` |  |
+| `poids_marche_pct` | NUMERIC(6,3) | oui | `` |  |
+| `actif` | BOOL | oui | `true` |  |
+
 
 ---
 
-### 3.3 `sales.agents`
-Profils des 580+ conseillers de vente enrichis.
+## Schema `inventory`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `agent_id` | INTEGER PK | Identifiant agent |
-| `nom` | VARCHAR(200) | Nom conseiller |
-| `store_id` | VARCHAR(50) FK | Boutique principale |
-| `performance_level` | VARCHAR(20) | `senior`, `confirmed`, `junior` |
-| `date_embauche` | DATE | Date d'embauche |
-| `anciennete_mois` | INTEGER | Ancienneté calculée en mois |
-| `niveau_certification` | INTEGER | Niveau 1-5 certification Ooredoo |
-| `quota_mensuel_ca` | NUMERIC(12,2) | Quota CA mensuel TND |
-| `quota_activations` | INTEGER | Quota activations mensuel |
-| `quota_postpaye` | INTEGER | Quota forfaits postpayés |
-| `coach_score` | NUMERIC(5,2) | Score coaching cumulé (0-100) |
-| `specialisation` | VARCHAR(50) | `TERMINAL`, `FORFAIT`, `CORPORATE`, `DATA` |
-| `avatar_color` | VARCHAR(7) | Couleur avatar UI (#hexcode) |
-| `statut` | VARCHAR(20) | `ACTIVE`, `INACTIVE`, `CONGE` |
+Coeur stock & decisions : produits, niveaux de stock, alertes, recommandations, runs d'agents.
+
+### `inventory.agent_runs`
+
+*Lignes (COUNT exact, 2026-07-06) : 63 309*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('inventory.agent_runs_id_seq'::regclass)` | PK |
+| `cycle_id` | TEXT | oui | `` |  |
+| `agent_name` | TEXT | oui | `` |  |
+| `store_id` | TEXT | oui | `` |  |
+| `sku` | TEXT | oui | `` |  |
+| `started_at` | TIMESTAMP | oui | `now()` |  |
+| `completed_at` | TIMESTAMP | oui | `` |  |
+| `duration_ms` | FLOAT8 | oui | `` |  |
+| `status` | TEXT | oui | `'running'::text` |  |
+| `input_summary` | JSONB | oui | `` |  |
+| `output_summary` | JSONB | oui | `` |  |
+| `error_message` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `items_processed` | INT4 | oui | `0` |  |
+| `items_succeeded` | INT4 | oui | `0` |  |
+| `items_failed` | INT4 | oui | `0` |  |
+| `batch_id` | TEXT | oui | `` |  |
+| `alerts_generated` | INT4 | oui | `0` |  |
+| `recommendations_generated` | INT4 | oui | `0` |  |
+
+
+### `inventory.alerts`
+
+*Lignes (COUNT exact, 2026-07-06) : 144*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('inventory.alerts_id_seq'::regclass)` | PK |
+| `store_id` | TEXT | oui | `` | FK -> `sales.boutiques.store_id` |
+| `sku` | INT4 | oui | `` | FK -> `sales.produits.sku` |
+| `alert_type` | TEXT | oui | `'stockout_risk'::text` |  |
+| `severity` | TEXT | oui | `'medium'::text` |  |
+| `message` | TEXT | oui | `` |  |
+| `status` | TEXT | oui | `'pending'::text` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `resolved_at` | TIMESTAMP | oui | `` |  |
+| `triggered_at` | TIMESTAMP | oui | `now()` |  |
+| `recommended_action` | TEXT | oui | `` |  |
+| `agent_run_id` | TEXT | oui | `` |  |
+
+**Contraintes CHECK** :
+- `alerts_status_check` : CHECK ((status = ANY (ARRAY['pending'::text, 'acknowledged'::text, 'validated'::text, 'rejected'::text, 'dismissed'::text, 'resolved'::text])))
+
+**References vers d'autres tables** :
+- `store_id` -> `sales.boutiques.store_id`
+- `sku` -> `sales.produits.sku`
+
+**Index (hors PK)** :
+- `idx_alerts_status`
+- `idx_alerts_store`
+
+
+### `inventory.business_objectives`
+
+*Lignes (COUNT exact, 2026-07-06) : 6*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('inventory.business_objectives_id_seq'::regclass)` | PK |
+| `objective_type` | TEXT | non | `'balanced'::text` |  |
+| `label` | TEXT | oui | `` |  |
+| `description` | TEXT | oui | `` |  |
+| `is_active` | BOOL | oui | `false` |  |
+| `priority` | INT4 | oui | `1` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+
+### `inventory.context_adjustments`
+
+*Lignes (COUNT exact, 2026-07-06) : 1 907*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('inventory.context_adjustments_id_seq'::regclass)` | PK |
+| `sku` | INT4 | non | `` | FK -> `sales.produits.sku` |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `demand_uplift_pct` | NUMERIC(8,2) | oui | `0` |  |
+| `adjustment_source` | TEXT | oui | `` |  |
+| `weather_impact` | NUMERIC(5,2) | oui | `` |  |
+| `promo_impact` | NUMERIC(5,2) | oui | `` |  |
+| `event_impact` | NUMERIC(5,2) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `valid_from` | DATE | oui | `CURRENT_DATE` |  |
+| `valid_to` | DATE | oui | `(CURRENT_DATE + 7)` |  |
+| `confidence` | NUMERIC(5,3) | oui | `0.5` |  |
+| `dominant_signal` | TEXT | oui | `` |  |
+| `signals` | JSONB | oui | `` |  |
+| `holiday_impact` | NUMERIC(5,2) | oui | `0` |  |
+| `category` | TEXT | oui | `` |  |
+| `store_name` | TEXT | oui | `` |  |
+| `interpretation` | TEXT | oui | `` |  |
+| `agent_run_id` | INT4 | oui | `` |  |
+
+**Contraintes UNIQUE** :
+- `ctx_adj_unique` sur (sku, store_id, valid_from)
+
+**References vers d'autres tables** :
+- `sku` -> `sales.produits.sku`
+- `store_id` -> `sales.boutiques.store_id`
+
+**Index (hors PK)** :
+- `ctx_adj_unique`
+- `idx_ctx_adj_sku_store`
+
+
+### `inventory.demand_forecast`
+
+*Lignes (COUNT exact, 2026-07-06, après seed) : 840*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('inventory.demand_forecast_id_seq'::regclass)` | PK |
+| `sku` | TEXT | non | `` |  |
+| `store_id` | TEXT | non | `` |  |
+| `forecast_date` | DATE | non | `` |  |
+| `demand_24h` | NUMERIC(10,2) | oui | `` |  |
+| `confidence_low` | NUMERIC(10,2) | oui | `` |  |
+| `confidence_high` | NUMERIC(10,2) | oui | `` |  |
+| `model_version` | TEXT | oui | `'timesfm-v1'::text` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes UNIQUE** :
+- `demand_forecast_sku_store_id_forecast_date_key` sur (sku, store_id, forecast_date)
+
+**Index (hors PK)** :
+- `demand_forecast_sku_store_id_forecast_date_key`
+
+
+### `inventory.events`
+
+*Lignes (COUNT exact, 2026-07-06, après seed) : 24*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('inventory.events_id_seq'::regclass)` | PK |
+| `event_name` | TEXT | oui | `` |  |
+| `event_type` | TEXT | oui | `` |  |
+| `start_date` | DATE | oui | `` |  |
+| `end_date` | DATE | oui | `` |  |
+| `sku` | INT4 | oui | `` |  |
+| `store_id` | TEXT | oui | `` |  |
+| `impact_pct` | NUMERIC(5,2) | oui | `0` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `affected_categories` | TEXT | oui | `` |  |
+| `estimated_uplift` | NUMERIC(5,2) | oui | `0` |  |
+| `estimated_uplift_pct` | NUMERIC(5,2) | oui | `0` |  |
+| `scope` | TEXT | oui | `` |  |
+
+**Index (hors PK)** :
+- `idx_events_dates`
+
+
+### `inventory.product_master`
+
+*Lignes (COUNT exact, 2026-07-06) : 4 178*
+
+**Cle primaire** : `sku`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `sku` | INT4 | non | `` | PK; FK -> `sales.produits.sku` |
+| `product_name` | TEXT | oui | `` |  |
+| `category` | TEXT | oui | `` |  |
+| `unit_cost` | NUMERIC(10,2) | oui | `` |  |
+| `unit_price` | NUMERIC(10,2) | oui | `` |  |
+| `lead_time_days` | INT4 | oui | `` |  |
+| `lead_time_std` | INT4 | oui | `` |  |
+| `moq` | INT4 | oui | `1` |  |
+| `holding_cost_pct` | NUMERIC(5,2) | oui | `` |  |
+| `order_cost` | NUMERIC(10,2) | oui | `` |  |
+| `lifecycle_stage` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `updated_at` | TIMESTAMP | oui | `now()` |  |
+
+**References vers d'autres tables** :
+- `sku` -> `sales.produits.sku`
+
+**Index (hors PK)** :
+- `idx_product_master_category`
+- `idx_product_master_lifecycle`
+
+
+### `inventory.promotions`
+
+*Lignes (COUNT exact, 2026-07-06) : 27*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('inventory.promotions_id_seq'::regclass)` | PK |
+| `promo_id` | TEXT | non | `` |  |
+| `promo_name` | TEXT | oui | `` |  |
+| `start_date` | DATE | non | `` |  |
+| `end_date` | DATE | non | `` |  |
+| `sku` | INT4 | oui | `` |  |
+| `product_name` | TEXT | oui | `` |  |
+| `category` | TEXT | oui | `` |  |
+| `discount_pct` | NUMERIC(5,2) | oui | `0` |  |
+| `promo_type` | TEXT | oui | `` |  |
+| `scope` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes UNIQUE** :
+- `promotions_promo_id_key` sur (promo_id)
+
+**Index (hors PK)** :
+- `idx_promotions_dates`
+- `idx_promotions_sku`
+- `promotions_promo_id_key`
+
+
+### `inventory.recommendations`
+
+*Lignes (COUNT exact, 2026-07-06) : 511*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | UUID | non | `gen_random_uuid()` | PK |
+| `sku` | INT4 | non | `` | FK -> `sales.produits.sku` |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `recommendation_type` | TEXT | oui | `` |  |
+| `action` | TEXT | oui | `` |  |
+| `order_qty` | INT4 | oui | `` |  |
+| `urgency` | TEXT | oui | `` |  |
+| `confidence` | NUMERIC(5,3) | oui | `` |  |
+| `recommendation_text` | TEXT | oui | `` |  |
+| `trade_offs` | TEXT | oui | `` |  |
+| `escalate_to_human` | BOOL | oui | `false` |  |
+| `escalation_reason` | TEXT | oui | `` |  |
+| `status` | TEXT | oui | `'pending'::text` |  |
+| `decided_by` | TEXT | oui | `` |  |
+| `decided_at` | TIMESTAMP | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `agent_run_id` | TEXT | oui | `` |  |
+| `order_cost` | NUMERIC(10,2) | oui | `` |  |
+| `holding_cost` | NUMERIC(10,2) | oui | `` |  |
+| `suggested_quantity` | INT4 | oui | `` |  |
+
+**Contraintes CHECK** :
+- `reco_status_check` : CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'executed'::text, 'cancelled'::text])))
+
+**References vers d'autres tables** :
+- `sku` -> `sales.produits.sku`
+- `store_id` -> `sales.boutiques.store_id`
+
+**Referencee par** :
+- `supply.purchase_orders.recommendation_id`
+
+**Index (hors PK)** :
+- `idx_rec_sku_store`
+- `idx_rec_status`
+- `idx_recommendations_active`
+- `idx_recommendations_store_status`
+- `uq_reco_pending_sku_store`
+
+
+### `inventory.sales_history`
+
+*Lignes (COUNT exact, 2026-07-06) : 693 954*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('inventory.sales_history_id_seq'::regclass)` | PK |
+| `record_date` | DATE | non | `` |  |
+| `store_id` | TEXT | non | `` |  |
+| `store_name` | TEXT | oui | `` |  |
+| `region` | TEXT | oui | `` |  |
+| `sku` | INT4 | non | `` |  |
+| `product_name` | TEXT | oui | `` |  |
+| `category` | TEXT | oui | `` |  |
+| `quantity_sold` | INT4 | oui | `0` |  |
+| `revenue` | NUMERIC(12,2) | oui | `0` |  |
+| `unit_price` | NUMERIC(10,2) | oui | `` |  |
+| `is_promo` | BOOL | oui | `false` |  |
+| `event_name` | TEXT | oui | `` |  |
+| `event_type` | TEXT | oui | `` |  |
+| `season` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `promo_type` | VARCHAR(50) | oui | `` |  |
+| `day_of_week` | INT2 | oui | `` |  |
+| `week_of_year` | INT2 | oui | `` |  |
+| `month_num` | INT2 | oui | `` |  |
+| `year_num` | INT2 | oui | `` |  |
+| `is_weekend` | BOOL | oui | `false` |  |
+| `is_event_day` | BOOL | oui | `false` |  |
+| `event_intensite` | VARCHAR(10) | oui | `` |  |
+| `uplift_factor` | NUMERIC(6,4) | oui | `1.0` |  |
+
+**Index (hors PK)** :
+- `idx_sh_date_cat`
+- `idx_sh_event`
+- `idx_sh_store_sku_date`
+- `idx_slh_date_store`
+- `idx_slh_sku`
+
+
+### `inventory.stock_history`
+
+*Lignes (COUNT exact, 2026-07-06) : 844 987*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('inventory.stock_history_id_seq'::regclass)` | PK |
+| `record_date` | DATE | non | `` |  |
+| `store_id` | TEXT | non | `` |  |
+| `store_name` | TEXT | oui | `` |  |
+| `region` | TEXT | oui | `` |  |
+| `sku` | INT4 | non | `` |  |
+| `product_name` | TEXT | oui | `` |  |
+| `category` | TEXT | oui | `` |  |
+| `stock_level` | INT4 | oui | `0` |  |
+| `is_stockout` | BOOL | oui | `false` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_sh_date_store`
+- `idx_sh_sku`
+
+
+### `inventory.stock_levels`
+
+*Lignes (COUNT exact, 2026-07-06) : 46 244*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('inventory.stock_levels_id_seq'::regclass)` | PK |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `sku` | INT4 | non | `` | FK -> `sales.produits.sku` |
+| `quantity` | INT4 | oui | `` |  |
+| `quantity_reserved` | INT4 | oui | `0` |  |
+| `quantity_available` | INT4 | oui | `` | GENEREE ((quantity - quantity_reserved)) |
+| `last_received` | DATE | oui | `` |  |
+| `last_sold` | DATE | oui | `` |  |
+| `updated_at` | TIMESTAMP | oui | `now()` |  |
+| `remaining_days_of_stock` | FLOAT8 | oui | `` |  |
+| `last_updated` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes UNIQUE** :
+- `stock_levels_sku_store` sur (sku, store_id)
+
+**References vers d'autres tables** :
+- `store_id` -> `sales.boutiques.store_id`
+- `sku` -> `sales.produits.sku`
+
+**Index (hors PK)** :
+- `idx_sl_store_sku`
+- `idx_stock_levels_store_qty`
+- `idx_stock_low_qty`
+- `stock_levels_sku_store`
+
 
 ---
 
-### 3.4 `sales.transactions`
-Historique POS complet — 1.49M+ lignes sur 4.5 ans.
+## Schema `market`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant transaction |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `agent_id` | INTEGER FK | Conseiller |
-| `sku` | INTEGER FK | Produit vendu |
-| `date_only` | DATE | Date de la transaction |
-| `heure` | INTEGER | Heure (0-23) |
-| `transaction_date` | TIMESTAMP | Datetime complet |
-| `quantity` | INTEGER | Quantité vendue |
-| `lig_ttc` | NUMERIC(14,4) | Montant ligne TTC |
-| `is_promo` | BOOLEAN | Vendu en promotion |
-| `payment_type` | VARCHAR(20) | `CASH`, `CARD`, `VIREMENT` |
+Intelligence marche : evenements concurrentiels, pricing, flux MNP, patterns saisonniers.
 
-**Index :** `(store_id, date_only)`, `(store_id, date_only, heure)`, `(agent_id, date_only)`
+### `market.competitor_pricing`
 
----
+*Lignes (COUNT exact, 2026-07-06) : 100*
 
-### 3.5 `sales.transactions_rt`
-Transactions temps réel du jour courant (flush quotidien).
+**Cle primaire** : `id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `agent_id` | INTEGER | Conseiller |
-| `advisor_name` | VARCHAR(200) | Nom conseiller (dénormalisé pour perf) |
-| `sku` | INTEGER | Produit |
-| `created_at` | TIMESTAMP | Timestamp exact de la transaction |
-| `date_only` | DATE | Date (pour index) |
-| `montant` | NUMERIC(14,4) | Montant TTC TND |
-| `quantity` | INTEGER | Quantité |
-| `payment_method` | VARCHAR(20) | Moyen de paiement |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('market.competitor_pricing_id_seq'::regclass)` | PK |
+| `concurrent_id` | VARCHAR(20) | non | `` | FK -> `market.competitors.concurrent_id` |
+| `categorie` | VARCHAR(50) | non | `` |  |
+| `produit_type` | VARCHAR(200) | non | `` |  |
+| `donnees_go` | NUMERIC(8,1) | oui | `` |  |
+| `minutes_voix` | INT4 | oui | `` |  |
+| `sms_count` | INT4 | oui | `` |  |
+| `prix_ht` | NUMERIC(10,2) | oui | `` |  |
+| `prix_ttc` | NUMERIC(10,2) | oui | `` |  |
+| `engagement_mois` | INT4 | oui | `0` |  |
+| `date_releve` | DATE | non | `` |  |
+| `source` | VARCHAR(30) | oui | `'WEB'::character varying` |  |
+| `actif` | BOOL | oui | `true` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-**Index :** `(store_id, created_at DESC)`, `(store_id, date_only)`, `(store_id, advisor_name, created_at DESC)`
+**References vers d'autres tables** :
+- `concurrent_id` -> `market.competitors.concurrent_id`
 
-**Principe :** Cette table est la source de vérité pour le CA du jour. L'agent analyste (`fetch_live_pos`) la lit en premier. Elle est purgée chaque nuit et les données migrées vers `sales.transactions`.
+**Index (hors PK)** :
+- `idx_competitor_pricing_cat`
+- `idx_competitor_pricing_date`
 
----
 
-### 3.6 `sales.objectifs`
-Objectifs globaux journaliers par boutique et agent.
+### `market.competitors`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `agent_id` | INTEGER | Conseiller (NULL = objectif boutique global) |
-| `date_objectif` | DATE | Date cible |
-| `objectif_ca` | NUMERIC(14,2) | CA cible TND |
-| `objectif_activations` | INTEGER | Nombre activations cible |
-| `objectif_postpaye` | INTEGER | Forfaits postpayés cible |
+*Lignes (COUNT exact, 2026-07-06) : 3*
 
-**Relation avec `sales.daily_objectives_category` :** `sales.objectifs` contient le montant global par boutique/agent ; `sales.daily_objectives_category` ventile ce montant par catégorie produit pour le coaching granulaire.
+**Cle primaire** : `concurrent_id`
 
----
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `concurrent_id` | VARCHAR(20) | non | `` | PK |
+| `nom` | VARCHAR(100) | non | `` |  |
+| `code_operateur` | VARCHAR(10) | oui | `` |  |
+| `pays` | VARCHAR(50) | oui | `'Tunisia'::character varying` |  |
+| `part_marche_pct` | NUMERIC(6,3) | oui | `` |  |
+| `nb_abonnes` | INT8 | oui | `` |  |
+| `positionnement` | VARCHAR(20) | oui | `'MID'::character varying` |  |
+| `points_forts` | JSONB | oui | `` |  |
+| `points_faibles` | JSONB | oui | `` |  |
+| `date_entree_marche` | DATE | oui | `` |  |
+| `actif` | BOOL | oui | `true` |  |
+| `updated_at` | TIMESTAMP | oui | `now()` |  |
 
-### 3.7 `sales.daily_objectives_category` *(Nouveau — Migration 008)*
-Objectifs journaliers décomposés par catégorie produit.
+**Referencee par** :
+- `market.competitor_pricing.concurrent_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `objective_id` | VARCHAR(60) PK | Format : `OBJ-{store_id}-{YYYYMMDD}-{CAT}` |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `objective_date` | DATE | Date cible |
-| `product_category` | VARCHAR(100) | Postpayé, Recharge, Forfait data, SIM / eSIM, Terminal, Accessoire |
-| `target_revenue_ttc` | NUMERIC(14,2) | CA cible TND pour cette catégorie |
-| `target_units` | INTEGER | Nombre unités cible |
-| `priority_weight` | NUMERIC(4,2) | Poids prioritaire (1.0=normal, 1.15=prioritaire) |
-| `source_flag` | VARCHAR(50) | `COMPUTED_FROM_MONTHLY_TARGET` |
 
-**Consommé par :** Vue `monitoring.category_gap_live`, CoachAgent cross-domain scoring.
+### `market.events`
 
----
+*Lignes (COUNT exact, 2026-07-06) : 165*
 
-### 3.8 `sales.rag_scripts`
-Scripts de vente pour le RAG (Retrieval Augmented Generation).
+**Cle primaire** : `event_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `script_id` | VARCHAR(20) PK | Identifiant script (ex: `S-042`) |
-| `title` | VARCHAR(200) | Titre du script |
-| `category` | VARCHAR(50) | Catégorie produit ciblée |
-| `trigger_type` | VARCHAR(50) | `UPSELL`, `OBJECTION`, `OPENING`, `CLOSING` |
-| `script_text` | TEXT | Texte complet du script |
-| `embedding` | vector(768) | Embedding vectoriel (pgvector) |
-| `usage_count` | INTEGER | Nombre d'utilisations |
-| `avg_rating` | NUMERIC(3,2) | Note moyenne 1-5 |
-| `created_at` | TIMESTAMP | Date création |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `event_id` | UUID | non | `uuid_generate_v4()` | PK |
+| `event_name` | VARCHAR(200) | non | `` |  |
+| `event_type` | VARCHAR(50) | non | `` |  |
+| `sous_type` | VARCHAR(100) | oui | `` |  |
+| `start_date` | DATE | non | `` |  |
+| `end_date` | DATE | non | `` |  |
+| `annee` | INT4 | oui | `` | GENEREE ((EXTRACT(year FROM start_date))::integer) |
+| `scope` | VARCHAR(20) | oui | `'NATIONAL'::character varying` |  |
+| `region_ids` | JSONB | oui | `` |  |
+| `categories_impactees` | JSONB | oui | `` |  |
+| `uplift_terminal` | NUMERIC(6,2) | oui | `0` |  |
+| `uplift_forfait` | NUMERIC(6,2) | oui | `0` |  |
+| `uplift_sim` | NUMERIC(6,2) | oui | `0` |  |
+| `uplift_recharge` | NUMERIC(6,2) | oui | `0` |  |
+| `uplift_accessoire` | NUMERIC(6,2) | oui | `0` |  |
+| `intensite` | VARCHAR(10) | oui | `'MEDIUM'::character varying` |  |
+| `source_donnee` | VARCHAR(50) | oui | `'HISTORIQUE'::character varying` |  |
+| `note_strategie` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
----
+**Contraintes CHECK** :
+- `events_intensite_check` : CHECK (((intensite)::text = ANY ((ARRAY['LOW'::character varying, 'MEDIUM'::character varying, 'HIGH'::character varying, 'EXTREME'::character varying])::text[])))
+- `events_event_type_check` : CHECK (((event_type)::text = ANY ((ARRAY['RELIGIEUX'::character varying, 'SCOLAIRE'::character varying, 'SPORTIF'::character varying, 'COMMERCIAL'::character varying, 'NATIONAL'::character varying, 'CONCURRENTIEL'::character varying, 'METEO'::character varying, 'RESEAU'::character varying])::text[])))
 
-## 4. Schéma `inventory` — Stock & Prévisions
+**Index (hors PK)** :
+- `idx_market_events_dates`
+- `idx_market_events_type`
 
-### 4.1 `inventory.stock_levels`
-Niveaux de stock courants par boutique et SKU.
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `sku` | INTEGER FK | Produit |
-| `quantity_available` | INTEGER | Quantité disponible |
-| `quantity_reserved` | INTEGER | Quantité réservée (commandes en attente) |
-| `quantity_on_order` | INTEGER | Quantité en commande |
-| `stock_current` | INTEGER | Stock physique actuel |
-| `stock_min` | INTEGER | Seuil minimum d'alerte |
-| `last_updated` | TIMESTAMP | Dernière mise à jour |
-| `remaining_days_of_stock` | NUMERIC(10,2) | Jours de stock restants calculés |
+### `market.mnp_flows`
 
-**Index :** `(store_id, quantity_available ASC)` — pour les alertes de rupture
+*Lignes (COUNT exact, 2026-07-06) : 110*
 
----
+**Cle primaire** : `mnp_id`
 
-### 4.2 `inventory.sales_history`
-Historique agrégé quotidien pour le time-series et le forecasting.
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `mnp_id` | UUID | non | `uuid_generate_v4()` | PK |
+| `direction` | VARCHAR(10) | non | `` |  |
+| `operateur_origine` | VARCHAR(20) | oui | `` |  |
+| `operateur_destination` | VARCHAR(20) | oui | `` |  |
+| `mois` | DATE | non | `` |  |
+| `volume` | INT4 | non | `0` |  |
+| `categorie_client` | VARCHAR(20) | oui | `'RESI'::character varying` |  |
+| `raison_principale` | VARCHAR(100) | oui | `` |  |
+| `wilaya` | VARCHAR(100) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `sku` | INTEGER | Produit |
-| `product_name` | TEXT | Nom produit (dénormalisé) |
-| `category` | VARCHAR(50) | TERMINAL, FORFAIT, SIM, RECHARGE, ACCESSOIRE |
-| `record_date` | DATE | Date de l'agrégat |
-| `quantity_sold` | INTEGER | Quantité vendue ce jour |
-| `revenue` | NUMERIC(14,2) | CA TND ce jour |
-| `unit_price` | NUMERIC(12,4) | Prix moyen unitaire |
-| `is_promo` | BOOLEAN | Jour de promotion |
-| `promo_type` | VARCHAR(50) | Type promo active |
-| `event_name` | VARCHAR(200) | Événement marché ce jour |
-| `event_type` | VARCHAR(50) | RELIGIEUX, COMMERCIAL, RESEAU… |
-| `season` | VARCHAR(20) | RAMADAN, ETE, RENTREE, SOLDES_HIVER… |
-| `is_event_day` | BOOLEAN | Événement HIGH/EXTREME actif |
-| `event_intensite` | VARCHAR(10) | LOW/MEDIUM/HIGH/EXTREME |
-| `uplift_factor` | NUMERIC(6,4) | Facteur saisonnalité appliqué |
-| `day_of_week` | SMALLINT | 0=Lundi, 6=Dimanche |
-| `week_of_year` | SMALLINT | Semaine ISO |
-| `month_num` | SMALLINT | Mois (1-12) |
-| `year_num` | SMALLINT | Année |
-| `is_weekend` | BOOLEAN | Samedi ou Dimanche |
+**Contraintes CHECK** :
+- `mnp_flows_direction_check` : CHECK (((direction)::text = ANY ((ARRAY['PORT_IN'::character varying, 'PORT_OUT'::character varying])::text[])))
 
-**Index :** `(store_id, sku, record_date DESC)`, `(record_date, category)`, `(event_type, record_date)`
+**Index (hors PK)** :
+- `idx_mnp_mois`
 
----
 
-### 4.3 `inventory.promotions`
-Promotions actives par SKU ou catégorie.
+### `market.seasonal_patterns`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant interne |
-| `promo_id` | VARCHAR(50) UNIQUE | Code promo métier (ex: `SEED-2026-T01`) |
-| `promo_name` | VARCHAR(300) | Libellé complet |
-| `start_date` | DATE | Début validité |
-| `end_date` | DATE | Fin validité |
-| `sku` | INTEGER | SKU ciblé (NULL = toute la catégorie) |
-| `product_name` | VARCHAR(300) | Description produit ciblé |
-| `category` | VARCHAR(10) | Code catégorie ciblée |
-| `discount_pct` | NUMERIC(6,2) | Remise en % |
-| `promo_type` | VARCHAR(30) | `discount`, `bundle`, `flash`, `seasonal` |
-| `scope` | VARCHAR(20) | `sku`, `category`, `store`, `all_stores` |
+*Lignes (COUNT exact, 2026-07-06) : 42*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('market.seasonal_patterns_id_seq'::regclass)` | PK |
+| `categorie` | VARCHAR(50) | non | `` |  |
+| `mois` | INT4 | non | `` |  |
+| `semaine_mois` | INT4 | oui | `` |  |
+| `jour_semaine` | INT4 | oui | `` |  |
+| `heure_debut` | INT4 | oui | `` |  |
+| `heure_fin` | INT4 | oui | `` |  |
+| `facteur_demande` | NUMERIC(6,4) | non | `1.0` |  |
+| `facteur_std` | NUMERIC(6,4) | oui | `0.1` |  |
+| `nb_annees_data` | INT4 | oui | `2` |  |
+| `confidence` | VARCHAR(10) | oui | `'MEDIUM'::character varying` |  |
+| `notes` | VARCHAR(200) | oui | `` |  |
+| `updated_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes CHECK** :
+- `seasonal_patterns_heure_debut_check` : CHECK (((heure_debut >= 0) AND (heure_debut <= 23)))
+- `seasonal_patterns_heure_fin_check` : CHECK (((heure_fin >= 0) AND (heure_fin <= 23)))
+- `seasonal_patterns_jour_semaine_check` : CHECK (((jour_semaine >= 0) AND (jour_semaine <= 6)))
+- `seasonal_patterns_mois_check` : CHECK (((mois >= 1) AND (mois <= 12)))
+- `seasonal_patterns_confidence_check` : CHECK (((confidence)::text = ANY ((ARRAY['LOW'::character varying, 'MEDIUM'::character varying, 'HIGH'::character varying, 'VERY_HIGH'::character varying])::text[])))
+- `seasonal_patterns_semaine_mois_check` : CHECK (((semaine_mois >= 1) AND (semaine_mois <= 5)))
+
+**Index (hors PK)** :
+- `idx_seasonal_unique`
+
 
 ---
 
-### 4.4 `inventory.recommendations`
-Recommandations InventoryAgent — résultats des décisions temps réel.
+## Schema `public`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `sku` | INTEGER | Produit concerné |
-| `recommendation_type` | VARCHAR(50) | `REORDER`, `TRANSFER`, `HOLD`, `LIQUIDATE` |
-| `quantity` | INTEGER | Quantité recommandée |
-| `reason` | TEXT | Justification textuelle agent |
-| `urgency` | VARCHAR(10) | `HIGH`, `MEDIUM`, `LOW` |
-| `status` | VARCHAR(20) | `pending`, `approved`, `rejected`, `executed` |
-| `approved_by` | INTEGER | agent_id approbateur |
-| `created_at` | TIMESTAMP | Création |
-| `resolved_at` | TIMESTAMP | Résolution |
+Schema par defaut Postgres : logging agent transverse actif (agent_cycles, agent_logs, agent_memory, agent_kpi_daily...), auth, HITL (hitl_reviews), alembic_version.
+
+### `public.agent_cycles`
+
+*Lignes (COUNT exact, 2026-07-06) : 1 147*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('agent_cycles_id_seq'::regclass)` | PK |
+| `cycle_id` | VARCHAR(50) | oui | `` |  |
+| `store_id` | VARCHAR(10) | oui | `'I63'::character varying` |  |
+| `triggered_by` | VARCHAR(20) | oui | `` |  |
+| `urgency_level` | VARCHAR(10) | oui | `` |  |
+| `urgency_score` | FLOAT8 | oui | `` |  |
+| `gap_pct` | FLOAT8 | oui | `` |  |
+| `gap_amount` | FLOAT8 | oui | `` |  |
+| `ca_today` | FLOAT8 | oui | `` |  |
+| `ca_target` | FLOAT8 | oui | `` |  |
+| `forecast_eod` | FLOAT8 | oui | `` |  |
+| `analyst_summary` | TEXT | oui | `` |  |
+| `strategie` | TEXT | oui | `` |  |
+| `nb_actions` | INT4 | oui | `0` |  |
+| `cause_racine` | TEXT | oui | `` |  |
+| `rag_used` | BOOL | oui | `false` |  |
+| `nb_rag_scripts` | INT4 | oui | `0` |  |
+| `weather_label` | VARCHAR(50) | oui | `` |  |
+| `weather_effect` | FLOAT8 | oui | `` |  |
+| `total_ms` | FLOAT8 | oui | `` |  |
+| `nodes_executed` | INT4 | oui | `0` |  |
+| `errors_count` | INT4 | oui | `0` |  |
+| `status` | VARCHAR(20) | oui | `'completed'::character varying` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes UNIQUE** :
+- `agent_cycles_cycle_id_key` sur (cycle_id)
+
+**Index (hors PK)** :
+- `agent_cycles_cycle_id_key`
+- `idx_cycles_created`
+- `idx_cycles_store`
+- `idx_cycles_urgency`
+
+
+### `public.agent_errors`
+
+*Lignes (COUNT exact, 2026-07-06) : 19*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('agent_errors_id_seq'::regclass)` | PK |
+| `cycle_id` | VARCHAR(50) | oui | `` |  |
+| `store_id` | VARCHAR(10) | oui | `'I63'::character varying` |  |
+| `agent_name` | VARCHAR(30) | oui | `` |  |
+| `node_name` | VARCHAR(50) | oui | `` |  |
+| `error_type` | VARCHAR(50) | oui | `` |  |
+| `error_msg` | TEXT | oui | `` |  |
+| `traceback_txt` | TEXT | oui | `` |  |
+| `context` | JSONB | oui | `` |  |
+| `resolved` | BOOL | oui | `false` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_errors_created`
+- `idx_errors_cycle`
+- `idx_errors_resolved`
+- `idx_errors_type`
+
+
+### `public.agent_kpi_daily`
+
+*Lignes (COUNT exact, 2026-07-06) : 114 211*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('agent_kpi_daily_id_seq'::regclass)` | PK |
+| `agent_id` | INT4 | non | `` |  |
+| `store_id` | VARCHAR(50) | non | `` |  |
+| `kpi_date` | DATE | non | `` |  |
+| `ca_realise` | NUMERIC(14,2) | oui | `0` |  |
+| `ca_cible` | NUMERIC(14,2) | oui | `` |  |
+| `gap_ca_pct` | NUMERIC(7,2) | oui | `` |  |
+| `nb_transactions` | INT4 | oui | `0` |  |
+| `nb_clients_uniques` | INT4 | oui | `0` |  |
+| `panier_moyen` | NUMERIC(10,2) | oui | `` |  |
+| `nb_forfaits` | INT4 | oui | `0` |  |
+| `nb_terminaux` | INT4 | oui | `0` |  |
+| `nb_sim_activations` | INT4 | oui | `0` |  |
+| `nb_recharges` | INT4 | oui | `0` |  |
+| `nb_accessoires` | INT4 | oui | `0` |  |
+| `nb_evouchers` | INT4 | oui | `0` |  |
+| `nb_postpaye` | INT4 | oui | `0` |  |
+| `nb_postpaye_cible` | INT4 | oui | `` |  |
+| `gap_postpaye_pct` | NUMERIC(7,2) | oui | `` |  |
+| `taux_upsell_accessoire` | NUMERIC(6,4) | oui | `` |  |
+| `taux_upsell_assurance` | NUMERIC(6,4) | oui | `` |  |
+| `taux_conversion_recharge` | NUMERIC(6,4) | oui | `` |  |
+| `ca_terminaux` | NUMERIC(12,2) | oui | `0` |  |
+| `ca_forfaits` | NUMERIC(12,2) | oui | `0` |  |
+| `ca_sim` | NUMERIC(12,2) | oui | `0` |  |
+| `ca_recharges` | NUMERIC(12,2) | oui | `0` |  |
+| `ca_accessoires` | NUMERIC(12,2) | oui | `0` |  |
+| `rang_boutique` | INT4 | oui | `` |  |
+| `rang_region` | INT4 | oui | `` |  |
+| `rang_national` | INT4 | oui | `` |  |
+| `nb_reclamations` | INT4 | oui | `0` |  |
+| `nps_score` | NUMERIC(5,2) | oui | `` |  |
+| `coach_score` | NUMERIC(5,2) | oui | `` |  |
+| `urgency_level` | VARCHAR(10) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes UNIQUE** :
+- `agent_kpi_daily_agent_id_kpi_date_key` sur (agent_id, kpi_date)
+
+**Contraintes CHECK** :
+- `agent_kpi_daily_urgency_level_check` : CHECK (((urgency_level)::text = ANY ((ARRAY['CRITIQUE'::character varying, 'ELEVE'::character varying, 'MODERE'::character varying, 'OK'::character varying])::text[])))
+
+**Index (hors PK)** :
+- `agent_kpi_daily_agent_id_kpi_date_key`
+- `idx_agent_kpi_agent_date`
+- `idx_agent_kpi_gap`
+- `idx_agent_kpi_store_date`
+
+
+### `public.agent_logs`
+
+*Lignes (COUNT exact, 2026-07-06) : 11 900*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('agent_logs_id_seq'::regclass)` | PK |
+| `cycle_id` | VARCHAR(50) | oui | `` |  |
+| `store_id` | VARCHAR(10) | oui | `'I63'::character varying` |  |
+| `agent_name` | VARCHAR(30) | oui | `` |  |
+| `node_name` | VARCHAR(50) | oui | `` |  |
+| `status` | VARCHAR(20) | oui | `` |  |
+| `input_state` | JSONB | oui | `` |  |
+| `output_state` | JSONB | oui | `` |  |
+| `duration_ms` | FLOAT8 | oui | `` |  |
+| `error_msg` | TEXT | oui | `` |  |
+| `metadata` | JSONB | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_logs_agent`
+- `idx_logs_created`
+- `idx_logs_cycle`
+- `idx_logs_status`
+
+
+### `public.agent_memory`
+
+*Lignes (COUNT exact, 2026-07-06) : 939*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('agent_memory_id_seq'::regclass)` | PK |
+| `agent_name` | VARCHAR(50) | non | `` |  |
+| `store_id` | VARCHAR(50) | non | `` |  |
+| `cycle_id` | VARCHAR(100) | oui | `` |  |
+| `memory_type` | VARCHAR(50) | non | `` |  |
+| `memory_data` | JSONB | non | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_agent_memory_agent_store`
+
+
+### `public.agent_sessions`
+
+*Lignes (COUNT exact, 2026-07-06) : 2*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | VARCHAR(50) | non | `` | PK |
+| `store_id` | VARCHAR(20) | non | `` |  |
+| `agent_type` | VARCHAR(30) | oui | `` |  |
+| `started_at` | TIMESTAMPTZ | oui | `now()` |  |
+| `last_activity` | TIMESTAMPTZ | oui | `now()` |  |
+| `status` | VARCHAR(20) | oui | `` |  |
+| `memory_state` | JSON | oui | `` |  |
+| `external_context` | JSON | oui | `` |  |
+
+**Index (hors PK)** :
+- `idx_session_store_time`
+
+
+### `public.alembic_version`
+
+*Lignes (COUNT exact, 2026-07-06) : 1*
+
+**Cle primaire** : `version_num`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `version_num` | VARCHAR(32) | non | `` | PK |
+
+**Index (hors PK)** :
+- `alembic_version_pkc`
+
+
+### `public.app_sessions`
+
+*Lignes (COUNT exact, 2026-07-06) : 59*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('app_sessions_id_seq'::regclass)` | PK |
+| `token` | VARCHAR(64) | non | `` |  |
+| `user_id` | VARCHAR(30) | non | `` |  |
+| `expires_at` | TIMESTAMP | non | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `last_used` | TIMESTAMP | oui | `now()` |  |
+| `ip_address` | VARCHAR(45) | oui | `` |  |
+
+**Contraintes UNIQUE** :
+- `app_sessions_token_key` sur (token)
+
+**Index (hors PK)** :
+- `app_sessions_token_key`
+- `idx_as_exp`
+- `idx_as_token`
+- `idx_as_user`
+
+
+### `public.app_users`
+
+*Lignes (COUNT exact, 2026-07-06) : 7*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('app_users_id_seq'::regclass)` | PK |
+| `user_id` | VARCHAR(30) | non | `` |  |
+| `username` | VARCHAR(50) | non | `` |  |
+| `password_hash` | VARCHAR(64) | non | `` |  |
+| `full_name` | VARCHAR(100) | oui | `` |  |
+| `role` | VARCHAR(20) | non | `` |  |
+| `store_id` | VARCHAR(20) | oui | `` |  |
+| `store_name` | VARCHAR(100) | oui | `` |  |
+| `initials` | VARCHAR(5) | oui | `` |  |
+| `color` | VARCHAR(10) | oui | `` |  |
+| `advisor_id` | VARCHAR(20) | oui | `` |  |
+| `actif` | BOOL | oui | `true` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `last_login` | TIMESTAMP | oui | `` |  |
+
+**Contraintes UNIQUE** :
+- `app_users_user_id_key` sur (user_id)
+- `app_users_username_key` sur (username)
+
+**Index (hors PK)** :
+- `app_users_user_id_key`
+- `app_users_username_key`
+- `idx_au_store`
+- `idx_au_username`
+
+
+### `public.coach_interactions`
+
+*Lignes (COUNT exact, 2026-07-06) : 255*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('coach_interactions_id_seq'::regclass)` | PK |
+| `advisor_name` | VARCHAR(100) | oui | `` |  |
+| `store_id` | VARCHAR(20) | oui | `'I63'::character varying` |  |
+| `message` | TEXT | oui | `` |  |
+| `response` | TEXT | oui | `` |  |
+| `gap_pct` | FLOAT8 | oui | `` |  |
+| `urgency` | VARCHAR(10) | oui | `` |  |
+| `rag_used` | BOOL | oui | `false` |  |
+| `nb_rag_scripts` | INT4 | oui | `0` |  |
+| `conseil_type` | VARCHAR(30) | oui | `'general'::character varying` |  |
+| `confidence` | FLOAT8 | oui | `0.0` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_ci_advisor`
+- `idx_ci_created`
+- `idx_coach_interactions_advisor_day`
+
+
+### `public.hitl_reviews`
+
+*Lignes (COUNT exact, 2026-07-06) : 9*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | UUID | non | `gen_random_uuid()` | PK |
+| `store_id` | TEXT | non | `` |  |
+| `cycle_id` | TEXT | non | `` |  |
+| `urgency_level` | TEXT | non | `` |  |
+| `gap_pct` | FLOAT8 | non | `` |  |
+| `critique_score` | FLOAT8 | non | `` |  |
+| `critique_feedback` | TEXT | non | `` |  |
+| `strategie_summary` | TEXT | non | `` |  |
+| `actions` | JSONB | non | `'[]'::jsonb` |  |
+| `source` | TEXT | non | `'sales'::text` |  |
+| `status` | TEXT | non | `'pending'::text` |  |
+| `approver_name` | TEXT | oui | `` |  |
+| `approver_note` | TEXT | oui | `` |  |
+| `reviewed_at` | TIMESTAMPTZ | oui | `` |  |
+| `created_at` | TIMESTAMPTZ | non | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_hitl_reviews_pending`
+
+
+### `public.rag_feedback`
+
+*Lignes (COUNT exact, 2026-07-06, après seed) : 150*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('rag_feedback_id_seq'::regclass)` | PK |
+| `cycle_id` | VARCHAR(50) | oui | `` |  |
+| `store_id` | VARCHAR(10) | oui | `'I63'::character varying` |  |
+| `agent_name` | VARCHAR(30) | oui | `'stratege'::character varying` |  |
+| `query` | TEXT | oui | `` |  |
+| `nb_results` | INT4 | oui | `` |  |
+| `top_category` | VARCHAR(100) | oui | `` |  |
+| `top_score` | FLOAT8 | oui | `` |  |
+| `action_used` | TEXT | oui | `` |  |
+| `was_useful` | BOOL | oui | `` |  |
+| `context` | JSONB | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_rag_agent`
+- `idx_rag_created`
+- `idx_rag_cycle`
+
+
+### `public.rag_feedback_metrics`
+
+*Lignes (COUNT exact, 2026-07-06, après seed) : 150*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('rag_feedback_metrics_id_seq'::regclass)` | PK |
+| `cycle_id` | VARCHAR | oui | `` |  |
+| `store_id` | VARCHAR(20) | oui | `` |  |
+| `query` | TEXT | oui | `` |  |
+| `nb_results` | INT4 | oui | `` |  |
+| `top_category` | VARCHAR(50) | oui | `` |  |
+| `top_score` | FLOAT8 | oui | `` |  |
+| `action_used` | TEXT | oui | `` |  |
+| `was_useful` | BOOL | oui | `` |  |
+| `context` | JSON | oui | `` |  |
+| `created_at` | TIMESTAMPTZ | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_rag_fb_cycle`
+
+
+### `public.rag_queries`
+
+*Lignes (COUNT exact, 2026-07-06, après seed) : 150*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('rag_queries_id_seq'::regclass)` | PK |
+| `cycle_id` | VARCHAR | oui | `` |  |
+| `session_id` | VARCHAR(50) | oui | `` |  |
+| `query_text` | TEXT | oui | `` |  |
+| `nb_results` | INT4 | oui | `` |  |
+| `top_result_score` | FLOAT8 | oui | `` |  |
+| `top_result_category` | VARCHAR(50) | oui | `` |  |
+| `action_selected` | TEXT | oui | `` |  |
+| `was_useful` | BOOL | oui | `` |  |
+| `created_at` | TIMESTAMPTZ | oui | `now()` |  |
+
+**Index (hors PK)** :
+- `idx_rag_session`
+
+
+### `public.store_kpi_daily`
+
+*Lignes (COUNT exact, 2026-07-06) : 32 431*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('store_kpi_daily_id_seq'::regclass)` | PK |
+| `store_id` | VARCHAR(50) | non | `` |  |
+| `kpi_date` | DATE | non | `` |  |
+| `ca_realise` | NUMERIC(14,2) | oui | `0` |  |
+| `ca_cible` | NUMERIC(14,2) | oui | `` |  |
+| `gap_ca_pct` | NUMERIC(7,2) | oui | `` |  |
+| `ca_cumul_mois` | NUMERIC(16,2) | oui | `` |  |
+| `ca_objectif_mois` | NUMERIC(16,2) | oui | `` |  |
+| `nb_transactions` | INT4 | oui | `0` |  |
+| `nb_clients` | INT4 | oui | `0` |  |
+| `taux_conversion` | NUMERIC(6,4) | oui | `` |  |
+| `footfall_estime` | INT4 | oui | `` |  |
+| `nb_forfaits` | INT4 | oui | `0` |  |
+| `nb_terminaux` | INT4 | oui | `0` |  |
+| `nb_sim_activations` | INT4 | oui | `0` |  |
+| `nb_recharges` | INT4 | oui | `0` |  |
+| `ca_terminaux` | NUMERIC(14,2) | oui | `0` |  |
+| `ca_forfaits` | NUMERIC(14,2) | oui | `0` |  |
+| `nb_postpaye` | INT4 | oui | `0` |  |
+| `nb_postpaye_cible` | INT4 | oui | `` |  |
+| `gap_postpaye_pct` | NUMERIC(7,2) | oui | `` |  |
+| `nps_score` | NUMERIC(5,2) | oui | `` |  |
+| `csat_score` | NUMERIC(5,2) | oui | `` |  |
+| `nb_reclamations` | INT4 | oui | `0` |  |
+| `nb_ruptures_sku` | INT4 | oui | `0` |  |
+| `taux_service_stock` | NUMERIC(6,4) | oui | `1.0` |  |
+| `rang_region` | INT4 | oui | `` |  |
+| `rang_national` | INT4 | oui | `` |  |
+| `nb_agents_actifs` | INT4 | oui | `` |  |
+| `ca_par_agent` | NUMERIC(12,2) | oui | `` |  |
+| `panier_moyen_store` | NUMERIC(10,2) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes UNIQUE** :
+- `store_kpi_daily_store_id_kpi_date_key` sur (store_id, kpi_date)
+
+**Index (hors PK)** :
+- `idx_store_kpi_date`
+- `idx_store_kpi_gap`
+- `store_kpi_daily_store_id_kpi_date_key`
+
+
+### `public.telco_targets_monthly`
+
+*Lignes (COUNT exact, 2026-07-06) : 6 917*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('telco_targets_monthly_id_seq'::regclass)` | PK |
+| `store_id` | VARCHAR(50) | non | `` |  |
+| `agent_id` | INT4 | oui | `` |  |
+| `mois` | INT4 | non | `` |  |
+| `annee` | INT4 | non | `` |  |
+| `niveau` | VARCHAR(10) | oui | `'AGENT'::character varying` |  |
+| `ca_cible_mensuel` | NUMERIC(14,2) | oui | `` |  |
+| `ca_cible_s1` | NUMERIC(12,2) | oui | `` |  |
+| `ca_cible_s2` | NUMERIC(12,2) | oui | `` |  |
+| `ca_cible_s3` | NUMERIC(12,2) | oui | `` |  |
+| `ca_cible_s4` | NUMERIC(12,2) | oui | `` |  |
+| `activations_totales` | INT4 | oui | `0` |  |
+| `activations_postpaye` | INT4 | oui | `0` |  |
+| `activations_prepaye` | INT4 | oui | `0` |  |
+| `ventes_terminaux` | INT4 | oui | `0` |  |
+| `upgrades_data` | INT4 | oui | `0` |  |
+| `conversions_recharge_forfait` | INT4 | oui | `0` |  |
+| `renouvellements_contrat` | INT4 | oui | `0` |  |
+| `nps_cible` | NUMERIC(5,2) | oui | `` |  |
+| `taux_reclamation_max` | NUMERIC(6,4) | oui | `` |  |
+| `evenements_mois` | JSONB | oui | `` |  |
+| `facteur_saisonnier` | NUMERIC(6,4) | oui | `1.0` |  |
+| `ajustement_raison` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes CHECK** :
+- `telco_targets_monthly_mois_check` : CHECK (((mois >= 1) AND (mois <= 12)))
+- `telco_targets_monthly_niveau_check` : CHECK (((niveau)::text = ANY ((ARRAY['AGENT'::character varying, 'BOUTIQUE'::character varying, 'REGION'::character varying])::text[])))
+
+**Index (hors PK)** :
+- `idx_targets_agent_month`
+- `idx_targets_store_month`
+
+
+### `public.weekly_kpi_summary`
+
+*Lignes (COUNT exact, 2026-07-06) : 67 028*
+
+**Cle primaire** : `id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('weekly_kpi_summary_id_seq'::regclass)` | PK |
+| `store_id` | VARCHAR(50) | non | `` |  |
+| `agent_id` | INT4 | oui | `` |  |
+| `annee_semaine` | VARCHAR(8) | non | `` |  |
+| `semaine_debut` | DATE | non | `` |  |
+| `semaine_fin` | DATE | non | `` |  |
+| `niveau` | VARCHAR(10) | oui | `'AGENT'::character varying` |  |
+| `ca_semaine` | NUMERIC(14,2) | oui | `0` |  |
+| `ca_cible_semaine` | NUMERIC(14,2) | oui | `` |  |
+| `gap_semaine_pct` | NUMERIC(7,2) | oui | `` |  |
+| `nb_transactions` | INT4 | oui | `0` |  |
+| `nb_postpaye` | INT4 | oui | `0` |  |
+| `nb_terminaux` | INT4 | oui | `0` |  |
+| `nb_forfaits` | INT4 | oui | `0` |  |
+| `panier_moyen` | NUMERIC(10,2) | oui | `` |  |
+| `top_produit` | VARCHAR(200) | oui | `` |  |
+| `top_categorie` | VARCHAR(50) | oui | `` |  |
+| `nb_jours_actifs` | INT4 | oui | `6` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+
+**Contraintes CHECK** :
+- `weekly_kpi_summary_niveau_check` : CHECK (((niveau)::text = ANY ((ARRAY['AGENT'::character varying, 'BOUTIQUE'::character varying])::text[])))
+
 
 ---
 
-### 4.5 `inventory.stock_snapshot_enriched` *(Nouveau — Migration 008)*
-Snapshot quotidien enrichi avec métriques supply chain pré-calculées.
+## Schema `sales`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `snapshot_ts` | TIMESTAMP | Horodatage du snapshot |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `product_id` | VARCHAR(50) | Identifiant produit |
-| `product_name` | TEXT | Nom produit |
-| `product_category` | VARCHAR(100) | Catégorie |
-| `stock_on_hand` | INTEGER | Stock physique |
-| `reserved_qty` | INTEGER | Réservations en cours |
-| `available_qty` | INTEGER | Calculé : `stock_on_hand - reserved_qty` (GENERATED) |
-| `avg_daily_demand_30d` | NUMERIC(10,4) | Demande moyenne 30 derniers jours |
-| `demand_last_7d` | NUMERIC(10,4) | Demande 7 derniers jours |
-| `coverage_days` | NUMERIC(10,2) | Jours de couverture (999=hors stock / overstock) |
-| `safety_stock` | INTEGER | Stock de sécurité calculé (formule Wilson) |
-| `reorder_point` | INTEGER | Point de déclenchement de commande |
-| `risk_level` | VARCHAR(20) | `CRITICAL`, `HIGH`, `MEDIUM`, `OK`, `OVERSTOCK` |
-| `recommended_action` | VARCHAR(50) | `EXPEDITE_TRANSFER_OR_REPLENISH`, `REPLENISH`, `MONITOR`, `HOLD_OR_PROMOTE`, `LIQUIDATE` |
-| `data_quality_flag` | VARCHAR(50) | `OK`, `NEGATIVE_STOCK_TO_VALIDATE`, `ZERO_DEMAND` |
-| `source_flag` | VARCHAR(60) | `COMPUTED_FROM_STOCK_LEVELS` |
+Ventes : historique, transactions temps reel, catalogue produits cote vente, objectifs.
 
-**Consommé par :** CoachAgent `cross_domain_tools.score_product()`, SupervisorAgent, vue `monitoring.realtime_store_pulse`.
+### `sales.agents`
 
----
+*Lignes (COUNT exact, 2026-07-06) : 699*
 
-### 4.6 `inventory.recommendations_computed` *(Nouveau — Migration 008)*
-Recommandations IA pré-calculées avec TTL 24h.
+**Cle primaire** : `agent_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `recommendation_id` | VARCHAR(30) PK | Format : `INV-{NNNNNN}` |
-| `store_id` | VARCHAR(50) FK | Boutique cible |
-| `product_id` | VARCHAR(50) | Produit concerné |
-| `product_name` | TEXT | Nom produit |
-| `risk_level` | VARCHAR(20) | Niveau de risque actuel |
-| `recommended_action` | VARCHAR(50) | Action recommandée |
-| `recommended_qty` | INTEGER | Quantité suggérée |
-| `source_store_id` | VARCHAR(50) | Boutique source (pour transferts) |
-| `reason` | TEXT | Justification (stock X, demande Y/jour, couverture Z jours) |
-| `expected_impact_tnd` | NUMERIC(12,2) | Impact CA estimé TND |
-| `requires_manager_approval` | BOOLEAN | Nécessite validation manager |
-| `status` | VARCHAR(20) | `ACTIVE`, `EXECUTED`, `EXPIRED`, `CANCELLED`, `PENDING_APPROVAL` |
-| `expires_at` | TIMESTAMP | Expiration automatique (NOW + 24h) |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `agent_id` | INT4 | non | `` | PK |
+| `agent_name` | TEXT | non | `` |  |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `role` | TEXT | oui | `` |  |
+| `phone` | TEXT | oui | `` |  |
+| `email` | TEXT | oui | `` |  |
+| `performance_level` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `date_embauche` | DATE | oui | `` |  |
+| `date_depart` | DATE | oui | `` |  |
+| `niveau_certification` | INT4 | oui | `1` |  |
+| `quota_mensuel_ca` | NUMERIC(12,2) | oui | `` |  |
+| `quota_activations` | INT4 | oui | `60` |  |
+| `quota_postpaye` | INT4 | oui | `10` |  |
+| `specialisation` | VARCHAR(50) | oui | `` |  |
+| `avatar_color` | VARCHAR(7) | oui | `` |  |
+| `coach_score` | NUMERIC(5,2) | oui | `0.0` |  |
+| `anciennete_mois` | INT4 | oui | `12` |  |
 
----
+**References vers d'autres tables** :
+- `store_id` -> `sales.boutiques.store_id`
 
-## 5. Schéma `supply` — Supply Chain
+**Referencee par** :
+- `sales.transactions.agent_id`
+- `sales.transactions_rt.agent_id`
 
-### 5.1 `supply.suppliers`
-Fournisseurs référencés.
+**Index (hors PK)** :
+- `idx_agents_performance`
+- `idx_agents_store`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `supplier_id` | VARCHAR(30) PK | Code fournisseur |
-| `nom` | VARCHAR(200) | Nom fournisseur |
-| `pays_origine` | VARCHAR(50) | Pays d'origine |
-| `type_fournisseur` | VARCHAR(30) | `CONSTRUCTEUR`, `DISTRIBUTEUR`, `OPERATEUR` |
-| `categories` | JSONB | Catégories produits fournies |
-| `marques` | JSONB | Marques distribuées |
-| `delai_livraison_moy` | INTEGER | Délai moyen en jours |
-| `taux_fiabilite` | NUMERIC(5,4) | Taux de fiabilité (0-1) |
-| `score_global` | NUMERIC(5,2) | Score partenaire (0-100) |
 
-### 5.2 `supply.purchase_orders`
-Bons de commande.
+### `sales.boutiques`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `po_id` | UUID PK | Identifiant commande |
-| `sku` | INTEGER | Produit commandé |
-| `supplier_id` | VARCHAR(30) FK | Fournisseur |
-| `store_id` | VARCHAR(50) | Boutique destinataire |
-| `quantite_commandee` | INTEGER | Quantité commandée |
-| `quantite_recue` | INTEGER | Quantité reçue |
-| `prix_unitaire_ht` | NUMERIC(12,4) | Prix unitaire HT |
-| `statut` | VARCHAR(20) | `BROUILLON`, `SOUMIS`, `CONFIRME`, `EXPEDIE`, `RECU`, `ANNULE`, `LITIGE` |
-| `priorite` | VARCHAR(10) | `URGENT`, `NORMAL`, `LOW` |
-| `date_commande` | TIMESTAMP | Date création |
-| `date_livraison_prevue` | DATE | Livraison prévue |
-| `date_livraison_reelle` | DATE | Livraison effective |
+*Lignes (COUNT exact, 2026-07-06) : 201*
 
-### 5.3 `supply.stock_movements`
-Journal de tous les mouvements de stock.
+**Cle primaire** : `store_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `mouvement_id` | UUID PK | Identifiant mouvement |
-| `sku` | INTEGER | Produit |
-| `store_id` | VARCHAR(50) | Boutique |
-| `type_mouvement` | VARCHAR(30) | `RECEPTION_BC`, `VENTE`, `RETOUR_CLIENT`, `RETOUR_FOURNISSEUR`, `TRANSFERT_ENTRANT`, `TRANSFERT_SORTANT`, `AJUSTEMENT_INVENTAIRE`, `CASSE_PERTE` |
-| `quantite` | INTEGER | Quantité (positive=entrée, négative=sortie) |
-| `stock_avant` | INTEGER | Stock avant mouvement |
-| `stock_apres` | INTEGER | Stock après mouvement |
-| `reference_id` | VARCHAR(100) | Référence document source |
-| `reference_type` | VARCHAR(30) | `VENTE`, `BC`, `TRANSFERT` |
-| `agent_id` | INTEGER | Responsable mouvement |
-| `date_mouvement` | TIMESTAMP | Date/heure mouvement |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `store_id` | TEXT | non | `` | PK |
+| `store_name` | TEXT | non | `` |  |
+| `address` | TEXT | oui | `` |  |
+| `ville` | TEXT | oui | `` |  |
+| `region` | TEXT | oui | `` |  |
+| `manager_name` | TEXT | oui | `` |  |
+| `phone` | TEXT | oui | `` |  |
+| `active` | BOOL | oui | `true` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `type_boutique` | VARCHAR(5) | oui | `` |  |
+| `canal` | VARCHAR(20) | oui | `'PHYSIQUE'::character varying` |  |
+| `wilaya` | VARCHAR(100) | oui | `` |  |
+| `zone_commerciale` | VARCHAR(100) | oui | `` |  |
+| `latitude` | NUMERIC(10,7) | oui | `` |  |
+| `longitude` | NUMERIC(10,7) | oui | `` |  |
+| `capacite_conseillers` | INT4 | oui | `4` |  |
+| `date_ouverture` | DATE | oui | `` |  |
+| `is_officielle` | BOOL | oui | `false` |  |
+| `rang_ca_region` | INT4 | oui | `` |  |
+| `email_store` | VARCHAR(200) | oui | `` |  |
 
-### 5.4 `supply.transfers`
-Transferts inter-boutiques.
+**Referencee par** :
+- `inventory.alerts.store_id`
+- `inventory.context_adjustments.store_id`
+- `inventory.recommendations.store_id`
+- `inventory.stock_levels.store_id`
+- `sales.agents.store_id`
+- `sales.objectifs.store_id`
+- `sales.transactions.store_id`
+- `sales.transactions_rt.store_id`
+- `supply.purchase_orders.store_id`
+- `supply.reorder_params.store_id`
+- `supply.stock_movements.store_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `transfer_id` | UUID PK | Identifiant transfert |
-| `sku` | INTEGER | Produit transféré |
-| `store_source` | VARCHAR(50) | Boutique expéditrice |
-| `store_dest` | VARCHAR(50) | Boutique destinataire |
-| `quantite` | INTEGER | Quantité transférée |
-| `statut` | VARCHAR(20) | `DEMANDE`, `APPROUVE`, `EXPEDIE`, `RECU`, `REJETE` |
-| `priorite` | VARCHAR(10) | Priorité du transfert |
-| `motif` | VARCHAR(100) | Motif (ex: `RUPTURE_CRITIQUE_I63`) |
+**Index (hors PK)** :
+- `idx_boutiques_active`
+- `idx_boutiques_ville`
 
-### 5.5 `supply.serial_numbers`
-Numéros de série IMEI/ICCID/eSIM.
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `num_serie` | VARCHAR(50) UNIQUE | Numéro de série |
-| `type_serie` | VARCHAR(10) | `IMEI`, `ICCID`, `ESIM`, `EAN` |
-| `sku` | INTEGER | Produit associé |
-| `store_id` | VARCHAR(50) | Boutique |
-| `statut` | VARCHAR(20) | `EN_STOCK`, `VENDU`, `RESERVE`, `DEFECTUEUX`, `RETOURNE`, `VOLE`, `EN_TRANSIT` |
-| `sale_id` | VARCHAR(100) | Référence vente associée |
+### `sales.coaching_scripts`
 
-### 5.6 `supply.reorder_params`
-Paramètres de réapprovisionnement calculés (formule Wilson).
+*Lignes (COUNT exact, 2026-07-06) : 1 141*
 
-| Colonne | Type | Description |
-|---|---|---|
-| `sku` | INTEGER PK(1/2) | Produit |
-| `store_id` | VARCHAR(50) PK(2/2) | Boutique |
-| `demande_moy_jour` | NUMERIC(10,4) | Demande moyenne quotidienne (90 jours) |
-| `demande_std_jour` | NUMERIC(10,4) | Écart-type demande |
-| `lead_time_moy` | NUMERIC(8,2) | Lead time moyen fournisseur (jours) |
-| `stock_securite` | INTEGER | Stock de sécurité = 1.65 × σ × √L |
-| `point_commande` | INTEGER | Seuil déclencheur = d×L + stock_securite |
-| `eoq` | INTEGER | EOQ = √(2×D×K / h×p) |
-| `niveau_service` | NUMERIC(5,4) | Niveau de service cible (défaut 0.95) |
-| `jours_stock_cible` | INTEGER | Couverture cible en jours (défaut 30) |
-| `derniere_maj` | TIMESTAMP | Dernière mise à jour |
+**Cle primaire** : `id`
 
----
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('sales.coaching_scripts_id_seq'::regclass)` | PK |
+| `store_id` | VARCHAR(10) | oui | `'I63'::character varying` |  |
+| `categorie` | VARCHAR(50) | oui | `` |  |
+| `situation` | TEXT | oui | `` |  |
+| `action` | TEXT | oui | `` |  |
+| `produit_cible` | VARCHAR(100) | oui | `` |  |
+| `argument_vente` | TEXT | oui | `` |  |
+| `impact_observe` | VARCHAR(100) | oui | `` |  |
+| `heure_min` | INT4 | oui | `` |  |
+| `heure_max` | INT4 | oui | `` |  |
+| `jour_semaine` | INT4 | oui | `` |  |
+| `source` | VARCHAR(100) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-## 6. Schéma `market` — Intelligence Marché
+**Index (hors PK)** :
+- `idx_cs_cat`
+- `idx_cs_created`
+- `idx_cs_store`
 
-### 6.1 `market.events`
-Calendrier des événements impactant les ventes.
 
-| Colonne | Type | Description |
-|---|---|---|
-| `event_id` | UUID PK | Identifiant |
-| `event_name` | VARCHAR(200) | Nom de l'événement |
-| `event_type` | VARCHAR(50) | `RELIGIEUX`, `SCOLAIRE`, `SPORTIF`, `COMMERCIAL`, `NATIONAL`, `CONCURRENTIEL`, `METEO`, `RESEAU` |
-| `start_date` | DATE | Début |
-| `end_date` | DATE | Fin |
-| `scope` | VARCHAR(20) | `NATIONAL`, `REGIONAL`, `LOCAL` |
-| `uplift_terminal` | NUMERIC(6,2) | Impact % sur ventes terminaux |
-| `uplift_forfait` | NUMERIC(6,2) | Impact % sur forfaits |
-| `uplift_recharge` | NUMERIC(6,2) | Impact % sur recharges |
-| `intensite` | VARCHAR(10) | `LOW`, `MEDIUM`, `HIGH`, `EXTREME` |
+### `sales.objectifs`
 
-### 6.2 `market.seasonal_patterns`
-Patterns saisonniers par catégorie et période.
+*Lignes (COUNT exact, 2026-07-06) : 23 517*
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | SERIAL PK | Identifiant |
-| `categorie` | VARCHAR(50) | Catégorie produit |
-| `mois` | INTEGER | Mois (1-12) |
-| `jour_semaine` | INTEGER | Jour (0=Lun, 6=Dim) |
-| `heure_debut` / `heure_fin` | INTEGER | Plage horaire |
-| `facteur_demande` | NUMERIC(6,4) | Multiplicateur de demande (1.0=normal) |
-| `confidence` | VARCHAR(10) | `LOW`, `MEDIUM`, `HIGH`, `VERY_HIGH` |
+**Cle primaire** : `id`
 
-### 6.3 `market.competitors`
-Concurrents télécom (Tunisie Telecom, Orange, Free).
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT4 | non | `nextval('sales.objectifs_id_seq'::regclass)` | PK |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `agent_id` | INT4 | oui | `` |  |
+| `date_objectif` | DATE | non | `` |  |
+| `objectif_ca` | NUMERIC(10,2) | oui | `` |  |
+| `objectif_transactions` | INT4 | oui | `` |  |
+| `objectif_panier_moyen` | NUMERIC(10,2) | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-| Colonne | Type | Description |
-|---|---|---|
-| `concurrent_id` | VARCHAR(20) PK | Code concurrent (TT, ORANGE, FREE_TN) |
-| `nom` | VARCHAR(100) | Nom commercial |
-| `part_marche_pct` | NUMERIC(6,3) | Part de marché % |
-| `nb_abonnes` | BIGINT | Nombre abonnés |
-| `positionnement` | VARCHAR(20) | `STATE`, `PREMIUM`, `LOW_COST`, `MID` |
+**References vers d'autres tables** :
+- `store_id` -> `sales.boutiques.store_id`
 
-### 6.4 `market.competitor_pricing`
-Relevés tarifaires concurrents.
+**Index (hors PK)** :
+- `idx_objectifs_agent`
+- `idx_objectifs_store_date`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | SERIAL PK | Identifiant |
-| `concurrent_id` | VARCHAR(20) FK | Concurrent |
-| `categorie` | VARCHAR(50) | Catégorie produit |
-| `prix_ttc` | NUMERIC(10,2) | Prix TTC relevé |
-| `date_releve` | DATE | Date du relevé |
-| `source` | VARCHAR(30) | `WEB`, `BOUTIQUE`, `PRESSE` |
 
-### 6.5 `market.mnp_flows`
-Flux de portabilité Mobile Number Portability.
+### `sales.produits`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `mnp_id` | UUID PK | Identifiant |
-| `direction` | VARCHAR(10) | `PORT_IN`, `PORT_OUT` |
-| `mois` | DATE | Mois concerné |
-| `volume` | INTEGER | Volume de portages |
-| `raison_principale` | VARCHAR(100) | Motif principal (prix, couverture…) |
+*Lignes (COUNT exact, 2026-07-06) : 4 593*
 
-### 6.6 `market.network_events`
-Incidents et maintenances réseau.
+**Cle primaire** : `sku`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `event_id` | UUID PK | Identifiant |
-| `wilaya` | VARCHAR(100) | Zone impactée |
-| `event_type` | VARCHAR(30) | `PANNE`, `MAINTENANCE`, `UPGRADE_4G`, `UPGRADE_5G`, `CONGESTION` |
-| `severite` | VARCHAR(10) | Sévérité |
-| `start_time` / `end_time` | TIMESTAMP | Plage horaire |
-| `clients_impactes` | INTEGER | Nombre clients affectés |
-| `impact_ventes_pct` | NUMERIC(6,2) | Impact estimé sur ventes % |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `sku` | INT4 | non | `` | PK |
+| `nom` | TEXT | non | `` |  |
+| `categorie` | TEXT | oui | `` |  |
+| `famille` | TEXT | oui | `` |  |
+| `prix_ht` | NUMERIC(10,2) | oui | `` |  |
+| `prix_ttc` | NUMERIC(10,2) | oui | `` |  |
+| `marge_pct` | NUMERIC(5,2) | oui | `` |  |
+| `stock_initial` | INT4 | oui | `0` |  |
+| `actif` | BOOL | oui | `true` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `marque` | VARCHAR(100) | oui | `` |  |
+| `modele` | VARCHAR(200) | oui | `` |  |
+| `gamme_libelle` | VARCHAR(100) | oui | `` |  |
+| `famille_libelle` | VARCHAR(100) | oui | `` |  |
+| `pa_ht` | NUMERIC(12,4) | oui | `` |  |
+| `marge_pct_calc` | NUMERIC(6,2) | oui | `` |  |
+| `flag_4g` | BOOL | oui | `false` |  |
+| `flag_5g` | BOOL | oui | `false` |  |
+| `flag_terminal` | BOOL | oui | `false` |  |
+| `flag_forfait` | BOOL | oui | `false` |  |
+| `flag_sim` | BOOL | oui | `false` |  |
+| `flag_recharge` | BOOL | oui | `false` |  |
+| `serialisable` | BOOL | oui | `false` |  |
+| `stockable` | BOOL | oui | `true` |  |
+| `lead_time_days` | INT4 | oui | `14` |  |
+| `lead_time_std` | INT4 | oui | `3` |  |
+| `moq` | INT4 | oui | `1` |  |
+| `holding_cost_pct` | NUMERIC(8,6) | oui | `0.2` |  |
+| `order_cost` | NUMERIC(12,4) | oui | `50` |  |
+| `date_lancement` | DATE | oui | `` |  |
+| `date_eol` | DATE | oui | `` |  |
+| `lifecycle_stage` | VARCHAR(20) | oui | `'mature'::character varying` |  |
+| `stockage_gb` | INT4 | oui | `` |  |
+| `ram_gb` | INT4 | oui | `` |  |
+| `couleur` | VARCHAR(50) | oui | `` |  |
 
----
+**Referencee par** :
+- `inventory.alerts.sku`
+- `inventory.context_adjustments.sku`
+- `inventory.product_master.sku`
+- `inventory.recommendations.sku`
+- `inventory.stock_levels.sku`
+- `sales.transactions.sku`
+- `sales.transactions_rt.cod_prod`
+- `supply.purchase_orders.sku`
+- `supply.reorder_params.sku`
+- `supply.stock_movements.sku`
 
-## 7. Schéma `customer` — Clients & Feedback
+**Index (hors PK)** :
+- `idx_produits_actif`
+- `idx_produits_categorie`
+- `idx_produits_famille`
 
-### 7.1 `customer.segments`
-8 segments clients Ooredoo Tunisie.
 
-| Colonne | Type | Description |
-|---|---|---|
-| `segment_id` | VARCHAR(20) PK | `RESI_STANDARD`, `RESI_DATA`, `RESI_PREMIUM`, `CORPO_PME`, `CORPO_GRAND`, `SENIOR`, `ETUDIANT`, `ROAMING` |
-| `libelle` | VARCHAR(100) | Libellé segment |
-| `arpu_moyen_tnd` | NUMERIC(10,2) | ARPU mensuel moyen TND |
-| `churn_rate_base` | NUMERIC(6,4) | Taux de churn de base |
-| `canal_prefere` | VARCHAR(20) | `BOUTIQUE`, `DIGITAL`, `B2B` |
-| `products_preferes` | JSONB | Produits privilégiés par segment |
-| `nb_clients_estime` | INTEGER | Base clients estimée |
+### `sales.transactions`
 
-### 7.2 `customer.churn_signals`
-Signaux de risque churn par boutique.
+*Lignes (COUNT exact, 2026-07-06) : 1 929 823*
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `signal_date` | DATE | Date du signal |
-| `nb_inactifs_30j` | INTEGER | Clients inactifs 30 jours |
-| `nb_port_out` | INTEGER | Portabilités sortantes |
-| `score_risque_churn` | NUMERIC(5,2) | Score risque 0-100 |
-| `facteurs_risque` | JSONB | Facteurs détectés |
-| `actions_retention` | JSONB | Actions proposées |
+**Cle primaire** : `id`
 
-### 7.3 `customer.nps_csat`
-Enquêtes satisfaction NPS/CSAT.
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | INT8 | non | `nextval('sales.transactions_id_seq'::regclass)` | PK |
+| `transaction_date` | TIMESTAMP | non | `` |  |
+| `date_only` | DATE | non | `` |  |
+| `heure` | INT4 | non | `` |  |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `agent_id` | INT4 | non | `` | FK -> `sales.agents.agent_id` |
+| `sku` | INT4 | non | `` | FK -> `sales.produits.sku` |
+| `quantity` | INT4 | oui | `1` |  |
+| `prix_unitaire` | NUMERIC(10,2) | oui | `` |  |
+| `lig_ht` | NUMERIC(10,2) | oui | `` |  |
+| `lig_ttc` | NUMERIC(10,2) | oui | `` |  |
+| `marge` | NUMERIC(10,2) | oui | `` |  |
+| `payment_method` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | SERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `agent_id` | INTEGER FK | Conseiller évalué |
-| `feedback_date` | DATE | Date feedback |
-| `type_enquete` | VARCHAR(10) | `NPS`, `CSAT`, `CES` |
-| `score` | NUMERIC(5,2) | Score (NPS : 0-10, CSAT : 1-5) |
-| `verbatim` | TEXT | Commentaire client |
-| `categorie_motif` | VARCHAR(100) | `CONSEIL_PRODUIT`, `TEMPS_ATTENTE`, `COMPETENCE_TECHNIQUE`… |
-| `resolu` | BOOLEAN | Problème résolu |
+**References vers d'autres tables** :
+- `agent_id` -> `sales.agents.agent_id`
+- `store_id` -> `sales.boutiques.store_id`
+- `sku` -> `sales.produits.sku`
 
----
+**Index (hors PK)** :
+- `idx_transactions_agent`
+- `idx_transactions_composite`
+- `idx_transactions_date`
+- `idx_transactions_heure`
+- `idx_transactions_sku`
+- `idx_transactions_store`
+- `idx_transactions_store_date`
+- `idx_transactions_store_heure`
 
-## 8. Schéma `coaching` — Agents Coaching
 
-### 8.1 `coaching.coaching_events`
-Archive de toutes les recommandations coaching générées par les agents.
+### `sales.transactions_rt`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `advisor_id` | INTEGER FK | Conseiller coaché |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `cycle_id` | VARCHAR(100) | Identifiant cycle agent (`CYC-YYYYMMDD-HHMM-{store}`) |
-| `urgency_level` | VARCHAR(10) | `HIGH`, `MEDIUM`, `LOW` |
-| `urgency_score` | NUMERIC(5,2) | Score urgence 0-100 |
-| `gap_pct` | NUMERIC(7,2) | Gap vs objectif % (négatif = sous objectif) |
-| `gap_amount` | NUMERIC(12,2) | Montant manquant TND |
-| `forecast_eod` | NUMERIC(12,2) | Prévision fin de journée TND |
-| `advice_text` | TEXT | Texte du conseil coaching |
-| `produit_a_pousser` | VARCHAR(200) | Produit recommandé à vendre |
-| `produit_a_eviter` | VARCHAR(200) | Produit à éviter (rupture, marge faible) |
-| `strategie` | TEXT | Stratégie préconisée |
-| `cause_racine` | TEXT | Cause identifiée de la sous-performance |
-| `rag_used` | BOOLEAN | RAG utilisé dans la génération |
-| `nb_rag_scripts` | INTEGER | Nombre de scripts RAG mobilisés |
-| `script_ids` | JSONB | IDs scripts utilisés |
-| `weather_label` | VARCHAR(100) | Condition météo au moment du coaching |
-| `weather_effect` | NUMERIC(5,2) | Impact météo estimé sur ventes % |
-| `event_name` | VARCHAR(200) | Événement marché actif |
-| `guardrail_status` | VARCHAR(20) | `APPROVE`, `BLOCK`, `REWRITE` |
-| `guardrail_rule` | VARCHAR(100) | Règle guardrail déclenchée |
-| `feedback_score` | INTEGER | Note conseiller 1-5 |
-| `was_effective` | BOOLEAN | Coaching effectif (CA amélioré) |
-| `ca_after_coaching` | NUMERIC(12,2) | CA réalisé post-coaching TND |
+*Lignes (COUNT exact, 2026-07-06) : 8 238*
 
-### 8.2 `coaching.escalations`
-Escalades manager sur sous-performances persistantes (>90 min, gap>25%).
+**Cle primaire** : `sale_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | VARCHAR(20) PK | Format : `ESC-NNNN` |
-| `store_id` | VARCHAR(50) | Boutique |
-| `gap_pct` | NUMERIC(7,2) | Gap au moment de l'escalade |
-| `gap_duration_min` | INTEGER | Durée gap en minutes |
-| `root_causes` | JSONB | Causes identifiées (array de strings) |
-| `actions` | JSONB | Plan d'actions (array d'objets `{type, detail, requires_approval}`) |
-| `hitl_request_ids` | JSONB | IDs hitl_requests associés |
-| `expected_impact_tnd` | NUMERIC(12,2) | Impact estimé résolution |
-| `status` | VARCHAR(20) | `pending`, `approved`, `rejected`, `executed`, `cancelled` |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `sale_id` | UUID | non | `` | PK |
+| `date_vente` | TIMESTAMP | non | `` |  |
+| `date_only` | DATE | non | `` |  |
+| `heure` | INT4 | non | `` |  |
+| `store_id` | TEXT | non | `` | FK -> `sales.boutiques.store_id` |
+| `agent_id` | INT4 | oui | `` | FK -> `sales.agents.agent_id` |
+| `cod_prod` | INT4 | oui | `` | FK -> `sales.produits.sku` |
+| `des_produit` | TEXT | oui | `` |  |
+| `lig_ttc` | NUMERIC(10,2) | oui | `` |  |
+| `lig_ht` | NUMERIC(10,2) | oui | `` |  |
+| `lig_tva` | NUMERIC(10,2) | oui | `` |  |
+| `qte_produit` | INT4 | oui | `1` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-### 8.3 `coaching.hitl_requests`
-Requêtes Human-In-The-Loop pour approbation manager.
+**References vers d'autres tables** :
+- `agent_id` -> `sales.agents.agent_id`
+- `cod_prod` -> `sales.produits.sku`
+- `store_id` -> `sales.boutiques.store_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `escalation_id` | VARCHAR(20) FK | Escalade parente |
-| `action_type` | VARCHAR(50) | `STOCK_TRANSFER`, `ADVISOR_REALLOCATION`, `PITCH_CHANGE`, `EMERGENCY_COACHING`, `GOAL_REVISION`, `INTER_STORE_SUPPORT` |
-| `description` | TEXT | Description action demandée |
-| `expected_impact_tnd` | NUMERIC(12,2) | Impact attendu |
-| `auto_approved` | BOOLEAN | Approbation automatique OPA |
-| `status` | VARCHAR(20) | `pending`, `approved`, `rejected`, `auto_approved` |
-| `approver_name` | VARCHAR(100) | Nom du manager approbateur |
-| `approver_comment` | TEXT | Commentaire approbateur |
+**Index (hors PK)** :
+- `idx_transactions_rt_agent`
+- `idx_transactions_rt_composite`
+- `idx_transactions_rt_date`
+- `idx_transactions_rt_store`
+- `idx_transactions_rt_store_date`
+- `idx_transactions_rt_store_time`
 
-### 8.4 `coaching.agent_memory`
-Mémoire persistante inter-cycles des agents.
-
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `agent_name` | VARCHAR(50) | `analyst`, `stratege`, `coach`, `supervisor`, `guardrail` |
-| `store_id` | VARCHAR(50) | Boutique contexte |
-| `advisor_id` | INTEGER | Conseiller contexte |
-| `cycle_id` | VARCHAR(100) | Dernier cycle associé |
-| `content` | JSONB | Mémoire structurée (gap_history, avg_gap_7d, advisor_style, scripts_efficaces…) |
-
-### 8.5 `coaching.coaching_recommendations` *(Nouveau — Migration 008)*
-Pool de recommandations coaching actives (RAG seed + fallback).
-
-| Colonne | Type | Description |
-|---|---|---|
-| `recommendation_id` | VARCHAR(30) PK | Format : `COACH-{NNNNNN}` |
-| `store_id` | VARCHAR(50) | Boutique cible |
-| `advisor_id` / `advisor_name` | VARCHAR | Conseiller ciblé |
-| `trigger_type` | VARCHAR(50) | `OBJECTIVE_GAP`, `UPSELL_OPPORTUNITY`, `STOCK_RISK`, `CHURN_SIGNAL`, `CROSS_SELL` |
-| `severity` | VARCHAR(10) | `HIGH`, `MEDIUM`, `LOW` |
-| `product_to_push` | VARCHAR(50) | SKU ou code produit à pousser |
-| `product_to_avoid` | VARCHAR(50) | SKU ou code à éviter |
-| `recommendation_text` | TEXT | Texte conseil personnalisé |
-| `business_justification` | TEXT | Justification contextuelle (météo, trafic, événement) |
-| `confidence` | NUMERIC(4,2) | Confidence 0-1 |
-| `expected_impact_ttc` | NUMERIC(12,2) | Impact CA attendu TND |
-| `status` | VARCHAR(20) | `ACTIVE`, `USED`, `EXPIRED`, `REJECTED` |
 
 ---
 
-## 9. Schéma `context` — Contexte Temps Réel *(Nouveau)*
+## Schema `supply`
 
-### 9.1 `context.context_hourly_store`
-Contexte environnemental par boutique, par heure.
+Chaine d'approvisionnement : fournisseurs, bons de commande (Kanban achats), mouvements de stock, transferts, numeros de serie, previsions, parametres de reappro.
 
-| Colonne | Type | Description |
-|---|---|---|
-| `context_id` | VARCHAR(60) PK | Format : `CTX-{store_id}-{YYYYMMDDhh}` |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `city` | VARCHAR(100) | Ville de la boutique |
-| `context_hour` | TIMESTAMP | Heure exacte du contexte |
-| `weather_condition` | VARCHAR(30) | `clear`, `cloudy`, `rain`, `storm`, `fog`, `hot`, `sand` |
-| `rain_mm` | NUMERIC(6,2) | Précipitations en mm |
-| `temperature_c` | NUMERIC(5,2) | Température en °C |
-| `event_type` | VARCHAR(50) | Événement actif ce créneau (salary_day, eid, soldes…) |
-| `event_strength` | NUMERIC(4,2) | Force de l'événement (0=aucun, 1=max) |
-| `traffic_index` | NUMERIC(6,2) | Index trafic piéton 0-100 (50=normal) |
-| `cell_load_pct` | NUMERIC(6,2) | Charge cellule réseau % |
-| `outage_flag` | SMALLINT | 0=nominal, 1=incident réseau |
-| `network_status` | VARCHAR(20) | `nominal`, `busy`, `degraded`, `outage` |
-| `footfall_estimate` | INTEGER | Estimation visiteurs heure |
-| `source_flag` | VARCHAR(60) | `REALTIME_API`, `SYNTHETIC_CONTEXT_CALIBRATED` |
+### `supply.purchase_orders`
 
-**Alimentation temps réel :** Job Python toutes les heures depuis API météo + métriques réseau interne.
+*Lignes (COUNT exact, 2026-07-06) : 2*
 
-**Consommé par :**
-- `react_tools.get_seasonal_context()` — enrichit le contexte analyste
-- `cross_domain_tools.get_sales_context()` — contexte pour le scoring
-- Vue `monitoring.realtime_store_pulse`
+**Cle primaire** : `po_id`
 
----
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `po_id` | UUID | non | `uuid_generate_v4()` | PK |
+| `sku` | INT4 | non | `` | FK -> `sales.produits.sku` |
+| `supplier_id` | VARCHAR(30) | oui | `` | FK -> `supply.suppliers.supplier_id` |
+| `store_id` | VARCHAR(50) | oui | `` | FK -> `sales.boutiques.store_id` |
+| `quantite_commandee` | INT4 | non | `` |  |
+| `quantite_recue` | INT4 | oui | `0` |  |
+| `prix_unitaire_ht` | NUMERIC(12,4) | oui | `` |  |
+| `montant_total_ht` | NUMERIC(14,4) | oui | `` |  |
+| `devise` | VARCHAR(5) | oui | `'TND'::character varying` |  |
+| `statut` | VARCHAR(20) | oui | `'BROUILLON'::character varying` |  |
+| `priorite` | VARCHAR(10) | oui | `'NORMAL'::character varying` |  |
+| `date_commande` | TIMESTAMP | oui | `now()` |  |
+| `date_livraison_prevue` | DATE | oui | `` |  |
+| `date_livraison_reelle` | DATE | oui | `` |  |
+| `delai_reel_jours` | INT4 | oui | `` |  |
+| `livraison_conforme` | BOOL | oui | `` |  |
+| `reference_externe` | VARCHAR(100) | oui | `` |  |
+| `notes` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `updated_at` | TIMESTAMP | oui | `now()` |  |
+| `recommendation_id` | UUID | oui | `` | FK -> `inventory.recommendations.id` |
+| `source` | VARCHAR(10) | non | `'MANUEL'::character varying` |  |
+| `urgency` | VARCHAR(20) | oui | `` |  |
+| `confidence` | NUMERIC(5,4) | oui | `` |  |
+| `agent_decision_id` | UUID | oui | `` |  |
 
-## 10. Schéma `forecasting` — Features Prévision *(Nouveau)*
+**Contraintes CHECK** :
+- `purchase_orders_statut_check` : CHECK (((statut)::text = ANY ((ARRAY['SUGGERE'::character varying, 'BROUILLON'::character varying, 'SOUMIS'::character varying, 'CONFIRME'::character varying, 'EXPEDIE'::character varying, 'RECU_PARTIEL'::character varying, 'RECU'::character varying, 'ANNULE'::character varying, 'LITIGE'::character varying])::text[])))
+- `purchase_orders_source_check` : CHECK (((source)::text = ANY ((ARRAY['AGENT'::character varying, 'MANUEL'::character varying])::text[])))
 
-### 10.1 `forecasting.forecast_features_daily`
-Features pré-calculées pour le moteur de prévision EOD.
+**References vers d'autres tables** :
+- `store_id` -> `sales.boutiques.store_id`
+- `recommendation_id` -> `inventory.recommendations.id`
+- `sku` -> `sales.produits.sku`
+- `supplier_id` -> `supply.suppliers.supplier_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `feature_date` | DATE | Date des features |
-| `store_id` | VARCHAR(50) FK | Boutique |
-| `product_category` | VARCHAR(100) | Catégorie produit |
-| `actual_revenue_ttc` | NUMERIC(14,2) | CA réel de cette journée (rempli N+1) |
-| `actual_units` | INTEGER | Unités réelles vendues |
-| `lag_1d_revenue` | NUMERIC(14,2) | CA de J-1 |
-| `lag_7d_revenue` | NUMERIC(14,2) | CA de J-7 (même jour semaine précédente) |
-| `rolling_7d_revenue` | NUMERIC(14,2) | Moyenne CA 7 derniers jours |
-| `rolling_30d_revenue` | NUMERIC(14,2) | Moyenne CA 30 derniers jours |
-| `forecast_next_day_revenue` | NUMERIC(14,2) | Prévision J+1 |
-| `forecast_confidence` | NUMERIC(4,2) | Confidence du forecast (0-1) |
-| `gap_vs_objective_pct` | NUMERIC(7,2) | Gap historique vs objectif |
-| `model_used` | VARCHAR(30) | `LINEAR`, `SEASONAL`, `TIMESFM`, `ENSEMBLE` |
-| `source_flag` | VARCHAR(60) | `DERIVED_FEATURES` |
+**Referencee par** :
+- `supply.serial_numbers.po_id`
 
-**Alimentation :** Job nuit (00h30) via `forecasting/timeseries_engine.py`.
+**Index (hors PK)** :
+- `idx_po_recommendation`
+- `idx_po_sku`
+- `idx_po_store`
 
-**Consommé par :**
-- `react_tools.compute_eod_forecast()` — lit les features précalculées pour accélérer le calcul
-- TimesFM — features input pour le modèle Google TimesFM
 
----
+### `supply.reorder_params`
 
-## 11. Tables KPI (schema public)
+*Lignes (COUNT exact, 2026-07-06) : 945*
 
-### 11.1 `agent_kpi_daily`
-KPIs consolidés par conseiller et par jour.
+**Cle primaire** : `sku`, `store_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `agent_id` | INTEGER | Conseiller |
-| `store_id` | VARCHAR(50) | Boutique |
-| `kpi_date` | DATE | Date |
-| `ca_realise` | NUMERIC(14,2) | CA réalisé TND |
-| `ca_cible` | NUMERIC(14,2) | CA cible TND |
-| `gap_ca_pct` | NUMERIC(7,2) | Gap % vs objectif |
-| `nb_transactions` | INTEGER | Nombre transactions |
-| `panier_moyen` | NUMERIC(10,2) | Ticket moyen |
-| `nb_forfaits` | INTEGER | Forfaits vendus |
-| `nb_terminaux` | INTEGER | Terminaux vendus |
-| `nb_sim_activations` | INTEGER | Activations SIM |
-| `nb_recharges` | INTEGER | Recharges |
-| `nb_postpaye` | INTEGER | Forfaits postpayés |
-| `ca_terminaux` / `ca_forfaits` | NUMERIC(12,2) | CA par catégorie |
-| `rang_boutique` | INTEGER | Rang dans la boutique |
-| `rang_region` | INTEGER | Rang régional |
-| `rang_national` | INTEGER | Rang national |
-| `urgency_level` | VARCHAR(10) | `CRITIQUE`, `ELEVE`, `MODERE`, `OK` |
-| `coach_score` | NUMERIC(5,2) | Score coaching du jour |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `sku` | INT4 | non | `` | PK; FK -> `sales.produits.sku` |
+| `store_id` | VARCHAR(50) | non | `` | PK; FK -> `sales.boutiques.store_id` |
+| `demande_moy_jour` | NUMERIC(10,4) | oui | `` |  |
+| `demande_std_jour` | NUMERIC(10,4) | oui | `` |  |
+| `lead_time_moy` | NUMERIC(8,2) | oui | `` |  |
+| `lead_time_std` | NUMERIC(8,2) | oui | `` |  |
+| `stock_securite` | INT4 | oui | `` |  |
+| `point_commande` | INT4 | oui | `` |  |
+| `eoq` | INT4 | oui | `` |  |
+| `niveau_service` | NUMERIC(5,4) | oui | `0.95` |  |
+| `jours_stock_cible` | INT4 | oui | `30` |  |
+| `derniere_maj` | TIMESTAMP | oui | `now()` |  |
 
-### 11.2 `store_kpi_daily`
-KPIs consolidés par boutique et par jour.
+**References vers d'autres tables** :
+- `sku` -> `sales.produits.sku`
+- `store_id` -> `sales.boutiques.store_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `kpi_date` | DATE | Date |
-| `ca_realise` | NUMERIC(14,2) | CA boutique TND |
-| `ca_cible` | NUMERIC(14,2) | CA cible TND |
-| `gap_ca_pct` | NUMERIC(7,2) | Gap % |
-| `ca_cumul_mois` | NUMERIC(16,2) | CA cumulé mois en cours |
-| `taux_conversion` | NUMERIC(6,4) | Taux de conversion |
-| `footfall_estime` | INTEGER | Trafic piéton estimé |
-| `nps_score` | NUMERIC(5,2) | NPS moyen du jour |
-| `csat_score` | NUMERIC(5,2) | CSAT moyen du jour |
-| `nb_ruptures_sku` | INTEGER | Nombre de références en rupture |
-| `taux_service_stock` | NUMERIC(6,4) | Taux de service stock (0-1) |
-| `rang_region` / `rang_national` | INTEGER | Classements |
 
-### 11.3 `telco_targets_monthly`
-Objectifs mensuels détaillés par boutique, agent et niveau.
+### `supply.serial_numbers`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | BIGSERIAL PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `agent_id` | INTEGER | Conseiller (NULL=boutique) |
-| `mois` | INTEGER | Mois (1-12) |
-| `annee` | INTEGER | Année |
-| `niveau` | VARCHAR(10) | `AGENT`, `BOUTIQUE`, `REGION` |
-| `ca_cible_mensuel` | NUMERIC(14,2) | CA mensuel cible TND |
-| `ca_cible_s1/s2/s3/s4` | NUMERIC(12,2) | Cibles par semaine |
-| `activations_postpaye` | INTEGER | Activations postpayé cible |
-| `facteur_saisonnier` | NUMERIC(6,4) | Coefficient saisonnalité |
+*Lignes (COUNT exact, 2026-07-06, après seed) : 177*
 
-### 11.4 `weekly_kpi_summary`
-Synthèse hebdomadaire KPIs.
+**Cle primaire** : `id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `annee_semaine` | VARCHAR(8) | Format `2026-W27` |
-| `semaine_debut` / `semaine_fin` | DATE | Plage semaine |
-| `ca_semaine` | NUMERIC(14,2) | CA semaine TND |
-| `gap_semaine_pct` | NUMERIC(7,2) | Gap semaine % |
-| `top_produit` | VARCHAR(200) | Meilleur produit semaine |
-| `top_categorie` | VARCHAR(50) | Meilleure catégorie |
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `id` | UUID | non | `uuid_generate_v4()` | PK |
+| `num_serie` | VARCHAR(50) | non | `` |  |
+| `type_serie` | VARCHAR(10) | non | `` |  |
+| `sku` | INT4 | oui | `` |  |
+| `store_id` | VARCHAR(50) | oui | `` |  |
+| `po_id` | UUID | oui | `` | FK -> `supply.purchase_orders.po_id` |
+| `statut` | VARCHAR(20) | oui | `'EN_STOCK'::character varying` |  |
+| `date_reception` | DATE | oui | `` |  |
+| `date_vente` | DATE | oui | `` |  |
+| `sale_id` | VARCHAR(100) | oui | `` |  |
+| `num_client` | VARCHAR(30) | oui | `` |  |
+| `notes` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-### 11.5 `public.agent_cycles`
-Log d'exécution de chaque cycle agent.
+**Contraintes UNIQUE** :
+- `serial_numbers_num_serie_key` sur (num_serie)
 
-| Colonne | Type | Description |
-|---|---|---|
-| `cycle_id` | VARCHAR(100) PK | Identifiant cycle |
-| `store_id` | VARCHAR(50) | Boutique |
-| `triggered_by` | VARCHAR(50) | Déclencheur (`CRON`, `ALERT`, `MANUAL`) |
-| `urgency_level` | VARCHAR(10) | Niveau d'urgence calculé |
-| `gap_pct` | NUMERIC(7,2) | Gap au déclenchement |
-| `ca_today` | NUMERIC(12,2) | CA au moment du cycle |
-| `ca_target` | NUMERIC(12,2) | Objectif du jour |
-| `analyst_summary` | TEXT | Résumé agent analyste |
-| `strategie` | TEXT | Stratégie choisie |
-| `rag_used` | BOOLEAN | RAG utilisé |
-| `total_ms` | INTEGER | Durée totale du cycle en ms |
-| `nodes_executed` | JSONB | Nœuds StateGraph exécutés |
-| `errors_count` | INTEGER | Nombre d'erreurs |
-| `status` | VARCHAR(20) | `SUCCESS`, `ERROR`, `PARTIAL` |
+**Contraintes CHECK** :
+- `serial_numbers_statut_check` : CHECK (((statut)::text = ANY ((ARRAY['EN_STOCK'::character varying, 'VENDU'::character varying, 'RESERVE'::character varying, 'DEFECTUEUX'::character varying, 'RETOURNE'::character varying, 'VOLE'::character varying, 'EN_TRANSIT'::character varying])::text[])))
+- `serial_numbers_type_serie_check` : CHECK (((type_serie)::text = ANY ((ARRAY['IMEI'::character varying, 'ICCID'::character varying, 'ESIM'::character varying, 'EAN'::character varying])::text[])))
 
-### 11.6 `public.coach_interactions`
-Journal des interactions coach (messages envoyés aux conseillers).
+**References vers d'autres tables** :
+- `po_id` -> `supply.purchase_orders.po_id`
 
-| Colonne | Type | Description |
-|---|---|---|
-| `id` | UUID PK | Identifiant |
-| `store_id` | VARCHAR(50) | Boutique |
-| `advisor_name` | VARCHAR(200) | Nom conseiller |
-| `message` | TEXT | Message coaching envoyé |
-| `channel` | VARCHAR(20) | `CHAT`, `SSE`, `PUSH`, `EMAIL` |
-| `read_at` | TIMESTAMP | Date lecture |
-| `feedback` | INTEGER | Feedback 1-5 |
-| `created_at` | TIMESTAMP | Date envoi |
+**Index (hors PK)** :
+- `idx_serial_sku_store`
+- `serial_numbers_num_serie_key`
 
----
 
-## 12. Schéma `monitoring` — Vues Observabilité
+### `supply.stock_movements`
 
-### 12.1 Vue `monitoring.cycle_logs`
-Vue sur `public.agent_cycles` — expose les 50 derniers cycles.
+*Lignes (COUNT exact, 2026-07-06) : 156 669*
 
-**Colonnes clés :** `cycle_id`, `store_id`, `urgency_level`, `gap_pct`, `total_ms`, `status`, `created_at`
+**Cle primaire** : `mouvement_id`
 
-### 12.2 Vue `monitoring.coaching_interactions`
-Vue sur `coaching.coaching_events` — interactions récentes.
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `mouvement_id` | UUID | non | `uuid_generate_v4()` | PK |
+| `sku` | INT4 | non | `` | FK -> `sales.produits.sku` |
+| `store_id` | VARCHAR(50) | non | `` | FK -> `sales.boutiques.store_id` |
+| `type_mouvement` | VARCHAR(30) | non | `` |  |
+| `quantite` | INT4 | non | `` |  |
+| `stock_avant` | INT4 | oui | `` |  |
+| `stock_apres` | INT4 | oui | `` |  |
+| `reference_id` | VARCHAR(100) | oui | `` |  |
+| `reference_type` | VARCHAR(30) | oui | `` |  |
+| `agent_id` | INT4 | oui | `` |  |
+| `date_mouvement` | TIMESTAMP | oui | `now()` |  |
+| `notes` | TEXT | oui | `` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
 
-**Colonnes clés :** `advisor_id`, `store_id`, `urgency_level`, `advice_text`, `guardrail_status`, `was_effective`
+**Contraintes CHECK** :
+- `stock_movements_type_mouvement_check` : CHECK (((type_mouvement)::text = ANY ((ARRAY['RECEPTION_BC'::character varying, 'VENTE'::character varying, 'RETOUR_CLIENT'::character varying, 'RETOUR_FOURNISSEUR'::character varying, 'TRANSFERT_ENTRANT'::character varying, 'TRANSFERT_SORTANT'::character varying, 'AJUSTEMENT_INVENTAIRE'::character varying, 'CASSE_PERTE'::character varying, 'INVENTAIRE_GAIN'::character varying, 'INVENTAIRE_PERTE'::character varying, 'RESERVATION'::character varying, 'LIBERATION_RESERVATION'::character varying])::text[])))
 
-### 12.3 Vue `monitoring.realtime_store_pulse` *(Nouveau — Migration 008)*
-**Agrège en 1 requête :** CA du jour, objectif, taux d'atteinte, contexte environnemental, alertes stock, recommandations actives.
+**References vers d'autres tables** :
+- `sku` -> `sales.produits.sku`
+- `store_id` -> `sales.boutiques.store_id`
 
-**Sources :** `sales.transactions_rt` + `sales.objectifs` + `context.context_hourly_store` + `inventory.stock_snapshot_enriched` + `inventory.recommendations_computed`
+**Index (hors PK)** :
+- `idx_mvt_sku_store`
+- `idx_mvt_store_date`
 
-**Consommée par :** Dashboard Angular KPI board, SupervisorAgent pour le monitoring multi-boutiques.
 
-### 12.4 Vue `monitoring.category_gap_live` *(Nouveau — Migration 008)*
-**Calcule en temps réel** le gap par catégorie produit vs objectif de la journée.
+### `supply.suppliers`
 
-**Sources :** `sales.daily_objectives_category` + `sales.transactions_rt` + `sales.produits`
+*Lignes (COUNT exact, 2026-07-06) : 10*
 
-**Consommée par :** CoachAgent pour identifier la catégorie sous-performante dans le pitch.
+**Cle primaire** : `supplier_id`
 
-### 12.5 Table `monitoring.advisor_profile`
-Profil de performance conseiller (mise à jour à chaque cycle).
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `supplier_id` | VARCHAR(30) | non | `` | PK |
+| `nom` | VARCHAR(200) | non | `` |  |
+| `pays_origine` | VARCHAR(50) | oui | `` |  |
+| `type_fournisseur` | VARCHAR(30) | non | `` |  |
+| `categories` | JSONB | oui | `` |  |
+| `marques` | JSONB | oui | `` |  |
+| `delai_livraison_moy` | INT4 | oui | `14` |  |
+| `delai_livraison_std` | INT4 | oui | `3` |  |
+| `taux_fiabilite` | NUMERIC(5,4) | oui | `0.90` |  |
+| `commande_min` | INT4 | oui | `1` |  |
+| `commande_multiple` | INT4 | oui | `1` |  |
+| `devise` | VARCHAR(5) | oui | `'TND'::character varying` |  |
+| `conditions_paiement` | VARCHAR(100) | oui | `` |  |
+| `contact_nom` | VARCHAR(100) | oui | `` |  |
+| `contact_email` | VARCHAR(200) | oui | `` |  |
+| `actif` | BOOL | oui | `true` |  |
+| `score_global` | NUMERIC(5,2) | oui | `0.0` |  |
+| `created_at` | TIMESTAMP | oui | `now()` |  |
+| `updated_at` | TIMESTAMP | oui | `now()` |  |
 
-| Colonne | Type | Description |
-|---|---|---|
-| `store_id` | VARCHAR(50) | Boutique |
-| `advisor_name` | VARCHAR(200) | Nom conseiller |
-| `avg_ca_7d` | NUMERIC(12,2) | CA moyen 7 derniers jours |
-| `avg_gap_7d` | NUMERIC(7,2) | Gap moyen 7j |
-| `top_category` | VARCHAR(50) | Catégorie de force |
-| `weak_category` | VARCHAR(50) | Catégorie de faiblesse |
-| `best_hour` | INTEGER | Meilleure heure de vente |
-| `conversion_rate` | NUMERIC(6,4) | Taux de conversion |
-| `updated_at` | TIMESTAMP | Dernière mise à jour |
+**Referencee par** :
+- `supply.purchase_orders.supplier_id`
+
+
+### `supply.transfers`
+
+*Lignes (COUNT exact, 2026-07-06, après seed) : 34*
+
+**Cle primaire** : `transfer_id`
+
+| Colonne | Type | Nullable | Defaut | Remarque |
+|---|---|---|---|---|
+| `transfer_id` | UUID | non | `uuid_generate_v4()` | PK |
+| `sku` | INT4 | non | `` |  |
+| `store_source` | VARCHAR(50) | non | `` |  |
+| `store_dest` | VARCHAR(50) | non | `` |  |
+| `quantite` | INT4 | non | `` |  |
+| `statut` | VARCHAR(20) | oui | `'DEMANDE'::character varying` |  |
+| `priorite` | VARCHAR(10) | oui | `'NORMAL'::character varying` |  |
+| `motif` | VARCHAR(100) | oui | `` |  |
+| `date_demande` | TIMESTAMP | oui | `now()` |  |
+| `date_approbation` | TIMESTAMP | oui | `` |  |
+| `date_expedition` | TIMESTAMP | oui | `` |  |
+| `date_reception` | TIMESTAMP | oui | `` |  |
+| `notes` | TEXT | oui | `` |  |
+
+**Contraintes CHECK** :
+- `transfers_statut_check` : CHECK (((statut)::text = ANY ((ARRAY['DEMANDE'::character varying, 'APPROUVE'::character varying, 'EXPEDIE'::character varying, 'RECU'::character varying, 'REJETE'::character varying, 'ANNULE'::character varying, 'EN_LITIGE'::character varying])::text[])))
+
 
 ---
 
-## 13. Index critiques
+## Carte globale des relations (cles etrangeres)
 
-```sql
--- Performance queries temps réel
-idx_transactions_rt_store_time  ON sales.transactions_rt(store_id, created_at DESC)
-idx_transactions_rt_store_date  ON sales.transactions_rt(store_id, date_only)
-idx_transactions_rt_advisor     ON sales.transactions_rt(store_id, advisor_name, created_at DESC)
+| Table source | Colonne | -> | Table cible | Colonne |
+|---|---|---|---|---|
+| `inventory.alerts` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `inventory.alerts` | `sku` | -> | `sales.produits` | `sku` |
+| `inventory.context_adjustments` | `sku` | -> | `sales.produits` | `sku` |
+| `inventory.context_adjustments` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `inventory.product_master` | `sku` | -> | `sales.produits` | `sku` |
+| `inventory.recommendations` | `sku` | -> | `sales.produits` | `sku` |
+| `inventory.recommendations` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `inventory.stock_levels` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `inventory.stock_levels` | `sku` | -> | `sales.produits` | `sku` |
+| `market.competitor_pricing` | `concurrent_id` | -> | `market.competitors` | `concurrent_id` |
+| `sales.agents` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `sales.objectifs` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `sales.transactions` | `agent_id` | -> | `sales.agents` | `agent_id` |
+| `sales.transactions` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `sales.transactions` | `sku` | -> | `sales.produits` | `sku` |
+| `sales.transactions_rt` | `agent_id` | -> | `sales.agents` | `agent_id` |
+| `sales.transactions_rt` | `cod_prod` | -> | `sales.produits` | `sku` |
+| `sales.transactions_rt` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `supply.purchase_orders` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `supply.purchase_orders` | `recommendation_id` | -> | `inventory.recommendations` | `id` |
+| `supply.purchase_orders` | `sku` | -> | `sales.produits` | `sku` |
+| `supply.purchase_orders` | `supplier_id` | -> | `supply.suppliers` | `supplier_id` |
+| `supply.reorder_params` | `sku` | -> | `sales.produits` | `sku` |
+| `supply.reorder_params` | `store_id` | -> | `sales.boutiques` | `store_id` |
+| `supply.serial_numbers` | `po_id` | -> | `supply.purchase_orders` | `po_id` |
+| `supply.stock_movements` | `sku` | -> | `sales.produits` | `sku` |
+| `supply.stock_movements` | `store_id` | -> | `sales.boutiques` | `store_id` |
 
--- Stock alerts (S3.1)
-idx_stock_levels_store_qty      ON inventory.stock_levels(store_id, quantity_available ASC)
-idx_sse_store_risk              ON inventory.stock_snapshot_enriched(store_id, risk_level, snapshot_ts DESC)
-idx_sse_critical                ON inventory.stock_snapshot_enriched(snapshot_ts DESC)
-                                WHERE risk_level IN ('CRITICAL','HIGH')
+## Historique du nettoyage du 2026-07-06
 
--- Forecasting
-idx_ffd_store_date              ON forecasting.forecast_features_daily(store_id, feature_date DESC)
-idx_ffd_gap                     ON forecasting.forecast_features_daily(feature_date, gap_vs_objective_pct)
-                                WHERE gap_vs_objective_pct < -10
+**Supprime** (0 ligne, 0 reference code confirmee par audit, verifie sans dependance de vue avant suppression) :
+- Schema `agent` entier (8 tables) + schemas `context` et `forecasting` (1 table chacun, vides)
+- `public.actions_executed`, `agent_context`, `agent_memory_long`, `agent_memory_short`, `action_feedback`, `recommendations`
+- `monitoring.coaching_scripts`, `monitoring.cycle_logs_legacy` (+ vue `monitoring.vw_cycle_summary` qui en dependait, elle-meme jamais interrogee)
+- `coaching.hitl_requests`, `coaching.escalations`, `coaching.agent_memory`, `coaching.coaching_recommendations`
+- `customer.churn_signals`, `market.network_events`
+- `sales.daily_objectives_category`, `inventory.recommendations_computed`, `inventory.stock_snapshot_enriched`
 
--- Coaching
-idx_ce_urgency                  ON coaching.coaching_events(urgency_level, created_at DESC)
-                                WHERE urgency_level = 'HIGH'
-idx_hitl_pending                ON coaching.hitl_requests(status, created_at)
-                                WHERE status = 'pending'
+**Conserve malgre 0 ligne au moment du nettoyage** (code actif qui lit/ecrit dedans, juste jamais declenche dans cet environnement) : `inventory.demand_forecast`, `inventory.events`, `public.rag_feedback`/`rag_queries`/`rag_feedback_metrics`, `supply.serial_numbers`/`transfers`. **Seedees le 2026-07-06** avec des donnees synthetiques referencant des entites reelles (skus/stores/cycles/purchase_orders existants) pour rendre le systeme demontrable — voir memoire projet `db_cleanup_2026-07-06` pour le detail de la generation.
 
--- Context temps réel
-idx_ctx_store_hour              ON context.context_hourly_store(store_id, context_hour DESC)
-idx_ctx_network                 ON context.context_hourly_store(network_status, context_hour)
-                                WHERE network_status != 'nominal'
-
--- KPI
-idx_agent_kpi_gap               ON agent_kpi_daily(kpi_date, gap_ca_pct)
-                                WHERE gap_ca_pct < -15
-idx_store_kpi_gap               ON store_kpi_daily(kpi_date, gap_ca_pct)
-                                WHERE gap_ca_pct < -10
-```
-
----
-
-## 14. Flux temps réel par agent
-
-### AnalystAgent (`react_tools.py`)
-```
-sales.transactions_rt          → fetch_live_pos()          → CA courant, nb_tx, panier moyen
-sales.objectifs                → fetch_live_pos()          → objectif du jour
-context.context_hourly_store   → get_seasonal_context()    → météo, trafic, événement [NOUVEAU]
-inventory.sales_history        → get_historical_comparison()→ J-7, J-14, J-28
-market.seasonal_patterns       → get_seasonal_context()    → facteur saisonnalité
-forecasting.forecast_features_daily → compute_eod_forecast()  → features lag/rolling [NOUVEAU]
-```
-
-### CoachAgent (`cross_domain_tools.py`)
-```
-sales.transactions_rt          → get_sales_context()       → CA live, gap
-sales.daily_objectives_category→ category_gap_live VIEW    → gap par catégorie [NOUVEAU]
-inventory.stock_snapshot_enriched → score_product()        → santé stock [NOUVEAU]
-inventory.recommendations_computed → get_inventory_context()→ actions cross-domain [NOUVEAU]
-coaching.coaching_recommendations → get_rag_scripts()      → pool recommandations [NOUVEAU]
-customer.nps_csat              → get_customer_context()    → NPS/CSAT conseiller
-coaching.agent_memory          → get/set advisor_memory()  → mémoire inter-cycles
-```
-
-### InventoryDecisionAgent
-```
-inventory.stock_levels         → baseline_report()         → stock courant
-supply.reorder_params          → calculate_eoq()           → paramètres réappro
-inventory.stock_snapshot_enriched → WRITE                  → résultat snapshot [NOUVEAU]
-inventory.recommendations_computed → WRITE                 → recommandations cross-domain [NOUVEAU]
-supply.purchase_orders         → create_po()               → bon de commande
-supply.transfers               → request_transfer()        → transfert inter-boutiques
-```
-
-### SupervisorAgent
-```
-monitoring.realtime_store_pulse → monitor_all_stores()     → pulse temps réel [NOUVEAU]
-monitoring.category_gap_live   → detect_critical_gaps()    → alertes catégorie [NOUVEAU]
-coaching.escalations           → check_pending_escalations()→ escalades en attente
-coaching.hitl_requests         → get_approval_queue()      → file d'approbation
-public.agent_cycles            → WRITE cycle_log()         → trace exécution
-```
-
-### GuardrailAgent
-```
-coaching.coaching_events        → READ last_events()       → historique conseiller
-coaching.coaching_recommendations → VALIDATE               → vérification recommandations
-coaching.agent_memory           → READ guardrail_memory()  → mémoire règles
-```
-
----
-
-## 15. Règles de qualité des données
-
-| Règle | Table | Action |
-|---|---|---|
-| `stock_on_hand < 0` | `inventory.stock_snapshot_enriched` | `data_quality_flag = 'NEGATIVE_STOCK_TO_VALIDATE'` |
-| `avg_daily_demand_30d = 0 AND stock > 5` | `inventory.stock_snapshot_enriched` | `risk_level = 'OVERSTOCK'`, `data_quality_flag = 'ZERO_DEMAND'` |
-| `montant > 3000 TND` | `sales.transactions` / `transactions_rt` | Conserver + flag `OUTLIER_AMOUNT_EXCLUDED_FOR_MODEL` |
-| `montant = 0` | `sales.transactions` | Conserver comme `ZERO_AMOUNT_BUSINESS_LINE` |
-| `source_flag = 'SYNTHETIC_*'` | Toutes | Filtrer dans les requêtes LLM production, autoriser en tests |
-| `expires_at < NOW()` | `inventory.recommendations_computed` | `status` auto-mis à `EXPIRED` (job toutes les heures) |
-| `context_hour > NOW() + 2h` | `context.context_hourly_store` | Rejeter (données futures interdites) |
-| Devise unité | `sales.transactions_rt` | Toujours en **TND** (pas millimes). Convertir : `millimes / 1000 = TND` |
-
----
-
-*Document généré le 2026-06-30 — Synchronisé avec les migrations 001-008.*  
-*Prochaine mise à jour : à chaque migration ou évolution de schéma.*
+**Cles etrangeres ajoutees** (0 ligne orpheline verifiee avant ajout) : `inventory.context_adjustments` (sku, store_id), `supply.reorder_params` (sku, store_id), `sales.transactions_rt` (cod_prod, store_id, agent_id). Les relations sku/store_id sur `inventory.alerts`, `inventory.product_master`, `inventory.recommendations`, `inventory.stock_levels`, `supply.purchase_orders`, `supply.stock_movements` etaient deja enforcees sous d'autres noms de contrainte au moment de l'execution (ajoutees entre l'audit initial et l'execution — la base est partagee/vivante).

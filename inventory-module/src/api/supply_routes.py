@@ -12,8 +12,7 @@ the inventory router's cache/WS machinery.
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -23,6 +22,7 @@ from db.repositories.supply_repo import (
     PurchaseOrderTransitionError,
     ALLOWED_TRANSITIONS,
 )
+from src.services import po_ws_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/supply", tags=["supply"])
@@ -51,39 +51,20 @@ async def _require_store_access(request: Request, store_id: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # WebSocket registry — dedicated to PO board traffic, decoupled from the
 # inventory router's _active_ws_connections (avoids mixing stock_delta noise).
+# Registry + broadcast helpers live in src/services/po_ws_bus.py so the
+# decision agent can publish po_suggested events without importing this
+# API module.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_po_ws_connections: Dict[str, List[WebSocket]] = {}
-
-
-async def _broadcast_po_status(
-    store_id: str, po_id: str, sku: Any, old_statut: str, new_statut: str,
-) -> None:
-    message = {
-        "type":       "po_status_changed",
-        "store_id":   store_id,
-        "po_id":      po_id,
-        "sku":        sku,
-        "old_statut": old_statut,
-        "new_statut": new_statut,
-        "timestamp":  time.time(),
-    }
-    connections = _po_ws_connections.get(store_id, [])
-    dead = []
-    for ws in connections:
-        try:
-            await ws.send_json(message)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        connections.remove(ws)
+_broadcast_po_status = po_ws_bus.broadcast_po_status
 
 
 @router.websocket("/ws/{store_id}")
 async def po_board_ws(websocket: WebSocket, store_id: str) -> None:
     await websocket.accept()
-    _po_ws_connections.setdefault(store_id, []).append(websocket)
-    logger.info("[supply/ws] connected store=%s (total=%d)", store_id, len(_po_ws_connections[store_id]))
+    conns = po_ws_bus.connections.setdefault(store_id, [])
+    conns.append(websocket)
+    logger.info("[supply/ws] connected store=%s (total=%d)", store_id, len(conns))
     try:
         while True:
             # Keep-alive: client pings every 15s (purchase-board-socket.service.ts).
@@ -92,7 +73,7 @@ async def po_board_ws(websocket: WebSocket, store_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        conns = _po_ws_connections.get(store_id, [])
+        conns = po_ws_bus.connections.get(store_id, [])
         if websocket in conns:
             conns.remove(websocket)
         logger.info("[supply/ws] disconnected store=%s (remaining=%d)", store_id, len(conns))
@@ -110,6 +91,16 @@ class CreatePurchaseOrderRequest(BaseModel):
 
 class UpdatePurchaseOrderStatusRequest(BaseModel):
     statut: str
+    quantite_recue: Optional[int] = None
+
+
+class ApprovePurchaseOrderRequest(BaseModel):
+    decided_by: str
+
+
+class RejectPurchaseOrderRequest(BaseModel):
+    decided_by: str
+    reason: Optional[str] = None
 
 
 @router.get("/purchase-orders/{store_id}")
@@ -199,7 +190,7 @@ async def update_purchase_order_status(
     old_statut = existing["statut"]
 
     try:
-        updated = SyncPurchaseOrderRepo.update_status(po_id, req.statut)
+        updated = SyncPurchaseOrderRepo.update_status(po_id, req.statut, quantite_recue=req.quantite_recue)
     except PurchaseOrderTransitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -220,3 +211,64 @@ async def update_purchase_order_status(
         "statut":  req.statut,
         "updated": True,
     }
+
+
+@router.post("/purchase-orders/{po_id}/approve")
+async def approve_purchase_order(
+    request: Request,
+    po_id: str,
+    req: ApprovePurchaseOrderRequest,
+) -> Dict[str, Any]:
+    """
+    Approves an agent-suggested purchase order (statut SUGGERE): flips the
+    underlying recommendation to 'approved' and the PO to BROUILLON in one
+    transaction. This is the human gate — nothing downstream (SOUMIS and
+    beyond) can happen without going through here first.
+    """
+    existing = SyncPurchaseOrderRepo.get_purchase_order_by_id(po_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Purchase order '{po_id}' not found.")
+    await _require_store_access(request, existing["store_id"])
+
+    try:
+        updated = SyncPurchaseOrderRepo.approve_suggestion(po_id, decided_by=req.decided_by)
+    except PurchaseOrderTransitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Purchase order '{po_id}' not found.")
+
+    await _broadcast_po_status(
+        store_id=updated["store_id"], po_id=po_id, sku=updated["sku"],
+        old_statut="SUGGERE", new_statut="BROUILLON",
+    )
+    logger.info("Purchase order %s approved by %s (SUGGERE -> BROUILLON)", po_id, req.decided_by)
+    return _decimal_safe(updated)
+
+
+@router.post("/purchase-orders/{po_id}/reject")
+async def reject_purchase_order(
+    request: Request,
+    po_id: str,
+    req: RejectPurchaseOrderRequest,
+) -> Dict[str, Any]:
+    """Rejects an agent-suggested purchase order: recommendation -> rejected, PO -> ANNULE."""
+    existing = SyncPurchaseOrderRepo.get_purchase_order_by_id(po_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Purchase order '{po_id}' not found.")
+    await _require_store_access(request, existing["store_id"])
+
+    try:
+        updated = SyncPurchaseOrderRepo.reject_suggestion(po_id, decided_by=req.decided_by)
+    except PurchaseOrderTransitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Purchase order '{po_id}' not found.")
+
+    await _broadcast_po_status(
+        store_id=updated["store_id"], po_id=po_id, sku=updated["sku"],
+        old_statut="SUGGERE", new_statut="ANNULE",
+    )
+    logger.info("Purchase order %s rejected by %s (SUGGERE -> ANNULE)", po_id, req.decided_by)
+    return _decimal_safe(updated)

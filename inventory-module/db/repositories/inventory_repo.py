@@ -1543,6 +1543,7 @@ class SyncInventoryRepo:
         suggested_quantity:  Optional[int] = None,
         confidence:          float = 0.3,
         agent_run_id:        Optional[str] = None,
+        urgency:             Optional[str] = None,
     ) -> Optional[str]:
         """
         Insert one row into inventory.recommendations.
@@ -1557,8 +1558,8 @@ class SyncInventoryRepo:
                 cur.execute("""
                     INSERT INTO inventory.recommendations
                         (sku, store_id, agent_run_id, recommendation_type,
-                         recommendation_text, suggested_quantity, confidence)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                         recommendation_text, suggested_quantity, confidence, urgency)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
                     sku, store_id,
@@ -1567,6 +1568,7 @@ class SyncInventoryRepo:
                     recommendation_text,
                     suggested_quantity,
                     confidence,
+                    urgency,
                 ))
                 conn.commit()
                 row = cur.fetchone()
