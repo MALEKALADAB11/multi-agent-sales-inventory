@@ -8,7 +8,6 @@ import pytest
 def _import_classify():
     try:
         import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
         from app.sales.coaching.agents.coach.coach_chat import _classify_intent
         return _classify_intent
     except Exception as exc:
@@ -18,7 +17,6 @@ def _import_classify():
 def _import_dedup():
     try:
         import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
         from app.sales.coaching.agents.coach.coach_chat import _is_duplicate
         return _is_duplicate
     except Exception as exc:
@@ -31,38 +29,46 @@ def _import_dedup():
 
 class TestClassifyIntent:
 
+    # _classify_intent retourne un dict {mode, domain, type, confidence}
+    # (contrat actuel — les anciens tests supposaient un simple str).
+
     def test_greeting_detected(self):
         _classify = _import_classify()
-        assert _classify("bonjour") == "greeting"
-        assert _classify("salut coach") == "greeting"
-        assert _classify("Bonjour, tu vas bien ?") == "greeting"
+        assert _classify("bonjour")["type"] == "greeting"
+        assert _classify("salut coach")["type"] == "greeting"
+        assert _classify("Bonjour, tu vas bien ?")["type"] == "greeting"
 
     def test_coaching_request(self):
         _classify = _import_classify()
-        assert _classify("comment vendre l'iPhone 16 Pro") == "coaching"
-        assert _classify("donne-moi un script de vente forfait 5G") == "coaching"
-        assert _classify("conseil pour closing client hésitant") == "coaching"
+        for msg in ("comment vendre l'iPhone 16 Pro",
+                    "donne-moi un script de vente forfait 5G",
+                    "conseil pour closing client hésitant"):
+            result = _classify(msg)
+            assert result["domain"] in ("sales", "both")
+            assert result["type"] not in ("off_topic", "greeting")
 
     def test_stock_query(self):
         _classify = _import_classify()
         result = _classify("quel est le stock iPhone ?")
-        assert result in ("stock", "coaching")
+        assert result["domain"] in ("inventory", "both", "sales")
+        assert result["type"] != "off_topic"
 
     def test_performance_query(self):
         _classify = _import_classify()
         result = _classify("quel est mon objectif aujourd'hui ?")
-        assert result in ("performance", "coaching")
+        assert result["type"] != "off_topic"
 
     def test_empty_message(self):
         _classify = _import_classify()
         result = _classify("")
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert isinstance(result, dict)
+        assert result.get("type")
 
-    def test_unknown_returns_string(self):
+    def test_unknown_returns_dict(self):
         _classify = _import_classify()
         result = _classify("xkcd nonsense 42")
-        assert isinstance(result, str)
+        assert isinstance(result, dict)
+        assert {"mode", "domain", "type", "confidence"} <= set(result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

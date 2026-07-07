@@ -23,14 +23,19 @@ def _make_app():
 # ── Helpers mock asyncpg ──────────────────────────────────────────────────────
 
 def _mock_pool(rows=None, execute_result="UPDATE 1"):
-    pool = AsyncMock()
+    """Pool asyncpg factice : pool.acquire() est un async context manager
+    SYNCHRONE (comme asyncpg), la connexion expose des coroutines."""
     conn = AsyncMock()
-    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
-    pool.acquire.return_value.__aexit__  = AsyncMock(return_value=False)
-    if rows is not None:
-        conn.fetch    = AsyncMock(return_value=rows)
-        conn.fetchrow = AsyncMock(return_value={"id": "abc-123"})
-    conn.execute = AsyncMock(return_value=execute_result)
+    conn.fetch    = AsyncMock(return_value=rows if rows is not None else [])
+    conn.fetchrow = AsyncMock(return_value={"id": "abc-123"})
+    conn.execute  = AsyncMock(return_value=execute_result)
+
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=conn)
+    cm.__aexit__  = AsyncMock(return_value=False)
+
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=cm)
     return pool
 
 
@@ -49,7 +54,7 @@ class TestSubmitHitlReview:
 
         mock_pool = _mock_pool()
 
-        with patch("hitl_router._get_pool", return_value=mock_pool):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=mock_pool)):
             result = await submit_hitl_review(
                 store_id="I63",
                 cycle_id="cycle-001",
@@ -70,10 +75,10 @@ class TestSubmitHitlReview:
         except ImportError as e:
             pytest.skip(str(e))
 
-        bad_pool = AsyncMock()
-        bad_pool.acquire.side_effect = Exception("DB down")
+        bad_pool = MagicMock()
+        bad_pool.acquire = MagicMock(side_effect=Exception("DB down"))
 
-        with patch("hitl_router._get_pool", return_value=bad_pool):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=bad_pool)):
             result = await submit_hitl_review(
                 store_id="I63", cycle_id="c1", urgency_level="HIGH",
                 gap_pct=50.0, critique_score=0.5, critique_feedback="OK",
@@ -100,7 +105,7 @@ class TestGetPending:
             }
         ]
 
-        with patch("hitl_router._get_pool", return_value=_mock_pool(rows=fake_rows)):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=_mock_pool(rows=fake_rows))):
             client = TestClient(app)
             resp = client.get("/api/v1/hitl/pending")
 
@@ -112,7 +117,7 @@ class TestGetPending:
     def test_empty_returns_zero(self):
         app = _make_app()
 
-        with patch("hitl_router._get_pool", return_value=_mock_pool(rows=[])):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=_mock_pool(rows=[]))):
             client = TestClient(app)
             resp = client.get("/api/v1/hitl/pending")
 
@@ -129,7 +134,7 @@ class TestValidateReview:
     def test_approve_ok(self):
         app = _make_app()
 
-        with patch("hitl_router._get_pool", return_value=_mock_pool(execute_result="UPDATE 1")):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=_mock_pool(execute_result="UPDATE 1"))):
             client = TestClient(app)
             resp = client.post(
                 "/api/v1/hitl/validate/rev-001",
@@ -142,7 +147,7 @@ class TestValidateReview:
     def test_invalid_decision_rejected(self):
         app = _make_app()
 
-        with patch("hitl_router._get_pool", return_value=_mock_pool()):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=_mock_pool())):
             client = TestClient(app)
             resp = client.post(
                 "/api/v1/hitl/validate/rev-001",
@@ -154,7 +159,7 @@ class TestValidateReview:
     def test_not_found_returns_404(self):
         app = _make_app()
 
-        with patch("hitl_router._get_pool", return_value=_mock_pool(execute_result="UPDATE 0")):
+        with patch("app.api.hitl._get_pool", new=AsyncMock(return_value=_mock_pool(execute_result="UPDATE 0"))):
             client = TestClient(app)
             resp = client.post(
                 "/api/v1/hitl/validate/nonexistent",

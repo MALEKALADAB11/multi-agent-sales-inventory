@@ -302,7 +302,9 @@ def _is_pure_greeting(msg: str) -> bool:
     if n in _GREETINGS_SET:
         return True
     words = n.split()
-    return len(words) <= 3 and words[0] in _GREETINGS_SET
+    if not words:          # message vide → pas une salutation (IndexError avant)
+        return False
+    return len(words) <= 4 and words[0].strip('!?,.') in _GREETINGS_SET
 
 
 def _classify_intent(message: str) -> dict:

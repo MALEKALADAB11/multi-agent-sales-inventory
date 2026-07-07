@@ -7,7 +7,6 @@ et l'intégration evaluate_guardrails().
 Run: pytest tests/test_guardrail.py -v
 """
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
 
 import pytest
 from app.sales.coaching.agents.guardrail.guardrail_agent import (

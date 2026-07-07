@@ -1,10 +1,19 @@
 # Schema de base de donnees - Ooredoo Sales & Inventory AI
 
-**Regenere le 2026-07-06 par introspection directe de la base `ooredoo_sales`, apres la migration de nettoyage du meme jour** (suppression de 27 tables mortes + 3 schemas vides `agent`/`context`/`forecasting`, ajout de 7 cles etrangeres manquantes — voir memoire projet `db_cleanup_2026-07-06`).
+**Base : 2026-07-06 (introspection) + refonte 2026-07-07 (migrations Alembic 0001-0007).**
 
-> Ce document reflete l'etat REEL de la base, obtenu par introspection (`information_schema`/`pg_catalog`), pas par lecture des fichiers de migration Alembic — ceux-ci restent desynchronises de la base vivante pour ce projet (plusieurs configs de migration coexistent sans source de verite unique). Regenerez ce document par introspection si le schema change encore, plutot que de l'editer a la main.
+> ⚠️ **Depuis le 2026-07-07, l'arbre Alembic unique `db/migrations/` (racine du
+> repo) est LA source de vérité du schéma.** La révision `0001` est une baseline
+> générée par introspection de la base vivante ; toute évolution passe par une
+> nouvelle révision (`alembic upgrade head`). L'application ne crée plus aucune
+> table au runtime (`app/core/schema_check.py` vérifie la révision au boot).
+> Les corps de tables ci-dessous datent de l'introspection du 2026-07-06 —
+> voir la section [Refonte 2026-07-07](#refonte-2026-07-07-migrations-0002-0007)
+> pour les changements apportés depuis (nouvelle table `supply.supplier_products`,
+> colonnes/types/FK modifiés).
 
-**Perimetre** : 7 schemas applicatifs, 50 tables, 923 colonnes, 27 cles etrangeres declarees.
+**Perimetre (après refonte)** : 8 schemas applicatifs (dont `monitoring`, 4 vues),
+51 tables, **16 vues** (voir [Vues](#vues)), 48 cles etrangeres declarees.
 
 ## Sommaire
 
@@ -17,6 +26,8 @@
 - [Schema `supply`](#schema-supply) (6 tables)
 - [Carte globale des relations (cles etrangeres)](#carte-globale-des-relations-cles-etrangeres)
 - [Historique du nettoyage du 2026-07-06](#historique-du-nettoyage-du-2026-07-06)
+- [Vues (16)](#vues)
+- [Refonte 2026-07-07 (migrations 0002-0007)](#refonte-2026-07-07-migrations-0002-0007)
 
 ---
 
@@ -1745,3 +1756,57 @@ Chaine d'approvisionnement : fournisseurs, bons de commande (Kanban achats), mou
 **Conserve malgre 0 ligne au moment du nettoyage** (code actif qui lit/ecrit dedans, juste jamais declenche dans cet environnement) : `inventory.demand_forecast`, `inventory.events`, `public.rag_feedback`/`rag_queries`/`rag_feedback_metrics`, `supply.serial_numbers`/`transfers`. **Seedees le 2026-07-06** avec des donnees synthetiques referencant des entites reelles (skus/stores/cycles/purchase_orders existants) pour rendre le systeme demontrable — voir memoire projet `db_cleanup_2026-07-06` pour le detail de la generation.
 
 **Cles etrangeres ajoutees** (0 ligne orpheline verifiee avant ajout) : `inventory.context_adjustments` (sku, store_id), `supply.reorder_params` (sku, store_id), `sales.transactions_rt` (cod_prod, store_id, agent_id). Les relations sku/store_id sur `inventory.alerts`, `inventory.product_master`, `inventory.recommendations`, `inventory.stock_levels`, `supply.purchase_orders`, `supply.stock_movements` etaient deja enforcees sous d'autres noms de contrainte au moment de l'execution (ajoutees entre l'audit initial et l'execution — la base est partagee/vivante).
+
+---
+
+## Vues
+
+16 vues (absentes de l'introspection 2026-07-06 qui ne listait que les tables).
+
+⚠️ **`inventory.products` et `inventory.stores` sont des VUES** (respectivement
+sur `inventory.product_master` et `sales.boutiques`) — jamais d'INSERT/UPDATE
+dessus ; les repositories les lisent comme des tables mais écrivent dans les
+tables sous-jacentes.
+
+| Schema | Vue | Rôle |
+|---|---|---|
+| inventory | `products` | alias lecture de `product_master` (compat repos) |
+| inventory | `stores` | alias lecture de `sales.boutiques` |
+| inventory | `stock_levels_v` | stock enrichi lecture |
+| inventory | `vw_active_promotions` | promotions actives |
+| inventory | `vw_stock_enriched` | stock + attributs produit |
+| monitoring | `category_gap_live` | gap CA par catégorie temps réel |
+| monitoring | `coaching_interactions` | alias `public.coach_interactions` |
+| monitoring | `cycle_logs` | alias `public.agent_cycles` |
+| monitoring | `realtime_store_pulse` | pouls boutique temps réel |
+| public | `produits` | alias `sales.produits` |
+| sales | `transactions_history` | historique unifié |
+| sales | `vw_ca_par_boutique` | CA agrégé par boutique |
+| sales | `vw_performance_agent` | performance par vendeur |
+| sales | `vw_stock_enriched` | stock côté ventes |
+| sales | `vw_top_products` | top produits |
+| sales | `vw_ventes_par_agent` | ventes par vendeur |
+
+---
+
+## Refonte 2026-07-07 (migrations 0002-0007)
+
+Changements appliqués via l'arbre Alembic unique `db/migrations/` (chaque
+révision est documentée dans son fichier) :
+
+| Rev | Contenu |
+|---|---|
+| `0001` | Baseline complète par introspection (8 schémas, 50 tables, 16 vues, fonctions/triggers, uuid-ossp). La base vivante a été *stampée*, pas rejouée ; `alembic upgrade head` sur une base vide reconstruit tout. |
+| `0002` | `DROP DEFAULT 'I63'` sur `store_id` de agent_logs, agent_cycles, agent_errors, rag_feedback, coach_interactions, sales.coaching_scripts |
+| `0003` | Réparation de 8 357 `sales.transactions_rt.des_produit` contenant le SKU brut (+ fix du simulateur à la source) ; CHECK `ck_po_statut` (9 statuts) sur `supply.purchase_orders` |
+| `0004` | **Nouvelle table `supply.supplier_products`** — catalogue de sourcing fournisseur↔SKU (lead_time_days, moq, unit_cost, is_preferred unique par SKU). Seed : 1 370 lignes, 1 040 SKUs stockables actifs couverts |
+| `0005` | Chaîne causale : `inventory.alerts.agent_run_id` et `inventory.recommendations.agent_run_id` TEXT→INTEGER + FK vers `agent_runs(id)` ; **nouvelle colonne `recommendations.alert_id`** FK→alerts ; index `stock_movements(reference_type, reference_id)` |
+| `0006` | 16 FK ajoutées (demand_forecast, sales_history, stock_history, promotions, events, transfers, coaching_events, nps_csat) après purge de 115 lignes orphelines synthétiques ; `demand_forecast.sku` TEXT→INTEGER |
+| `0007` | `COMMENT ON` sur schémas et tables `public.*` (appartenance AUTH/MONITORING/RAG/HITL/KPI) |
+
+Total après refonte : **51 tables, 48 FK**. Les 5 anciennes sources de DDL
+(2 arbres Alembic morts, SQL data/telco, CREATE TABLE runtime, shared_module)
+ont été supprimées.
+
+Pour régénérer les corps de tables de ce document : introspection directe
+(`pg_catalog`/`pg_constraint`, jamais `information_schema` pour les FK).

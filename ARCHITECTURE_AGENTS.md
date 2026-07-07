@@ -5,6 +5,40 @@
 
 ---
 
+## 0. STRUCTURE DU MONOLITHE (refonte 2026-07-07)
+
+Depuis la refonte, le backend est un **vrai package Python unique** `app/` —
+plus de `sys.path` hacks ni de modules dupliqués. Les anciens chemins
+`sales-module/`, `inventory-module/`, `shared_module/` n'existent plus.
+
+```
+main.py                     # shim -> app.main:app  (uvicorn main:app --port 8000)
+app/
+├── main.py                 # app factory, lifespan (verify_schema), WebSockets /ws/*
+├── core/                   # config unique (DEFAULT_STORE_ID...), db, agent_logger,
+│                           # langfuse (timeout borné), schema_check
+├── api/                    # auth, monitoring, hitl, supervisor, cycle, forecast, stores
+├── sales/
+│   ├── coaching/agents/    # analyst, stratege, coach, guardrail (+ orchestrator/)
+│   ├── data/               # postgres_provider, json_service, realtime_simulator, RAG
+│   ├── orchestration/      # CycleOrchestrator, SupervisorAgent, trigger
+│   └── mcp/timefm/         # TimesFM forecasting tools
+└── inventory/
+    ├── agents/             # analysis, context, decision (LangGraph)
+    ├── repositories/       # inventory_repo, supply_repo (chaîne causale, sourcing)
+    ├── api/                # routes inventory + supply (Kanban PO)
+    └── services/           # orchestrator batch, redis_alert_bus, po_ws_bus
+
+db/migrations/              # Alembic — SEULE source de vérité du schéma (0001-0007)
+db/seeds/                   # seeds idempotents, source PostgreSQL uniquement
+```
+
+Principes : le schéma DB appartient aux migrations (zéro DDL runtime, vérification
+au boot) ; zéro CSV (tout PostgreSQL) ; zéro hardcode boutique (`DEFAULT_STORE_ID`
+en config, pass-through multi-boutiques).
+
+---
+
 ## 1. VUE D'ENSEMBLE
 
 ```

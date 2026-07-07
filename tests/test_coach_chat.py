@@ -11,7 +11,6 @@ Run: pytest tests/test_coach_chat.py -v
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
 
 import asyncio
 import pytest
@@ -118,21 +117,18 @@ class TestCoachChatGuardrailInline:
         }
 
     @pytest.fixture
+    # Contrat réel d'evaluate_guardrails : product_to_push + message_for_advisor
     def recommendation_valid(self):
         return {
-            "products": ["iPhone 15"],
-            "promo_used": False,
-            "strategy": "upsell",
-            "reply": "Proposez l'iPhone 15 au client.",
+            "product_to_push": "iPhone 15",
+            "message_for_advisor": "Proposez l'iPhone 15 au client.",
         }
 
     @pytest.fixture
     def recommendation_zero_stock(self):
         return {
-            "products": ["NoProd"],
-            "promo_used": False,
-            "strategy": "upsell",
-            "reply": "Proposez NoProd.",
+            "product_to_push": "NoProd",
+            "message_for_advisor": "Proposez NoProd.",
         }
 
     def test_approve_on_valid_recommendation(self, recommendation_valid, inv_snap_ok):

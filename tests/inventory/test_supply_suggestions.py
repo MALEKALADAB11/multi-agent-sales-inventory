@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.inventory.repositories.supply_repo import (  # noqa: E402
     SyncPurchaseOrderRepo,
@@ -37,7 +36,7 @@ def _conn_mock(cursor):
     return conn
 
 
-@patch("db.repositories.supply_repo.psycopg2.connect")
+@patch("app.inventory.repositories.supply_repo.psycopg2.connect")
 def test_create_suggestion_skips_if_po_already_exists(mock_connect):
     existing_cursor = _cursor_mock([{"po_id": "already-there"}])
     mock_connect.return_value = _conn_mock(existing_cursor)
@@ -47,7 +46,7 @@ def test_create_suggestion_skips_if_po_already_exists(mock_connect):
     assert result is None
 
 
-@patch("db.repositories.supply_repo.psycopg2.connect")
+@patch("app.inventory.repositories.supply_repo.psycopg2.connect")
 def test_create_suggestion_inserts_with_suggere_and_agent_source(mock_connect):
     dedup_cursor = _cursor_mock([None])
     mock_connect.side_effect = [
@@ -61,7 +60,9 @@ def test_create_suggestion_inserts_with_suggere_and_agent_source(mock_connect):
     }
     created_row = {"po_id": "po-1", "sku": "SKU123", "store_id": "I63", "statut": "SUGGERE"}
 
-    main_cursor = _cursor_mock([reco_row, created_row])
+    # séquence fetchone : reco → sourcing (_select_supplier, None = pas de
+    # référentiel pour ce SKU de test) → ligne PO créée
+    main_cursor = _cursor_mock([reco_row, None, created_row])
     mock_connect.side_effect = None
     mock_connect.return_value = _conn_mock(main_cursor)
 
@@ -78,7 +79,7 @@ def test_create_suggestion_inserts_with_suggere_and_agent_source(mock_connect):
     assert "run-1" in params      # agent_decision_id
 
 
-@patch("db.repositories.supply_repo.psycopg2.connect")
+@patch("app.inventory.repositories.supply_repo.psycopg2.connect")
 def test_approve_suggestion_rejects_non_suggere_state(mock_connect):
     cur = _cursor_mock([{"statut": "BROUILLON", "recommendation_id": "reco-1"}])
     mock_connect.return_value = _conn_mock(cur)
@@ -87,7 +88,7 @@ def test_approve_suggestion_rejects_non_suggere_state(mock_connect):
         SyncPurchaseOrderRepo.approve_suggestion("po-1", decided_by="manager1")
 
 
-@patch("db.repositories.supply_repo.psycopg2.connect")
+@patch("app.inventory.repositories.supply_repo.psycopg2.connect")
 def test_approve_suggestion_flips_recommendation_and_po(mock_connect):
     select_row  = {"statut": "SUGGERE", "recommendation_id": "reco-1"}
     update_row  = {"po_id": "po-1", "statut": "BROUILLON"}
@@ -102,7 +103,7 @@ def test_approve_suggestion_flips_recommendation_and_po(mock_connect):
     assert "'approved'" in executed_sql or "approved" in str(cur.execute.call_args_list[1].args[1])
 
 
-@patch("db.repositories.supply_repo.psycopg2.connect")
+@patch("app.inventory.repositories.supply_repo.psycopg2.connect")
 def test_reject_suggestion_flips_recommendation_and_po(mock_connect):
     select_row = {"statut": "SUGGERE", "recommendation_id": "reco-1"}
     update_row = {"po_id": "po-1", "statut": "ANNULE"}
@@ -114,7 +115,7 @@ def test_reject_suggestion_flips_recommendation_and_po(mock_connect):
     assert result["statut"] == "ANNULE"
 
 
-@patch("db.repositories.supply_repo.psycopg2.connect")
+@patch("app.inventory.repositories.supply_repo.psycopg2.connect")
 def test_update_status_to_recu_increments_stock_and_logs_movement(mock_connect):
     po_row       = {"statut": "EXPEDIE", "sku": 123, "store_id": "I63", "quantite_commandee": 20}
     updated_po   = {"po_id": "po-1", "statut": "RECU", "sku": 123, "store_id": "I63"}
