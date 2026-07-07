@@ -15,7 +15,7 @@ Trace TOUT le systeme multi-agent :
 
 Usage:
   from app.core.langfuse import get_langfuse, LangfuseTracer
-  tracer = LangfuseTracer(store_id="I63")
+  tracer = LangfuseTracer(store_id=DEFAULT_STORE_ID)
 
   # Trace un cycle complet
   with tracer.cycle(cycle_id, trigger="cron") as cycle:
@@ -36,6 +36,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Any
 from contextlib import contextmanager
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def get_langfuse():
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local"),
             host=os.getenv("LANGFUSE_HOST", "http://localhost:3001"),
+            timeout=10,  # borne les uploads — un Langfuse lent ne doit jamais bloquer l'app
         )
         logger.info("Langfuse v2 connecte -> %s", os.getenv("LANGFUSE_HOST", "http://localhost:3001"))
         return _lf
@@ -81,7 +83,7 @@ def _uid(prefix=""):
 class LangfuseTracer:
     """Traceur central pour tout le systeme multi-agent."""
 
-    def __init__(self, store_id: str = "I63"):
+    def __init__(self, store_id: str = DEFAULT_STORE_ID):
         self.store_id = store_id
         self.lf = get_langfuse()
 

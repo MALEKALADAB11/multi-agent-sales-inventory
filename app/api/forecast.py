@@ -3,6 +3,7 @@ forecast.py — Router FastAPI forecast 100% PostgreSQL.
 """
 from fastapi import APIRouter
 from datetime import datetime
+from app.core.config import DEFAULT_STORE_ID
 from app.sales.data.json_service import JsonDataService
 from app.sales.mcp.timefm.tools import TimesFMTools
 
@@ -10,14 +11,15 @@ router   = APIRouter(prefix="/api/v1/forecast", tags=["forecast"])
 _json:   JsonDataService = None
 _timefm: TimesFMTools    = TimesFMTools(model_path="./models/timefm")
 
+# Alias boutique → id POS canonique ; les ids inconnus passent tels quels
+# (multi-boutiques). La boutique par défaut vient de la config, pas du code.
 _STORE_MAP = {
-    "store-lac2":    "I63",
+    "store-lac2":    DEFAULT_STORE_ID,
     "store-menzah":  "M23",
     "store-sfax":    "M03",
-    "OOR_LAC_01":    "I63",
+    "OOR_LAC_01":    DEFAULT_STORE_ID,
     "OOR_MENZAH_02": "M23",
     "OOR_SFAX_03":   "M03",
-    "I63": "I63", "M23": "M23", "M03": "M03",
 }
 
 
@@ -27,7 +29,7 @@ def set_json_svc(svc: JsonDataService):
 
 
 def _get_svc(store_id: str) -> JsonDataService:
-    cd_dist = _STORE_MAP.get(store_id, "I63")
+    cd_dist = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
     return JsonDataService(store_id=cd_dist)
 
 
@@ -36,7 +38,7 @@ async def get_eod_forecast(store_id: str):
     """Forecast EOD depuis PostgreSQL + TimesFM/Prophet."""
     from app.sales.data.postgres_provider import get_data_provider
 
-    cd       = _STORE_MAP.get(store_id, "I63")
+    cd       = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
     provider = get_data_provider()
 
     # CA réel depuis PostgreSQL
@@ -124,7 +126,7 @@ async def get_alerts(store_id: str):
 async def get_product_mix(store_id: str):
     """Mix produits mensuel depuis PostgreSQL."""
     from app.sales.data.json_service import _query
-    cd = _STORE_MAP.get(store_id, "I63")
+    cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
 
     rows = _query("""
         SELECT
@@ -164,7 +166,7 @@ async def get_product_mix(store_id: str):
 async def get_top_products(store_id: str, limit: int = 10):
     """Top produits depuis PostgreSQL."""
     from app.sales.data.json_service import _query
-    cd = _STORE_MAP.get(store_id, "I63")
+    cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
 
     rows = _query("""
         SELECT

@@ -46,6 +46,7 @@ from app.inventory.agents.analysis.agent import create_analysis_agent
 from app.inventory.agents.context.agent  import create_context_agent
 from app.inventory.agents.decision.agent import create_decision_agent
 from app.inventory.config.settings import settings
+from app.core.config import DEFAULT_STORE_ID
 
 try:
     from app.inventory.utils.langfuse_inventory import (
@@ -102,7 +103,7 @@ class InventoryOrchestrator:
     def analyze_sku(
         self,
         sku:                str,
-        store_id:           str = "I63",
+        store_id:           str = DEFAULT_STORE_ID,
         business_objective: str = "balanced",
         agent_run_id:       Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -151,7 +152,7 @@ class InventoryOrchestrator:
     def analyze_batch(
         self,
         skus:               List[str],
-        store_id:           str = "I63",
+        store_id:           str = DEFAULT_STORE_ID,
         business_objective: str = "balanced",
         max_workers:        int = _BATCH_WORKERS,
     ) -> List[Dict[str, Any]]:

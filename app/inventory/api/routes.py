@@ -57,6 +57,7 @@ DEMO_SKU_CAP = 0
 # Per-store pipeline lock — only one pipeline run per store at a time.
 # Concurrent callers (WS + HTTP poll) block here and share the result.
 import threading
+from app.core.config import DEFAULT_STORE_ID
 _pipeline_locks: Dict[str, threading.Lock] = {}
 _pipeline_locks_guard: threading.Lock = threading.Lock()
 
@@ -548,12 +549,12 @@ def get_orchestrator_fast():
 
 class AnalyzeRequest(BaseModel):
     sku: str
-    store_id: str = Field(default="I63")
+    store_id: str = Field(default_factory=lambda: DEFAULT_STORE_ID)
     business_objective: str = Field(default="balanced")
 
 
 class BatchAnalyzeRequest(BaseModel):
-    store_id: str = Field(default="I63")
+    store_id: str = Field(default_factory=lambda: DEFAULT_STORE_ID)
     business_objective: str = Field(default="balanced")
     skus: Optional[List[str]] = None
 
@@ -621,7 +622,7 @@ def _to_inventory_item(
     pi       = result.get("product_info", {})
 
     sku      = result["sku"]
-    store_id = result.get("store_id", "I63")
+    store_id = result.get("store_id", DEFAULT_STORE_ID)
 
     # ── Current stock: preloaded batch dict → mem override → DB → report ──
     # Batch dict is populated by analyze_store before the loop (1 query total).

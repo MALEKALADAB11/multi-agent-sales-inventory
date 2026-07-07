@@ -20,6 +20,7 @@ from app.core.agent_logger import AgentLogger
 from app.sales.core.config import get_config
 from app.sales.core.state import SalesAgentState
 from app.sales.coaching.agents.stratege.tools import fetch_full_context
+from app.core.config import DEFAULT_STORE_ID
 from app.sales.coaching.agents.stratege.prompts import (
     STRATEGE_SYSTEM_PROMPT,
     STRATEGE_USER_PROMPT,
@@ -100,7 +101,7 @@ def _cycle_id(state):
     return (state.get("metrics") or {}).get("cycle_id", "") or state.get("cycle_id", "unknown")
 
 def _store_id(state):
-    return (state.get("pos_data") or {}).get("store_id", "I63") or state.get("store_id", "I63")
+    return (state.get("pos_data") or {}).get("store_id", DEFAULT_STORE_ID) or state.get("store_id", DEFAULT_STORE_ID)
 
 def _update_metrics(state, key, value):
     metrics = dict(state.get("metrics") or {})
@@ -127,7 +128,7 @@ def get_llm():
 # HELPER STOCK
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _get_critical_stock(store_id="I63", threshold=5):
+async def _get_critical_stock(store_id=DEFAULT_STORE_ID, threshold=5):
     try:
         import asyncpg
         conn = await asyncpg.connect(host="localhost", port=5432,

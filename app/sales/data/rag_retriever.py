@@ -13,6 +13,7 @@ import requests
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ def _build_query(
 
 
 async def get_rag_context(
-    store_id: str = "I63",
+    store_id: str = DEFAULT_STORE_ID,
     gap_pct: float = 0.0,
     current_hour: int = None,
     urgency: str = "MEDIUM",
@@ -239,7 +240,7 @@ async def get_rag_context(
 async def get_coach_chat_context(
     advisor_name: str,
     question: str,
-    store_id: str = "I63",
+    store_id: str = DEFAULT_STORE_ID,
     current_hour: int = None,
 ) -> dict:
     """

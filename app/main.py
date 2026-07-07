@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unified API Server — Inventory + Sales + Agents IA
 ===================================================
     uvicorn main:app --port 8000
@@ -51,6 +51,7 @@ from app.sales.coaching.agents.analyst.agent import get_analyst_agent
 from app.sales.coaching.agents.stratege.agent import get_stratege_agent
 
 from app.api.monitoring import router as monitoring_router
+from app.core.config import DEFAULT_STORE_ID
 
 _log_handler = logging.StreamHandler(sys.stderr)
 _log_handler.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%H:%M:%S"))
@@ -69,12 +70,23 @@ _agent_running: Dict[str, bool] = {}
 
 _live_stock: Dict[str, int] = {}
 
+# Alias boutique (ids auth/frontend → id POS canonique). Extensible via
+# STORE_ALIASES_JSON dans .env ; toute boutique inconnue passe telle quelle
+# (pass-through multi-boutiques, plus de repli forcé vers une boutique unique).
 STORE_MAP = {
-    "store-lac2": "I63",
-    "I63":        "I63",
-    "OOR_LAC_01": "I63",
-    "lac2":       "I63",
+    "store-lac2": DEFAULT_STORE_ID,
+    "lac2":       DEFAULT_STORE_ID,
+    "OOR_LAC_01": DEFAULT_STORE_ID,
 }
+try:
+    STORE_MAP.update(json.loads(os.getenv("STORE_ALIASES_JSON", "{}")))
+except Exception as _e:
+    logger.warning("STORE_ALIASES_JSON invalide: %s", _e)
+
+
+def map_store_id(store_id: str) -> str:
+    """Résout un alias boutique ; les ids inconnus passent tels quels."""
+    return STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
 
 _weather_cache: dict = {}
 _weather_cache_time: float = 0.0
@@ -163,7 +175,7 @@ async def _safe_send(websocket: WebSocket, data: str) -> bool:
         return False
 
 
-async def _warmup_sales_data(store_id: str = "I63") -> None:
+async def _warmup_sales_data(store_id: str = DEFAULT_STORE_ID) -> None:
     logger.info(f"⏳ Warm-up données sales pour {store_id}...")
     try:
         provider = get_data_provider()
@@ -200,7 +212,7 @@ async def startup_event():
     set_stores_json(json_svc)
     app.state.json_svc = json_svc
 
-    await _warmup_sales_data("I63")
+    await _warmup_sales_data(DEFAULT_STORE_ID)
 
     timefm = TimesFMTools(model_path="./models/timefm")
     await timefm.load_model()
@@ -208,7 +220,7 @@ async def startup_event():
     logger.info("✅ TimesFM chargé")
 
     stock_sim = None
-    simulator = RealtimeSimulator(store_id="I63", interval=15)
+    simulator = RealtimeSimulator(store_id=DEFAULT_STORE_ID, interval=15)
 
     _RT_DB_CFG = {
         "host":     os.getenv("POSTGRES_HOST", "localhost"),
@@ -331,7 +343,7 @@ async def startup_event():
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)
     trigger = CronTrigger(
         orchestrator=orchestrator,
-        store_id="I63",
+        store_id=DEFAULT_STORE_ID,
         interval_minutes=15,
     )
     set_orchestrator(orchestrator, trigger)
@@ -1087,7 +1099,7 @@ async def _agent_loop(mapped_id: str, frontend_id: str) -> None:
 async def ws_store(websocket: WebSocket, store_id: str):
     await websocket.accept()
 
-    mapped_id = STORE_MAP.get(store_id, "I63")
+    mapped_id = map_store_id(store_id)
     logger.info("[WS] Frontend connecte -> %s (mapped=%s)", store_id, mapped_id)
 
     # Enregistrer la connexion
@@ -1171,7 +1183,7 @@ async def health():
 
 @app.get("/api/v1/stores/{store_id}/metrics")
 async def get_store_metrics(store_id: str):
-    mapped_id = STORE_MAP.get(store_id,"I63")
+    mapped_id = map_store_id(store_id)
     provider  = get_data_provider()
     pos_data  = await provider.fetch_pos_data(mapped_id)
     weather   = _fetch_weather_fallback()
@@ -1195,7 +1207,7 @@ async def get_store_metrics(store_id: str):
 
 @app.get("/api/v1/forecast/eod/{store_id}")
 async def get_forecast_eod(store_id: str):
-    mapped_id = STORE_MAP.get(store_id,"I63")
+    mapped_id = map_store_id(store_id)
     provider  = get_data_provider()
     pred      = await provider.fetch_timesfm_prediction(mapped_id)
     pos_data  = await provider.fetch_pos_data(mapped_id)
@@ -1213,7 +1225,7 @@ async def get_forecast_eod(store_id: str):
 
 @app.get("/api/v1/stores/{store_id}/advisors")
 async def get_advisors(store_id: str):
-    mapped_id = STORE_MAP.get(store_id,"I63")
+    mapped_id = map_store_id(store_id)
     provider  = get_data_provider()
     pos_data  = await provider.fetch_pos_data(mapped_id)
     dt = pos_data.get("daily_target",1007) or 1007
@@ -1238,7 +1250,7 @@ async def get_advisors(store_id: str):
 
 @app.get("/api/v1/stores/{store_id}/live-analysis")
 async def get_live_analysis(store_id: str):
-    mapped_id   = STORE_MAP.get(store_id,"I63")
+    mapped_id   = map_store_id(store_id)
     provider    = get_data_provider()
     pos_data    = await provider.fetch_pos_data(mapped_id)
     pos_history = await provider.fetch_pos_history(mapped_id)

@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 import asyncpg
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class RealtimeSimulator:
                        until the pipeline is ready, then refreshes hourly.
     """
 
-    def __init__(self, store_id: str = "I63", interval: int = 15):
+    def __init__(self, store_id: str = DEFAULT_STORE_ID, interval: int = 15):
         self.store_id  = store_id
         self.interval  = interval
         self.on_sale:  Optional[Callable] = None

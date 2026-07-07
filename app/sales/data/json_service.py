@@ -11,6 +11,7 @@ from typing import Any, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from app.core.config import DEFAULT_STORE_ID
 # Load .env from project root
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
@@ -27,13 +28,12 @@ _DB_CONFIG = {
 
 # ── Mapping store_id → CD_DIST PostgreSQL ─────────────────────────────────────
 _STORE_MAP = {
-    "store-lac2":    "I63",
+    "store-lac2":    DEFAULT_STORE_ID,
     "store-menzah":  "M23",
     "store-sfax":    "M03",
-    "OOR_LAC_01":    "I63",
+    "OOR_LAC_01":    DEFAULT_STORE_ID,
     "OOR_MENZAH_02": "M23",
     "OOR_SFAX_03":   "M03",
-    "I63": "I63", "M23": "M23", "M03": "M03",
 }
 
 # ── Agents par boutique ───────────────────────────────────────────────────────
@@ -109,9 +109,11 @@ class JsonDataService:
     Interface identique à l'ancien JsonDataService basé sur JSON mock.
     """
 
-    def __init__(self, store_id: str = "I63"):
+    def __init__(self, store_id: str = DEFAULT_STORE_ID):
         self._cd  = _STORE_MAP.get(store_id, store_id)
-        self._agents = _AGENTS.get(self._cd, _AGENTS["I63"])
+        # Roster de secours si la boutique est absente du dict local
+        # (les vrais rosters vivent dans sales.agents — cf. DATA_GAPS.md)
+        self._agents = _AGENTS.get(self._cd, next(iter(_AGENTS.values())))
         logger.info(f"[PG] JsonDataService — store={self._cd}")
 
     # ── Helpers ───────────────────────────────────────────────────────────────

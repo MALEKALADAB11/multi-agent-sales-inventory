@@ -247,15 +247,35 @@ def dispatch_alerts_sync(
     Crée une boucle asyncio temporaire si nécessaire.
     Utilise l'event loop existant si disponible (ex: FastAPI).
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Dans FastAPI / contexte async existant
-            asyncio.ensure_future(dispatch_inventory_alerts(decisions, store_id))
-        else:
-            loop.run_until_complete(dispatch_inventory_alerts(decisions, store_id))
-    except RuntimeError:
-        # Pas d'event loop — crée une temporaire
-        asyncio.run(dispatch_inventory_alerts(decisions, store_id))
-    except Exception as exc:
-        logger.warning("[AlertBus] dispatch_alerts_sync failed: %s", exc)
+    # Exécuté depuis les workers du pipeline (threads sans event loop).
+    # Chaque dispatch crée SA boucle et SON client Redis, fermé avant la fin
+    # de la boucle : un client global réutilisé entre plusieurs asyncio.run()
+    # laissait des connexions orphelines et loop.close() pendait indéfiniment
+    # sous Windows (pipeline bloqué). L'attente est bornée : le pipeline ne
+    # dépend jamais de Redis.
+    import threading
+
+    def _run() -> None:
+        async def _dispatch_and_close() -> None:
+            _reset_client()  # client lié à CETTE boucle
+            try:
+                await dispatch_inventory_alerts(decisions, store_id)
+            finally:
+                global _redis_client
+                client = _redis_client
+                if client is not None:
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        pass
+                _reset_client()  # aucun client orphelin inter-boucles
+        try:
+            asyncio.run(_dispatch_and_close())
+        except Exception as exc:
+            logger.warning("[AlertBus] dispatch_alerts_sync: %s", exc)
+
+    t = threading.Thread(target=_run, daemon=True, name="alertbus-dispatch")
+    t.start()
+    t.join(timeout=15)
+    if t.is_alive():
+        logger.warning("[AlertBus] dispatch >15s — le pipeline continue sans attendre")

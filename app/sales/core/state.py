@@ -6,6 +6,7 @@ LangGraph Shared State — TypedDict partagé entre tous les agents.
 
 from typing import Optional, Literal, List
 from typing_extensions import TypedDict
+from app.core.config import DEFAULT_STORE_ID
 
 
 class SalesAgentState(TypedDict, total=False):
@@ -107,7 +108,7 @@ AgentState = SalesAgentState
 
 
 def initial_state(
-    store_id: str = "I63",
+    store_id: str = DEFAULT_STORE_ID,
     cycle_id: str = "",
     triggered_by: str = "cron",
     **kwargs,

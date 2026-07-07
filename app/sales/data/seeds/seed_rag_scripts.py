@@ -13,13 +13,14 @@ import sys
 import time
 import requests
 from pymilvus import MilvusClient
+from app.core.config import DEFAULT_STORE_ID
 
 OLLAMA_URL  = "http://localhost:11434"
 MILVUS_URI  = "http://localhost:19530"
 COLLECTION  = "coaching_scripts"
 EMBED_MODEL = "nomic-embed-text"
 EMBED_DIM   = 768
-STORE_ID    = "I63"   # Boutique Lac 2 — applicable à toutes
+STORE_ID    = DEFAULT_STORE_ID   # Boutique Lac 2 — applicable à toutes
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CORPUS — 80 scripts Ooredoo Tunisia (fr, terrain validé)

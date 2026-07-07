@@ -28,6 +28,7 @@ from app.sales.core.state import SalesAgentState, initial_state
 from app.sales.data.json_service import JsonDataService
 from app.sales.data.postgres_provider import normalize_store_id
 from app.sales.mcp.timefm.tools import TimesFMTools
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +286,7 @@ def _get_cycle_id(state: dict) -> str:
     return (state.get("metrics") or {}).get("cycle_id", "") or state.get("cycle_id", "unknown")
 
 def _get_store_id(state: dict) -> str:
-    return (state.get("pos_data") or {}).get("store_id", "I63") or state.get("store_id", "I63")
+    return (state.get("pos_data") or {}).get("store_id", DEFAULT_STORE_ID) or state.get("store_id", DEFAULT_STORE_ID)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -3,19 +3,21 @@ stores.py — Router FastAPI 100% PostgreSQL.
 Toutes les données viennent de la base de données en temps réel.
 """
 from fastapi import APIRouter, HTTPException
+from app.core.config import DEFAULT_STORE_ID
 from app.sales.data.json_service import JsonDataService
 
 router = APIRouter(prefix="/api/v1", tags=["stores"])
 _json: JsonDataService = None
 
+# Alias boutique → id POS canonique ; les ids inconnus passent tels quels
+# (multi-boutiques). La boutique par défaut vient de la config, pas du code.
 _STORE_MAP = {
-    "store-lac2":    "I63",
+    "store-lac2":    DEFAULT_STORE_ID,
     "store-menzah":  "M23",
     "store-sfax":    "M03",
-    "OOR_LAC_01":    "I63",
+    "OOR_LAC_01":    DEFAULT_STORE_ID,
     "OOR_MENZAH_02": "M23",
     "OOR_SFAX_03":   "M03",
-    "I63": "I63", "M23": "M23", "M03": "M03",
 }
 
 
@@ -26,7 +28,7 @@ def set_json_svc(svc: JsonDataService):
 
 def _get_svc(store_id: str) -> JsonDataService:
     """Retourne un JsonDataService configuré pour le bon store."""
-    cd_dist = _STORE_MAP.get(store_id, "I63")
+    cd_dist = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
     return JsonDataService(store_id=cd_dist)
 
 
@@ -81,7 +83,7 @@ async def get_transactions(store_id: str, limit: int = 50):
 async def get_product_mix(store_id: str):
     """Mix produits réel depuis PostgreSQL."""
     from app.sales.data.json_service import _query, _STORE_MAP
-    cd = _STORE_MAP.get(store_id, "I63")
+    cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
     rows = _query("""
         SELECT
             p.categorie,
@@ -121,7 +123,7 @@ async def get_live_analysis(store_id: str):
     import asyncio
 
     provider = get_data_provider()
-    cd = _STORE_MAP.get(store_id, "I63")
+    cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
 
     pos_data, pos_history, forecast = await asyncio.gather(
         provider.fetch_pos_data(cd),

@@ -34,6 +34,7 @@ from pathlib import Path
 
 from app.inventory.agents.context.nodes import fetch_signals_node, create_interpret_node
 from app.inventory.utils.llm_factory import get_llm, get_fast_llm
+from app.core.config import DEFAULT_STORE_ID
 
 try:
     from app.inventory.repositories.inventory_repo import SyncInventoryRepo
@@ -131,7 +132,7 @@ class InventoryContextAgent:
     def run(
         self,
         sku:          str,
-        store_id:     str = "I63",
+        store_id:     str = DEFAULT_STORE_ID,
         agent_run_id: Optional[str] = None,
         lf_span=None,
     ) -> Dict[str, Any]:

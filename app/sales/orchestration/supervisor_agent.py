@@ -31,6 +31,7 @@ import logging
 import time
 import uuid
 from typing import Any, Dict, Optional
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ async def node_sales_branch(state: Dict[str, Any]) -> Dict[str, Any]:
     (json_svc, timefm), not store_id.
     """
     t0 = time.time()
-    store_id = state.get("store_id", "I63")
+    store_id = state.get("store_id", DEFAULT_STORE_ID)
 
     try:
         from main import app as _main_app
@@ -129,7 +130,7 @@ async def node_context_branch(state: Dict[str, Any]) -> Dict[str, Any]:
     Reuses fetch_full_context from stratege.tools.
     """
     t0 = time.time()
-    store_id = state.get("store_id", "I63")
+    store_id = state.get("store_id", DEFAULT_STORE_ID)
     try:
         from app.sales.coaching.agents.stratege.tools import fetch_full_context
         context = await fetch_full_context(store_id)
@@ -159,7 +160,7 @@ async def node_inventory_branch(state: Dict[str, Any]) -> Dict[str, Any]:
     Result is written to state.inventory_decisions and inventory_snapshot.
     """
     t0 = time.time()
-    store_id = state.get("store_id", "I63")
+    store_id = state.get("store_id", DEFAULT_STORE_ID)
 
     try:
         # analyze_store is a FastAPI route handler with Query(...) defaults —
@@ -248,7 +249,7 @@ async def node_coach_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     using the 6-criteria weighted scoring formula (S5.2).
     """
     t0 = time.time()
-    store_id   = state.get("store_id", "I63")
+    store_id   = state.get("store_id", DEFAULT_STORE_ID)
     advisor_id = state.get("advisor_id", "")
 
     try:

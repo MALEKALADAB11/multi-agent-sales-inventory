@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
+from app.core.config import DEFAULT_STORE_ID
 # Load .env from project root
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent.parent.parent / ".env")
 
@@ -133,7 +134,7 @@ def search_rag(
     query:    str,
     hour:     int,
     top_k:   int = 3,
-    store_id: str = "I63",
+    store_id: str = DEFAULT_STORE_ID,
 ) -> list:
     """Recherche synchrone dans Milvus."""
     try:

@@ -18,6 +18,7 @@ Objectifs lus dynamiquement depuis sales.objectifs.
 """
 
 import os
+from app.core.config import DEFAULT_STORE_ID
 import logging
 from datetime import date, datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -57,9 +58,9 @@ DB_CONFIG = {
 
 # Store mapping — le frontend peut envoyer des aliases
 STORE_MAP = {
-    "store-lac2": "I63",
-    "OOR_LAC_01": "I63",
-    "lac2":       "I63",
+    "store-lac2": DEFAULT_STORE_ID,
+    "OOR_LAC_01": DEFAULT_STORE_ID,
+    "lac2":       DEFAULT_STORE_ID,
 }
 
 DEFAULT_TARGET = 1007.0

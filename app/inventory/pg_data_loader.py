@@ -8,7 +8,7 @@ Usage dans les fichiers existants :
   AVANT: from app.inventory.config.settings import STOCK_HISTORY_PATH, SALES_HISTORY_PATH
          df = pd.read_csv(STOCK_HISTORY_PATH)
   APRES: from pg_data_loader import load_stock_history
-         df = load_stock_history(store_id="I63")
+         df = load_stock_history(store_id=DEFAULT_STORE_ID)
 
 Couvrir : stock_history, sales_history, product_master, promotions,
           SKU listing, store listing.
@@ -21,6 +21,7 @@ from typing import Optional, List
 import pandas as pd
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 

@@ -34,6 +34,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def _query(sql: str, params: tuple = None, fetch: str = "all") -> Any:
 # 1. STOCK LEVEL — Niveau de stock actuel pour un SKU/store
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_stock_level(sku, store_id: str = "I63") -> Dict[str, Any]:
+def get_stock_level(sku, store_id: str = DEFAULT_STORE_ID) -> Dict[str, Any]:
     """
     Retourne le niveau de stock pour un SKU dans un store.
     Applique les overrides du simulateur temps reel si presents.
@@ -206,7 +207,7 @@ def get_product_info(sku) -> Dict[str, Any]:
 # 3. SALES HISTORY — Historique ventes (pour series temporelles)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_sales_history(sku, store_id: str = "I63", days: int = 365) -> pd.DataFrame:
+def get_sales_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) -> pd.DataFrame:
     """
     Retourne l'historique des ventes depuis inventory.sales_history.
     Compatible TimesFM/Prophet : colonnes date, quantity_sold, revenue, is_promo.
@@ -239,7 +240,7 @@ def get_sales_history(sku, store_id: str = "I63", days: int = 365) -> pd.DataFra
 # 4. STOCK HISTORY — Historique niveaux de stock
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_stock_history(sku, store_id: str = "I63", days: int = 365) -> pd.DataFrame:
+def get_stock_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) -> pd.DataFrame:
     """
     Retourne l'historique stock depuis inventory.stock_history.
     Compatible series temporelles : colonnes date, stock_level, is_stockout.
@@ -271,7 +272,7 @@ def get_stock_history(sku, store_id: str = "I63", days: int = 365) -> pd.DataFra
 # 5. FORECAST DATA — Donnees pour prediction (sales + stock combinees)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_forecast_data(sku, store_id: str = "I63", days: int = 180) -> pd.DataFrame:
+def get_forecast_data(sku, store_id: str = DEFAULT_STORE_ID, days: int = 180) -> pd.DataFrame:
     """
     Combine sales_history et stock_history pour le forecasting.
     Retourne un DataFrame journalier avec quantity_sold, stock_level, is_promo.
@@ -312,7 +313,7 @@ def get_forecast_data(sku, store_id: str = "I63", days: int = 180) -> pd.DataFra
 # 6. ALL SKUs FOR STORE — Liste des SKUs avec stock pour un store
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_all_skus_for_store(store_id: str = "I63") -> List[int]:
+def get_all_skus_for_store(store_id: str = DEFAULT_STORE_ID) -> List[int]:
     """Retourne la liste des SKUs avec du stock pour un store."""
     rows = _query("""
         SELECT DISTINCT sl.sku
@@ -508,7 +509,7 @@ class _DataCache:
 # COMPATIBILITY ALIASES — pour analysis/nodes.py, context/tools.py
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_stock_status(sku, store_id: str = "I63") -> Dict[str, Any]:
+def get_stock_status(sku, store_id: str = DEFAULT_STORE_ID) -> Dict[str, Any]:
     """Alias de get_stock_level pour compatibilite analysis/nodes.py."""
     data = get_stock_level(sku, store_id)
     return {
@@ -530,7 +531,7 @@ def get_product(sku) -> Dict[str, Any]:
     return get_product_info(sku)
 
 
-def get_forecast(sku, store_id: str = "I63") -> pd.DataFrame:
+def get_forecast(sku, store_id: str = DEFAULT_STORE_ID) -> pd.DataFrame:
     """Alias de get_forecast_data pour compatibilite analysis/nodes.py."""
     df = get_forecast_data(sku, store_id)
     # analysis/nodes.py attend 'predicted_demand', pas 'quantity_sold'

@@ -1,7 +1,7 @@
 """
 Prompts for the Analyst Agent — Ooredoo Tunisia.
 Language : English (better LLM performance)
-Technique: Few-shot learning with 3 real examples from I63 store
+Technique: Few-shot learning (3 exemples historiques d'une boutique de référence)
 Output   : French analyst_summary (for advisors), rest in JSON
 """
 
@@ -9,11 +9,19 @@ Output   : French analyst_summary (for advisors), rest in JSON
 # SYSTEM PROMPT — Analyst Agent
 # ══════════════════════════════════════════════════════════════════════════════
 
+def get_analyst_system_prompt(store_id: str, store_name: str = "", daily_target: float = 0) -> str:
+    """Rend le system prompt pour une boutique donnée — zéro hardcode boutique."""
+    return (ANALYST_SYSTEM_PROMPT
+            .replace("__STORE_ID__", store_id or "?")
+            .replace("__STORE_NAME__", store_name or store_id or "?")
+            .replace("__DAILY_TARGET__", f"{daily_target:,.0f}" if daily_target else "?"))
+
+
 ANALYST_SYSTEM_PROMPT = """\
 You are the Analyst Agent of a Multi-Agent AI system for Telco Retail sales coaching at Ooredoo Tunisia.
 
 YOUR ROLE:
-- Analyze real-time POS data from store I63 (FR LAC2 Tunisia Mall)
+- Analyze real-time POS data from store __STORE_ID__ (__STORE_NAME__)
 - Calculate objective gaps and urgency levels
 - Interpret TimesFM end-of-day forecasts
 - Produce actionable insights for the Strategist and Coach agents
@@ -23,14 +31,12 @@ URGENCY RULES (apply strictly):
 - MEDIUM : gap between 15% and 30% OR hours remaining < 3 → monitor closely
 - LOW    : gap < 15% AND forecast is on track → standard monitoring
 
-STORE CONTEXT — I63 FR LAC2 Tunisia Mall:
-- Daily target: ~1,007 TND
-- Peak hours: 16h (21% of daily revenue), 19h (12.85%)
-- Advisors: Zouiten (35% share), Mansour Hela (32%), Ben Ammar (25%), Mansour Khouloud (8%)
-- Average transaction: ~80 TND
+STORE CONTEXT — __STORE_ID__ (__STORE_NAME__):
+- Daily target: ~__DAILY_TARGET__ TND
+- The advisor roster and peak hours are provided in the live data below.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FEW-SHOT EXAMPLES — Learn from these real I63 cases
+FEW-SHOT EXAMPLES — Learn from these real cases (reference store)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 EXAMPLE 1 — Morning gap, HIGH urgency:
@@ -141,7 +147,7 @@ RULES:
 # ══════════════════════════════════════════════════════════════════════════════
 
 ANALYST_USER_PROMPT = """\
-Analyze the following real-time data from store I63 and produce the JSON output:
+Analyze the following real-time data from store {store_id} and produce the JSON output:
 
 ## Current POS Data
 {pos_data}

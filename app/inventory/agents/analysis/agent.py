@@ -23,6 +23,7 @@ from pathlib import Path
 
 from app.inventory.agents.analysis.nodes import fetch_node, compute_node, create_reason_node
 from app.inventory.utils.llm_factory import get_llm, get_fast_llm
+from app.core.config import DEFAULT_STORE_ID
 
 try:
     from app.inventory.repositories.inventory_repo import SyncInventoryRepo
@@ -118,7 +119,7 @@ class InventoryAnalysisAgent:
     def run(
         self,
         sku:                str,
-        store_id:           str = "I63",
+        store_id:           str = DEFAULT_STORE_ID,
         business_objective: str = "balanced",
         agent_run_id:       Optional[str] = None,
         preloaded_stock:    Optional[Dict[str, Any]] = None,

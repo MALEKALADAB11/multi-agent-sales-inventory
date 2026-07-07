@@ -29,6 +29,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from app.core.config import DEFAULT_STORE_ID
 
 try:
     from slowapi import Limiter
@@ -78,13 +79,13 @@ DB_CFG = {
 }
 
 _STORE_MAP = {
-    "store-lac2": "I63", "OOR_LAC_01": "I63", "lac2": "I63",
+    "store-lac2": DEFAULT_STORE_ID, "OOR_LAC_01": DEFAULT_STORE_ID, "lac2": DEFAULT_STORE_ID,
     "store-menzah": "M01", "OOR_MENZAH_02": "M01", "menzah": "M01",
     "store-sfax": "S01", "OOR_SFAX_03": "S01", "sfax": "S01",
 }
 
 def _normalize_store(store_id: str) -> str:
-    return _STORE_MAP.get(store_id, store_id) if store_id else "I63"
+    return _STORE_MAP.get(store_id, store_id) if store_id else DEFAULT_STORE_ID
 
 # ── Catalogue dynamique (DB, TTL 10min) ──────────────────────────────────────
 
@@ -1078,7 +1079,7 @@ async def coach_chat(request: Request, body: dict):
 
     message      = (body.get("message") or "").strip()
     advisor_name = (body.get("advisor_name") or "Conseiller").strip()
-    store_id     = _normalize_store(body.get("store_id") or "I63")
+    store_id     = _normalize_store(body.get("store_id") or DEFAULT_STORE_ID)
     ctx          = body.get("context") or {}
 
     if not message:
@@ -1562,7 +1563,7 @@ async def coach_chat_stream(request: Request, body: dict):
     t0 = time.time()
     message      = (body.get("message") or "").strip()
     advisor_name = (body.get("advisor_name") or "Conseiller").strip()
-    store_id     = _normalize_store(body.get("store_id") or "I63")
+    store_id     = _normalize_store(body.get("store_id") or DEFAULT_STORE_ID)
     ctx          = body.get("context") or {}
 
     async def _words(text: str, delay: float = 0.018):

@@ -13,6 +13,7 @@ from datetime import datetime, date
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from app.core.config import DEFAULT_STORE_ID
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
@@ -89,7 +90,7 @@ def _io_preview(state, max_len: int = 80) -> dict:
 
 
 @router.get("/cycles")
-async def get_cycles(limit: int = 20, store_id: str = "I63"):
+async def get_cycles(limit: int = 20, store_id: str = DEFAULT_STORE_ID):
     """Derniers cycles d'orchestration — pour l'agent monitoring."""
     from app.core.agent_logger import get_recent_cycles
     from fastapi.encoders import jsonable_encoder
@@ -103,7 +104,7 @@ async def get_cycles(limit: int = 20, store_id: str = "I63"):
 
 
 @router.get("/errors")
-async def get_errors(limit: int = 50, store_id: str = "I63"):
+async def get_errors(limit: int = 50, store_id: str = DEFAULT_STORE_ID):
     """Erreurs récentes non résolues — pour alerting monitoring."""
     from app.core.agent_logger import get_recent_errors
     from fastapi.encoders import jsonable_encoder
@@ -117,7 +118,7 @@ async def get_errors(limit: int = 50, store_id: str = "I63"):
 
 
 @router.get("/stats")
-async def get_stats(store_id: str = "I63", hours: int = 24):
+async def get_stats(store_id: str = DEFAULT_STORE_ID, hours: int = 24):
     """Statistiques complètes des agents sur les X dernières heures."""
     from app.core.agent_logger import get_agent_stats
     from fastapi.encoders import jsonable_encoder
@@ -131,7 +132,7 @@ async def get_stats(store_id: str = "I63", hours: int = 24):
 
 
 @router.get("/logs")
-async def get_logs(limit: int = 100, store_id: str = "I63",
+async def get_logs(limit: int = 100, store_id: str = DEFAULT_STORE_ID,
                    agent: str = None, status: str = None):
     """Logs détaillés des nodes LangGraph."""
     from app.core.agent_logger import _get_conn
@@ -290,7 +291,7 @@ async def get_agents(request: Request, store_id: str = None,
     from psycopg2.extras import RealDictCursor
 
     last = _last(request)
-    sid  = store_id or last.get("store_id", "I63")
+    sid  = store_id or last.get("store_id", DEFAULT_STORE_ID)
 
     # Statut LangGraph du cycle courant (enrichit le statut LIVE)
     live_map = {
@@ -425,7 +426,7 @@ async def get_agents(request: Request, store_id: str = None,
 
 
 @router.get("/guardrail-events")
-async def get_guardrail_events(limit: int = 20, store_id: str = "I63"):
+async def get_guardrail_events(limit: int = 20, store_id: str = DEFAULT_STORE_ID):
     """
     Historique des évaluations guardrail (agent_logs, agent_name='guardrail').
     Permet au panneau "Guardrail Events" de la page Monitoring d'afficher les
@@ -467,7 +468,7 @@ async def get_guardrail_events(limit: int = 20, store_id: str = "I63"):
 
 
 @router.get("/rag-stats")
-async def get_rag_stats(store_id: str = "I63", limit: int = 50):
+async def get_rag_stats(store_id: str = DEFAULT_STORE_ID, limit: int = 50):
     """Statistiques RAG — pertinence et utilisation."""
     from app.core.agent_logger import _get_conn
     from psycopg2.extras import RealDictCursor
@@ -581,7 +582,7 @@ async def get_kpis(request: Request):
     stats = {}
     try:
         from app.core.agent_logger import get_agent_stats
-        stats = _clean(get_agent_stats(store_id=last.get("store_id", "I63"), hours=24) or {})
+        stats = _clean(get_agent_stats(store_id=last.get("store_id", DEFAULT_STORE_ID), hours=24) or {})
     except Exception:
         pass
 
@@ -635,7 +636,7 @@ async def get_performance(request: Request):
     stats = {}
     try:
         from app.core.agent_logger import get_agent_stats
-        stats = _clean(get_agent_stats(store_id=last.get("store_id", "I63"), hours=24) or {})
+        stats = _clean(get_agent_stats(store_id=last.get("store_id", DEFAULT_STORE_ID), hours=24) or {})
     except Exception:
         pass
 
@@ -666,7 +667,7 @@ async def get_costs(request: Request):
     stats = {}
     try:
         from app.core.agent_logger import get_agent_stats
-        stats = _clean(get_agent_stats(store_id=last.get("store_id", "I63"), hours=24) or {})
+        stats = _clean(get_agent_stats(store_id=last.get("store_id", DEFAULT_STORE_ID), hours=24) or {})
     except Exception:
         pass
 
@@ -695,11 +696,11 @@ async def get_agent_health(agent_id: str, request: Request):
     errors, stats = [], {}
     try:
         from app.core.agent_logger import get_recent_errors, get_agent_stats
-        all_errors = _clean(get_recent_errors(limit=10, store_id=last.get("store_id", "I63")))
+        all_errors = _clean(get_recent_errors(limit=10, store_id=last.get("store_id", DEFAULT_STORE_ID)))
         inv_map    = {v: k for k, v in AGENT_MAP.items()}
         iname      = inv_map.get(agent_id.upper(), agent_id.lower())
         errors     = [e for e in all_errors if iname in str(e.get("agent_name", ""))]
-        stats      = _clean(get_agent_stats(store_id=last.get("store_id", "I63"), hours=1) or {})
+        stats      = _clean(get_agent_stats(store_id=last.get("store_id", DEFAULT_STORE_ID), hours=1) or {})
     except Exception:
         iname = agent_id.lower()
 
@@ -734,7 +735,7 @@ async def get_timeline(request: Request):
     cycles  = []
     try:
         from app.core.agent_logger import get_recent_cycles
-        cycles = _clean(get_recent_cycles(limit=1, store_id=last.get("store_id", "I63")))
+        cycles = _clean(get_recent_cycles(limit=1, store_id=last.get("store_id", DEFAULT_STORE_ID)))
     except Exception:
         pass
 
@@ -773,7 +774,7 @@ async def get_failure_prediction(request: Request):
     cycles = []
     try:
         from app.core.agent_logger import get_recent_cycles
-        cycles = _clean(get_recent_cycles(limit=50, store_id=last.get("store_id", "I63")))
+        cycles = _clean(get_recent_cycles(limit=50, store_id=last.get("store_id", DEFAULT_STORE_ID)))
     except Exception:
         pass
 

@@ -40,6 +40,7 @@ def _get_lf():
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local"),
             host=os.getenv("LANGFUSE_HOST", "http://localhost:3001"),
+            timeout=10,  # jamais de socket sans timeout dans le chemin de requête
         )
         return _lf_instance
     except Exception as exc:
@@ -296,6 +297,8 @@ def log_batch_end(batch_id: str, store_id: str, n_critical: int, n_high: int, n_
             },
             metadata={"batch_id": batch_id, "duration_ms": duration_ms},
         )
-        lf.flush()
+        # PAS de lf.flush() ici : flush() attend la vidange complète de la
+        # queue d'upload (bloquant, sans borne) dans le chemin de requête HTTP.
+        # Le task manager Langfuse envoie en arrière-plan de toute façon.
     except Exception:
         pass

@@ -34,8 +34,10 @@ class SupervisorRunRequest(BaseModel):
 
 
 # ── Store ID normalizer (mirrors main.py STORE_MAP) ──────────────────────────
+from app.core.config import DEFAULT_STORE_ID
+
 _STORE_MAP = {
-    "store-lac2":   "I63", "lac2":  "I63", "OOR_LAC_01":  "I63",
+    "store-lac2":   DEFAULT_STORE_ID, "lac2": DEFAULT_STORE_ID, "OOR_LAC_01": DEFAULT_STORE_ID,
     "store-menzah": "M01", "menzah":"M01", "OOR_MENZAH_02":"M01",
     "store-sfax":   "S01", "sfax":  "S01", "OOR_SFAX_03": "S01",
 }

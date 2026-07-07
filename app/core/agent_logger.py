@@ -12,7 +12,7 @@ Classe centrale :
 
 Usage dans les nodes :
     from app.core.agent_logger import AgentLogger
-    log    = AgentLogger("stratege", cycle_id, "I63")
+    log    = AgentLogger("stratege", cycle_id, store_id)
     log_id = log.node_start("rag_search", state)
     ...
     log.node_done("rag_search", log_id, output, duration_ms, {"nb_scripts": 3})
@@ -31,6 +31,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from app.core.config import DEFAULT_STORE_ID
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", encoding="utf-8")
 
@@ -114,7 +115,7 @@ class AgentLogger:
         self,
         agent_name: str,
         cycle_id:   str,
-        store_id:   str = "I63",
+        store_id:   str = DEFAULT_STORE_ID,
     ):
         self.agent_name = agent_name
         self.cycle_id   = cycle_id
@@ -213,7 +214,7 @@ def log_node_start(
     agent_name:  str,
     node_name:   str,
     input_state: dict,
-    store_id:    str = "I63",
+    store_id:    str = DEFAULT_STORE_ID,
 ) -> int:
     try:
         conn = _get_conn()
@@ -274,7 +275,7 @@ def log_node_error(
     node_name:  str,
     error:      Exception,
     context:    Optional[dict] = None,
-    store_id:   str = "I63",
+    store_id:   str = DEFAULT_STORE_ID,
 ):
     error_msg  = str(error)[:500]
     error_type = _detect_error_type(error)
@@ -312,7 +313,7 @@ def log_cycle(
     state:          dict,
     total_ms:       float,
     triggered_by:   str  = "cron",
-    store_id:       str  = "I63",
+    store_id:       str  = DEFAULT_STORE_ID,
     nodes_executed: int  = 0,
     errors_count:   int  = 0,
     rag_used:       bool = False,
@@ -388,7 +389,7 @@ def log_rag_feedback(
     query:       str,
     scripts:     list,
     action_used: str = "",
-    store_id:    str = "I63",
+    store_id:    str = DEFAULT_STORE_ID,
     agent_name:  str = "stratege",
     context:     Optional[dict] = None,
 ):
@@ -417,7 +418,7 @@ def log_rag_feedback(
 def enrich_rag_from_cycle(
     cycle_id: str,
     state:    dict,
-    store_id: str = "I63",
+    store_id: str = DEFAULT_STORE_ID,
 ):
     """Enrichit le RAG automatiquement après chaque cycle réussi."""
     actions = state.get("strategie_actions") or []
@@ -523,7 +524,7 @@ def enrich_rag_from_cycle(
 # API queries pour le monitoring frontend
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_recent_cycles(limit: int = 20, store_id: str = "I63") -> list:
+def get_recent_cycles(limit: int = 20, store_id: str = DEFAULT_STORE_ID) -> list:
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -545,7 +546,7 @@ def get_recent_cycles(limit: int = 20, store_id: str = "I63") -> list:
         return []
 
 
-def get_recent_errors(limit: int = 50, store_id: str = "I63") -> list:
+def get_recent_errors(limit: int = 50, store_id: str = DEFAULT_STORE_ID) -> list:
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -564,7 +565,7 @@ def get_recent_errors(limit: int = 50, store_id: str = "I63") -> list:
         return []
 
 
-def get_agent_stats(store_id: str = "I63", hours: int = 24) -> dict:
+def get_agent_stats(store_id: str = DEFAULT_STORE_ID, hours: int = 24) -> dict:
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -640,7 +641,7 @@ def get_agent_stats(store_id: str = "I63", hours: int = 24) -> dict:
 
 def get_recent_logs(
     limit:      int = 100,
-    store_id:   str = "I63",
+    store_id:   str = DEFAULT_STORE_ID,
     agent_name: str = "",
     status:     str = "",
 ) -> list:
@@ -672,7 +673,7 @@ def get_recent_logs(
         return []
 
 
-def get_rag_stats(store_id: str = "I63", limit: int = 50) -> list:
+def get_rag_stats(store_id: str = DEFAULT_STORE_ID, limit: int = 50) -> list:
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

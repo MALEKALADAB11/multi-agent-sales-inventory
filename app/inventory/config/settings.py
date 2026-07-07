@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Optional, Literal
 from dotenv import load_dotenv
+from app.core.config import DEFAULT_STORE_ID
 
 # Load .env from inventory-module root
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -37,7 +38,7 @@ CRITICAL_THRESHOLD_DAYS = 0.5
 HIGH_THRESHOLD_DAYS = 1.0
 MEDIUM_THRESHOLD_DAYS = 1.5
 
-DEFAULT_STORE = "I63"
+DEFAULT_STORE = DEFAULT_STORE_ID
 
 BUSINESS_OBJECTIVE_SETTINGS = {
     "cost": {

@@ -25,6 +25,7 @@ from langchain_core.tools import tool
 
 from app.sales.core.state import SalesAgentState
 from .react_tools import REACT_ANALYST_TOOLS
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +343,7 @@ async def node_react_analyst(state: SalesAgentState) -> dict:
     par un cycle ReAct autonome avec outils séries temporelles.
     """
     t0       = time.time()
-    store_id = state.get("store_id") or state.get("pos_data", {}).get("store_id", "I63")
+    store_id = state.get("store_id") or state.get("pos_data", {}).get("store_id", DEFAULT_STORE_ID)
     pos_data = state.get("pos_data") or {}
     memory   = state.get("memory_insights") or {}
     target   = float(pos_data.get("daily_target", 1007) or 1007)

@@ -31,7 +31,8 @@ except ImportError:
 from app.sales.core.config import get_config
 from app.sales.core.state import SalesAgentState
 from app.sales.data.postgres_provider import get_data_provider, normalize_store_id
-from .prompts import ANALYST_SYSTEM_PROMPT, ANALYST_USER_PROMPT
+from app.core.config import DEFAULT_STORE_ID
+from .prompts import ANALYST_USER_PROMPT, get_analyst_system_prompt
 from .tools import (
     load_analyst_memory,
     save_analyst_memory,
@@ -114,7 +115,7 @@ def _cycle_id(state: dict) -> str:
     return (state.get("metrics") or {}).get("cycle_id") or state.get("cycle_id", "unknown")
 
 def _store_id(state: dict) -> str:
-    sid = (state.get("pos_data") or {}).get("store_id") or state.get("store_id", "I63")
+    sid = (state.get("pos_data") or {}).get("store_id") or state.get("store_id", DEFAULT_STORE_ID)
     return normalize_store_id(sid)
 
 def _update_metrics(state: dict, key: str, value) -> dict:
@@ -575,7 +576,7 @@ async def node_detect_urgency(state: SalesAgentState) -> dict:
     coverage        = float(state.get("coverage",      0) or 0)
     forecast_eod    = float(state.get("forecast_eod",  0) or 0)
     current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-    daily_target    = float(pos_data.get("daily_target",    1007) or 1007)
+    daily_target    = float(pos_data.get("daily_target", 0) or 0)
     nb_tx           = int(  features.get("nb_transactions", 0) or 0)
     avg_ticket      = float(features.get("avg_ticket",      0) or 0)
     current_hour    = datetime.now().hour
@@ -655,7 +656,7 @@ async def node_llm_summary(state: SalesAgentState) -> dict:
     forecast_eod    = float(state.get("forecast_eod", 0) or 0)
     coverage        = float(state.get("coverage",     0) or 0)
     current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-    daily_target    = float(pos_data.get("daily_target",    1007) or 1007)
+    daily_target    = float(pos_data.get("daily_target", 0) or 0)
     nb_tx           = int(  features.get("nb_transactions", 0) or 0)
     avg_ticket      = float(features.get("avg_ticket",      0) or 0)
     current_hour    = datetime.now().hour
@@ -700,7 +701,12 @@ async def node_llm_summary(state: SalesAgentState) -> dict:
             logger.info(f"[ANALYST] Node llm_summary — Appel LLM ({OLLAMA_MODEL})")
             llm = get_llm()
 
+            system_prompt = get_analyst_system_prompt(
+                sid, store_name=pos_data.get("store_name", ""),
+                daily_target=daily_target,
+            )
             user_prompt = ANALYST_USER_PROMPT.format(
+                store_id=sid,
                 pos_data=json.dumps({
                     "current_revenue":       current_revenue,
                     "daily_target":          daily_target,
@@ -726,7 +732,7 @@ async def node_llm_summary(state: SalesAgentState) -> dict:
 
             t_llm    = time.time()
             response = await llm.ainvoke([
-                SystemMessage(content=ANALYST_SYSTEM_PROMPT),
+                SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ])
             llm_latency_ms = (time.time() - t_llm) * 1000
@@ -754,7 +760,7 @@ async def node_llm_summary(state: SalesAgentState) -> dict:
                 trace         = trace,
                 name          = "analyste-llm-summary",
                 model         = OLLAMA_MODEL,
-                system_prompt = ANALYST_SYSTEM_PROMPT[:600],
+                system_prompt = system_prompt[:600],
                 user_prompt   = user_prompt[:600],
                 response      = analyst_summary[:600],
                 latency_ms    = llm_latency_ms,

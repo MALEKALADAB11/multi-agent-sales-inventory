@@ -18,6 +18,7 @@ import operator
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
+from app.core.config import DEFAULT_STORE_ID
 
 
 # ── Reducers ──────────────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ class RetailState(TypedDict, total=False):
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 def initial_retail_state(
-    store_id:           str = "I63",
+    store_id:           str = DEFAULT_STORE_ID,
     sku:                str = "",
     business_objective: str = "balanced",
     cycle_id:           str = "",

@@ -23,7 +23,7 @@ Usage:
 
     result = evaluate_guardrails(
         recommendation=coach_output_dict,
-        store_id="I63",
+        store_id=DEFAULT_STORE_ID,
         inventory_snapshot=snapshot_dict,
         rag_used=True,
         confidence=0.88,
@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict, List, Optional
+from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 

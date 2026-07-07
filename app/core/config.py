@@ -100,3 +100,7 @@ def get_config() -> Config:
 
 # Instance globale — import direct possible
 config = Config()
+
+# Boutique par défaut — SEULE source autorisée ; ne jamais hardcoder 'I63'
+# ailleurs dans le code (voir .env : DEFAULT_STORE_ID).
+DEFAULT_STORE_ID: str = config.DEFAULT_STORE_ID
