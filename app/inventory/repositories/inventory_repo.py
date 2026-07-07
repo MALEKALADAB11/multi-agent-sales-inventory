@@ -22,6 +22,17 @@ load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
 logger = logging.getLogger(__name__)
 
 
+def _run_id_int(agent_run_id) -> Optional[int]:
+    """agent_run_id est INTEGER en base (FK inventory.agent_runs.id) — les
+    appelants historiques passent parfois des chaînes ; on convertit ou None."""
+    if agent_run_id is None:
+        return None
+    try:
+        return int(agent_run_id)
+    except (TypeError, ValueError):
+        return None
+
+
 class InventoryRepo:
 
     def __init__(self):
@@ -1075,7 +1086,8 @@ class SyncInventoryRepo:
                     INSERT INTO inventory.alerts
                         (sku, store_id, alert_type, severity, recommended_action, agent_run_id)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                """, (sku, store_id, alert_type, severity, recommended_action, agent_run_id))
+                """, (sku, store_id, alert_type, severity, recommended_action,
+                      _run_id_int(agent_run_id)))
                 conn.commit()
                 return True
         except Exception as exc:
@@ -1141,7 +1153,8 @@ class SyncInventoryRepo:
                         (sku, store_id, alert_type, severity, recommended_action, agent_run_id)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
-                """, (sku, store_id, alert_type, severity, recommended_action, agent_run_id))
+                """, (sku, store_id, alert_type, severity, recommended_action,
+                      _run_id_int(agent_run_id)))
                 conn.commit()
                 return str(cur.fetchone()[0])
         except Exception as exc:
@@ -1228,7 +1241,7 @@ class SyncInventoryRepo:
                         """, (
                             sku, store_id, alert_type,
                             a["severity"], a["recommended_action"],
-                            a.get("agent_run_id"),
+                            _run_id_int(a.get("agent_run_id")),
                         ))
                         row = cur.fetchone()
                         if row:
@@ -1540,10 +1553,15 @@ class SyncInventoryRepo:
         confidence:          float = 0.3,
         agent_run_id:        Optional[str] = None,
         urgency:             Optional[str] = None,
+        alert_id:            Optional[int] = None,
     ) -> Optional[str]:
         """
         Insert one row into inventory.recommendations.
         Only called for ORDER / EXPEDITE actions — HOLD / MONITOR produce no row.
+
+        Chaîne causale : si alert_id n'est pas fourni, la recommandation est
+        rattachée automatiquement à l'alerte 'pending' la plus récente du même
+        (sku, store) — c'est elle qui a déclenché la décision.
         Returns the UUID string of the inserted row, or None on failure.
         """
         conn = SyncInventoryRepo._conn()
@@ -1554,17 +1572,23 @@ class SyncInventoryRepo:
                 cur.execute("""
                     INSERT INTO inventory.recommendations
                         (sku, store_id, agent_run_id, recommendation_type,
-                         recommendation_text, suggested_quantity, confidence, urgency)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                         recommendation_text, suggested_quantity, confidence, urgency,
+                         alert_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                            COALESCE(%s, (SELECT a.id FROM inventory.alerts a
+                                          WHERE a.sku = %s AND a.store_id = %s
+                                            AND a.status = 'pending'
+                                          ORDER BY a.created_at DESC LIMIT 1)))
                     RETURNING id
                 """, (
                     sku, store_id,
-                    agent_run_id,
+                    _run_id_int(agent_run_id),
                     recommendation_type,
                     recommendation_text,
                     suggested_quantity,
                     confidence,
                     urgency,
+                    alert_id, sku, store_id,
                 ))
                 conn.commit()
                 row = cur.fetchone()

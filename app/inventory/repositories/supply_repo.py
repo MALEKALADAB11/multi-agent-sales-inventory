@@ -155,6 +155,27 @@ class SyncPurchaseOrderRepo:
 
     # ── Writes ───────────────────────────────────────────────────────────────
 
+
+    @staticmethod
+    def _select_supplier(cur, sku) -> Optional[dict]:
+        """
+        Choisit le fournisseur d'un SKU depuis le référentiel de sourcing
+        supply.supplier_products : préféré d'abord, puis lead time croissant.
+        Retourne {supplier_id, lead_time_days, moq, unit_cost} ou None.
+        """
+        cur.execute("""
+            SELECT sp.supplier_id, sp.lead_time_days, sp.moq, sp.unit_cost
+            FROM supply.supplier_products sp
+            JOIN supply.suppliers s ON s.supplier_id = sp.supplier_id AND s.actif
+            WHERE sp.sku = %s AND sp.actif
+            ORDER BY sp.is_preferred DESC,
+                     sp.lead_time_days ASC NULLS LAST,
+                     sp.supplier_id
+            LIMIT 1
+        """, (sku,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
     @staticmethod
     def create_from_recommendation(
         recommendation_id: str,
@@ -216,9 +237,22 @@ class SyncPurchaseOrderRepo:
                     )
                     return None
 
-                unit_cost   = row["unit_cost"] or 0
+                # Sélection fournisseur depuis le référentiel de sourcing
+                # (sauf si l'appelant impose un supplier_id explicite).
+                sourcing = SyncPurchaseOrderRepo._select_supplier(cur, row["sku"])
+                if supplier_id is None and sourcing:
+                    supplier_id = sourcing["supplier_id"]
+                moq = int((sourcing or {}).get("moq") or 1)
+                if qty < moq:
+                    logger.info(
+                        "create_from_recommendation: qty %d < MOQ %d pour sku=%s — ajustée",
+                        qty, moq, row["sku"],
+                    )
+                    qty = moq
+
+                unit_cost   = row["unit_cost"] or (sourcing or {}).get("unit_cost") or 0
                 total_cost  = qty * float(unit_cost)
-                lead_days   = row["lead_time_days"] or 14
+                lead_days   = (sourcing or {}).get("lead_time_days") or row["lead_time_days"] or 14
 
                 cur.execute("""
                     INSERT INTO supply.purchase_orders
@@ -308,23 +342,31 @@ class SyncPurchaseOrderRepo:
                     )
                     return None
 
-                unit_cost  = row["unit_cost"] or 0
+                # Sélection fournisseur depuis le référentiel de sourcing —
+                # une suggestion agent arrive sur le Kanban déjà sourcée.
+                sourcing    = SyncPurchaseOrderRepo._select_supplier(cur, row["sku"])
+                supplier_id = (sourcing or {}).get("supplier_id")
+                moq         = int((sourcing or {}).get("moq") or 1)
+                if qty < moq:
+                    qty = moq
+
+                unit_cost  = row["unit_cost"] or (sourcing or {}).get("unit_cost") or 0
                 total_cost = qty * float(unit_cost)
-                lead_days  = row["lead_time_days"] or 14
+                lead_days  = (sourcing or {}).get("lead_time_days") or row["lead_time_days"] or 14
 
                 cur.execute("""
                     INSERT INTO supply.purchase_orders
-                        (sku, store_id, quantite_commandee,
+                        (sku, supplier_id, store_id, quantite_commandee,
                          prix_unitaire_ht, montant_total_ht, statut, source,
                          urgency, confidence, agent_decision_id,
                          date_livraison_prevue, recommendation_id)
                     VALUES
-                        (%s, %s, %s, %s, %s, 'SUGGERE', 'AGENT',
+                        (%s, %s, %s, %s, %s, %s, 'SUGGERE', 'AGENT',
                          %s, %s, %s,
                          CURRENT_DATE + (%s || ' days')::interval, %s)
                     RETURNING *
                 """, (
-                    row["sku"], row["store_id"], qty,
+                    row["sku"], supplier_id, row["store_id"], qty,
                     unit_cost, total_cost,
                     row["urgency"], row["confidence"], agent_run_id,
                     lead_days, recommendation_id,
