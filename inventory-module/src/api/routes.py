@@ -20,7 +20,6 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent.parent))
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from config.settings import STOCK_HISTORY_PATH, PRODUCT_MASTER_PATH
 from src.services.orchestrator import create_orchestrator
 from src.tools.internal.stock_tools import _DataCache
 
