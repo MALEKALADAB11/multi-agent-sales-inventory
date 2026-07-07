@@ -45,42 +45,8 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
-# ── Table bootstrap (called at startup) ─────────────────────────────────────
-
-CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS public.hitl_reviews (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    store_id        TEXT        NOT NULL,
-    cycle_id        TEXT        NOT NULL,
-    urgency_level   TEXT        NOT NULL,
-    gap_pct         FLOAT       NOT NULL,
-    critique_score  FLOAT       NOT NULL,
-    critique_feedback TEXT      NOT NULL,
-    strategie_summary TEXT      NOT NULL,
-    actions         JSONB       NOT NULL DEFAULT '[]',
-    source          TEXT        NOT NULL DEFAULT 'sales',  -- 'sales' | 'inventory'
-    status          TEXT        NOT NULL DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected'
-    approver_name   TEXT,
-    approver_note   TEXT,
-    reviewed_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_hitl_reviews_pending
-    ON public.hitl_reviews (store_id, status, created_at DESC)
-    WHERE status = 'pending';
-"""
-
-
-async def setup_hitl_table() -> None:
-    try:
-        pool = await _get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(CREATE_TABLE_SQL)
-        logger.info("[HITL] Table public.hitl_reviews prête")
-    except Exception as e:
-        logger.warning("[HITL] setup_hitl_table: %s", e)
-
+# La table public.hitl_reviews est créée par les migrations Alembic
+# (db/migrations, baseline 0001). Plus aucun DDL au runtime.
 
 # ── Public helper called from StrategistAgent ────────────────────────────────
 

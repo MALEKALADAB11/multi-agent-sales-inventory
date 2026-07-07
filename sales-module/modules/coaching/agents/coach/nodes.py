@@ -15,7 +15,7 @@ from core.state import SalesAgentState
 from .tools import (
     search_rag, format_rag_for_prompt, format_history_for_prompt,
     format_actions_for_prompt, get_advisor_history, save_interaction,
-    ensure_interactions_table, build_fallback_response,
+    build_fallback_response,
 )
 from .prompts import (
     get_specialized_prompt, get_opening_prompt,
@@ -31,8 +31,6 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL",    "openai/gpt-oss-120b:free")
 OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 
 USE_OPENROUTER = bool(OPENROUTER_KEY)
-
-ensure_interactions_table()
 
 
 def _cycle_id(state):

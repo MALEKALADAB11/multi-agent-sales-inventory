@@ -338,22 +338,8 @@ def generate_stock_history(conn, n_days: int = 90, dry_run: bool = False):
         return
 
     with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS inventory.stock_history (
-                id            BIGSERIAL PRIMARY KEY,
-                sku           INTEGER NOT NULL,
-                store_id      VARCHAR(50) NOT NULL,
-                record_date   DATE NOT NULL,
-                stock_level   INTEGER NOT NULL DEFAULT 0,
-                quantity_sold INTEGER DEFAULT 0,
-                is_stockout   BOOLEAN DEFAULT FALSE,
-                days_of_stock NUMERIC(8,2),
-                created_at    TIMESTAMP DEFAULT NOW(),
-                UNIQUE (sku, store_id, record_date)
-            );
-            CREATE INDEX IF NOT EXISTS idx_sh_store_date ON inventory.stock_history(store_id, record_date DESC);
-            CREATE INDEX IF NOT EXISTS idx_sh_sku ON inventory.stock_history(sku, store_id, record_date);
-        """)
+        # La table inventory.stock_history est creee par les migrations Alembic
+        # (db/migrations, baseline 0001) - ce script ne fait que du DML.
         for i in range(0, len(rows), 2000):
             execute_values(cur, """
                 INSERT INTO inventory.stock_history

@@ -47,89 +47,9 @@ def _new_token() -> str:
     return secrets.token_hex(32)
 
 
-# ── Setup tables ──────────────────────────────────────────────────────────────
-
-def setup_auth_tables():
-    conn = _get_conn()
-    try:
-        with conn.cursor() as cur:
-
-            # Utiliser mogrify-safe strings — pas de %s dans CREATE TABLE
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS app_users ("
-                "id SERIAL PRIMARY KEY, "
-                "user_id VARCHAR(30) UNIQUE NOT NULL, "
-                "username VARCHAR(50) UNIQUE NOT NULL, "
-                "password_hash VARCHAR(64) NOT NULL, "
-                "full_name VARCHAR(100), "
-                "role VARCHAR(20) NOT NULL, "
-                "store_id VARCHAR(20), "
-                "store_name VARCHAR(100), "
-                "initials VARCHAR(5), "
-                "color VARCHAR(10), "
-                "advisor_id VARCHAR(20), "
-                "actif BOOLEAN DEFAULT TRUE, "
-                "created_at TIMESTAMP DEFAULT NOW(), "
-                "last_login TIMESTAMP)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_au_username ON app_users(username)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_au_store ON app_users(store_id)"
-            )
-
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS app_sessions ("
-                "id SERIAL PRIMARY KEY, "
-                "token VARCHAR(64) UNIQUE NOT NULL, "
-                "user_id VARCHAR(30) NOT NULL, "
-                "expires_at TIMESTAMP NOT NULL, "
-                "created_at TIMESTAMP DEFAULT NOW(), "
-                "last_used TIMESTAMP DEFAULT NOW(), "
-                "ip_address VARCHAR(45))"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_as_token ON app_sessions(token)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_as_user ON app_sessions(user_id)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_as_exp ON app_sessions(expires_at)"
-            )
-
-            # Insérer les utilisateurs si vide
-            cur.execute("SELECT COUNT(*) FROM app_users")
-            if cur.fetchone()[0] == 0:
-                users = [
-                    ('mgr-lac2',   'managerlac2',    'admin123', 'Manager Ghassen',    'manager', 'store-lac2',   'FR LAC2 TUNISIA MALL',    'MG', '#6C5CE7', None),
-                    ('mgr-menzah', 'managermenzah',  'admin123', 'Manager Menzah',     'manager', 'store-menzah', 'Boutique Habib Bourguiba', 'MM', '#00B894', None),
-                    ('mgr-sfax',   'managersfax',    'admin123', 'Manager Sfax',       'manager', 'store-sfax',   'Boutique Sfax I',          'MS', '#2D9CDB', None),
-                    ('adv-zi', 'zouiTeninsaf',    'zi1234', 'Zouiten Insaf',    'vendeur', 'store-lac2', 'FR LAC2 TUNISIA MALL', 'ZI', '#6C5CE7', 'adv-zi'),
-                    ('adv-mh', 'mansourhela',     'mh1234', 'Mansour Hela',     'vendeur', 'store-lac2', 'FR LAC2 TUNISIA MALL', 'MH', '#00B894', 'adv-mh'),
-                    ('adv-bm', 'benammarmeriam',  'bm1234', 'Ben Ammar Meriam', 'vendeur', 'store-lac2', 'FR LAC2 TUNISIA MALL', 'BM', '#F9A825', 'adv-bm'),
-                    ('adv-mk', 'mansourkhouloud', 'mk1234', 'Mansour Khouloud', 'vendeur', 'store-lac2', 'FR LAC2 TUNISIA MALL', 'MK', '#2D9CDB', 'adv-mk'),
-                ]
-                for uid, uname, pwd, fname, role, sid, sname, ini, col, adv in users:
-                    cur.execute(
-                        "INSERT INTO app_users"
-                        "(user_id,username,password_hash,full_name,role,"
-                        "store_id,store_name,initials,color,advisor_id)"
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                        (uid, uname, _hash(pwd), fname, role,
-                         sid, sname, ini, col, adv)
-                    )
-                logger.info(f"[AUTH] {len(users)} utilisateurs créés ✅")
-
-        conn.commit()
-        logger.info("[AUTH] Tables authentification prêtes ✅")
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"[AUTH] Setup error: {e}")
-        raise
-    finally:
-        conn.close()
+# Les tables app_users/app_sessions sont créées par les migrations Alembic
+# (db/migrations, baseline 0001) ; les comptes de démo sont insérés par
+# db/seeds/seed_app_users.py. Plus aucun DDL au runtime.
 
 
 # ── Session ───────────────────────────────────────────────────────────────────

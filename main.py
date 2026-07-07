@@ -29,7 +29,7 @@ for env_dir in ("inventory-module", "sales-module"):
     load_dotenv(os.path.join(BASE_DIR, env_dir, ".env"), override=False)
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
-from auth_router import router as auth_router, setup_auth_tables
+from auth_router import router as auth_router
 from data.postgres_provider import get_data_provider
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -185,31 +185,9 @@ async def startup_event():
     _last_payload.clear()
     _agent_running.clear()
 
-    try:
-        setup_auth_tables()
-        logger.info("✅ Auth tables prêtes")
-    except Exception as e:
-        logger.warning(f"⚠️ Auth tables: {e}")
-
-    try:
-        from agent_logger import setup_monitoring_tables
-        setup_monitoring_tables()
-        logger.info("✅ Monitoring tables prêtes")
-    except Exception as e:
-        logger.warning(f"⚠️ Monitoring tables: {e}")
-
-    try:
-        from hitl_router import setup_hitl_table
-        await setup_hitl_table()
-    except Exception as e:
-        logger.warning(f"⚠️ HITL table: {e}")
-
-    try:
-        from modules.coaching.agents.coach.tools import ensure_interactions_table
-        ensure_interactions_table()
-        logger.info("✅ Coach interactions table prête")
-    except Exception as e:
-        logger.warning(f"⚠️ Coach interactions table: {e}")
+    # Le schéma appartient aux migrations Alembic — l'app vérifie, ne crée pas.
+    from schema_check import verify_schema
+    verify_schema()
 
     try:
         from modules.coaching.orchestrator.bootstrap import initialize_coach_stratege_orchestrator
@@ -218,46 +196,8 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"⚠️ Coach-Stratège orchestrator: {e}")
 
-    try:
-        from agent_logger import _get_conn as _pg
-        _c = _pg()
-        with _c.cursor() as _cur:
-            # Trigger vente -> stock décrémentation
-            _cur.execute("""
-                CREATE OR REPLACE FUNCTION sync_stock_on_sale()
-                RETURNS TRIGGER AS $$
-                DECLARE v_daily_avg FLOAT;
-                BEGIN
-                    SELECT COALESCE(AVG(daily_qty), 0) INTO v_daily_avg
-                    FROM (SELECT date_only, SUM(qte_produit)::float AS daily_qty
-                          FROM sales.transactions_rt
-                          WHERE cod_prod=NEW.cod_prod AND store_id=NEW.store_id
-                            AND date_only >= CURRENT_DATE - INTERVAL '30 days'
-                          GROUP BY date_only) sub;
-                    UPDATE inventory.stock_levels
-                    SET quantity=GREATEST(0,quantity-NEW.qte_produit),
-                        last_sold=NEW.date_vente::date, updated_at=NOW(), last_updated=NOW(),
-                        remaining_days_of_stock=CASE WHEN v_daily_avg>0
-                            THEN GREATEST(0,(GREATEST(0,quantity-NEW.qte_produit)-quantity_reserved)::float/v_daily_avg)
-                            ELSE 999.0 END
-                    WHERE sku=NEW.cod_prod AND store_id=NEW.store_id;
-                    RETURN NEW;
-                END; $$ LANGUAGE plpgsql;
-            """)
-            _cur.execute("DROP TRIGGER IF EXISTS trg_sync_stock_on_sale ON sales.transactions_rt;")
-            _cur.execute("CREATE TRIGGER trg_sync_stock_on_sale AFTER INSERT ON sales.transactions_rt FOR EACH ROW EXECUTE FUNCTION sync_stock_on_sale();")
-            # Backfill stock_levels pour les SKUs actifs sans ligne
-            _cur.execute("""
-                INSERT INTO inventory.stock_levels (store_id,sku,quantity,quantity_reserved,last_updated,updated_at,remaining_days_of_stock)
-                SELECT DISTINCT t.store_id, t.cod_prod, 200, 0, NOW(), NOW(), 999.0
-                FROM sales.transactions_rt t
-                WHERE t.store_id='I63' AND t.date_only >= CURRENT_DATE - INTERVAL '30 days'
-                ON CONFLICT (store_id,sku) DO NOTHING
-            """)
-        _c.commit(); _c.close()
-        logger.info("[SYNC] Trigger vente->stock actif + stock_levels backfille")
-    except Exception as e:
-        logger.warning(f"[SYNC] Setup trigger: {e}")
+    # Le trigger sync_stock_on_sale et la fonction associée vivent dans les
+    # migrations (baseline 0001) — plus aucun DDL au démarrage.
 
     json_svc = JsonDataService()
     set_forecast_json(json_svc)

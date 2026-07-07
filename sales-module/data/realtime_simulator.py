@@ -124,11 +124,11 @@ class RealtimeSimulator:
                 sku_rows = await conn.fetch("""
                     SELECT
                         t.sku,
-                        COALESCE(p.nom, t.sku::text) AS des_produit,
+                        p.nom AS des_produit,
                         ROUND(AVG(t.lig_ttc), 2) AS avg_price,
                         COUNT(*) AS nb_ventes
                     FROM sales.transactions t
-                    LEFT JOIN sales.produits p ON p.sku = t.sku
+                    JOIN sales.produits p ON p.sku = t.sku AND p.nom IS NOT NULL
                     WHERE t.store_id = $1
                       AND t.sku IS NOT NULL
                       AND t.lig_ttc > 0
@@ -140,7 +140,7 @@ class RealtimeSimulator:
                 self._skus = [
                     {
                         "sku":   str(r["sku"]),
-                        "name":  str(r["des_produit"] or r["sku"]),
+                        "name":  str(r["des_produit"]),
                         "price": float(r["avg_price"] or 25),
                     }
                     for r in sku_rows
@@ -176,15 +176,24 @@ class RealtimeSimulator:
                     None, self._fetch_skus_sync
                 )
                 if skus:
-                    # Merge inventory SKU list with PG price data
+                    # Merge inventory SKU list with PG price data.
+                    # L'API inventory ne renvoie que des SKUs : les noms sont
+                    # résolus depuis sales.produits — jamais le SKU en libellé
+                    # (sinon des_produit se corrompt en base, cf. migration 0003).
                     pg_price = {s["sku"]: s["price"] for s in self._skus}
+                    pg_name  = {s["sku"]: s["name"] for s in self._skus}
+                    names    = await self._resolve_product_names(
+                        [s for s in skus if s not in pg_name]
+                    )
+                    pg_name.update(names)
                     self._skus = [
                         {
                             "sku":   sku,
-                            "name":  sku,           # inventory API gives SKUs only
+                            "name":  pg_name.get(sku),
                             "price": pg_price.get(sku, 25.0),
                         }
                         for sku in skus
+                        if pg_name.get(sku)  # SKU sans nom produit = exclu
                     ]
                     self._skus_from_api = True
                     logger.info(
@@ -204,6 +213,25 @@ class RealtimeSimulator:
                 logger.warning("[SIM] SKU refresh error: %s", e)
 
             await asyncio.sleep(SKU_REFRESH_RETRY)
+
+    async def _resolve_product_names(self, skus: list[str]) -> dict[str, str]:
+        """Résout les noms produits depuis sales.produits pour des SKUs inconnus."""
+        if not skus:
+            return {}
+        try:
+            numeric = [int(s) for s in skus if str(s).isdigit()]
+            if not numeric:
+                return {}
+            pool = await _get_sim_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT sku, nom FROM sales.produits WHERE sku = ANY($1)",
+                    numeric,
+                )
+            return {str(r["sku"]): r["nom"] for r in rows if r["nom"]}
+        except Exception as e:
+            logger.warning("[SIM] résolution noms produits: %s", e)
+            return {}
 
     def _fetch_skus_sync(self) -> list[str]:
         """Synchronous HTTP GET to /api/inventory/skus?store_id=<store>."""

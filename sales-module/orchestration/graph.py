@@ -37,7 +37,6 @@ try:
     from agent_logger import (
         log_cycle, log_node_start, log_node_complete,
         log_node_error, enrich_rag_from_cycle,
-        setup_monitoring_tables,
     )
     _LOGGING_ENABLED = True
 except ImportError:

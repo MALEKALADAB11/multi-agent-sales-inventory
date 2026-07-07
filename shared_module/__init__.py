@@ -8,7 +8,7 @@ from .config import config, get_config, Config
 from .db import (
     get_conn, get_raw_conn, get_async_pool,
     get_sales_conn, get_inventory_conn, get_monitoring_conn,
-    setup_schemas, safe_json, fetchall, fetchone, execute, execute_returning,
+    safe_json, fetchall, fetchone, execute, execute_returning,
 )
 from .agent_logger import (
     AgentLogger,
@@ -23,7 +23,7 @@ __all__ = [
     # DB
     "get_conn", "get_raw_conn", "get_async_pool",
     "get_sales_conn", "get_inventory_conn", "get_monitoring_conn",
-    "setup_schemas", "safe_json", "fetchall", "fetchone",
+    "safe_json", "fetchall", "fetchone",
     "execute", "execute_returning",
     # Logger
     "AgentLogger",

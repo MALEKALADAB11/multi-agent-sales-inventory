@@ -38,37 +38,8 @@ def get_conn():
     return conn
 
 
-def ensure_interactions_table():
-    """Crée la table coach_interactions si elle n'existe pas."""
-    try:
-        conn = get_conn()
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS coach_interactions (
-                    id            SERIAL PRIMARY KEY,
-                    advisor_name  VARCHAR(100),
-                    store_id      VARCHAR(20) DEFAULT 'I63',
-                    message       TEXT,
-                    response      TEXT,
-                    gap_pct       FLOAT,
-                    urgency       VARCHAR(10),
-                    rag_used      BOOLEAN DEFAULT FALSE,
-                    nb_rag_scripts INT DEFAULT 0,
-                    conseil_type  VARCHAR(30) DEFAULT 'general',
-                    confidence    FLOAT DEFAULT 0.0,
-                    created_at    TIMESTAMP DEFAULT NOW()
-                )
-            """)
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_ci_advisor ON coach_interactions(advisor_name)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_ci_created ON coach_interactions(created_at DESC)"
-            )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning(f"[COACH TOOLS] ensure_interactions_table: {e}")
+# La table coach_interactions est créée par les migrations Alembic
+# (db/migrations, baseline 0001). Plus aucun DDL au runtime.
 
 
 def get_advisor_history(advisor_name: str, limit: int = 5) -> list:

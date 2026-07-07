@@ -34,26 +34,8 @@ async def get_pg_connection() -> asyncpg.Connection:
     )
 
 
-async def ensure_agent_memory_table() -> None:
-    conn = await get_pg_connection()
-    try:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS agent_memory (
-                id SERIAL PRIMARY KEY,
-                agent_name VARCHAR(50) NOT NULL,
-                store_id VARCHAR(50) NOT NULL,
-                cycle_id VARCHAR(100),
-                memory_type VARCHAR(50) NOT NULL,
-                memory_data JSONB NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_agent_memory_agent_store
-            ON agent_memory(agent_name, store_id, created_at DESC);
-        """)
-        logger.info("[ANALYST MEMORY] Table agent_memory prête ✅")
-    finally:
-        await conn.close()
+# La table agent_memory est créée par les migrations Alembic
+# (db/migrations, baseline 0001). Plus aucun DDL au runtime.
 
 
 def _safe_json_memory(raw_memory) -> dict:
@@ -77,7 +59,6 @@ def _safe_json_memory(raw_memory) -> dict:
 
 async def load_analyst_memory(store_id: str, limit: int = 5) -> dict:
     store_id = normalize_store_id(store_id)
-    await ensure_agent_memory_table()
 
     conn = await get_pg_connection()
     try:
@@ -131,7 +112,6 @@ async def save_analyst_memory(
     memory_type: str = "cycle_summary",
 ) -> bool:
     store_id = normalize_store_id(store_id)
-    await ensure_agent_memory_table()
 
     conn = await get_pg_connection()
     try:
