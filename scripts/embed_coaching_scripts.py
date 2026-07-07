@@ -46,7 +46,7 @@ EMBED_DIM    = 768
 EMBED_MODEL  = "nomic-embed-text"
 BATCH_SIZE   = 10
 
-CSV_PATH = Path(__file__).resolve().parent.parent / "sales-module" / "data" / "coaching_scripts_ooredoo.csv"
+# Source des scripts : PostgreSQL (sales.coaching_scripts) — politique zéro-CSV.
 
 
 def connect_milvus() -> None:
@@ -100,23 +100,42 @@ def embed_text(text: str) -> list[float]:
     return vec
 
 
-def load_csv(path: Path) -> list[dict]:
+def load_from_postgres() -> list[dict]:
+    """Charge les scripts actifs depuis sales.coaching_scripts (source de vérité)."""
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=os.getenv("DB_PORT", "5432"),
+        dbname=os.getenv("DB_NAME", "ooredoo_sales"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", ""),
+    )
     scripts = []
-    with open(path, encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            scripts.append({
-                "id":        f"csv-{uuid.uuid4().hex[:16]}",
-                "categorie": (row.get("categorie") or "")[:100],
-                "situation": (row.get("situation") or "")[:2000],
-                "action":    (row.get("action") or "")[:2000],
-                "produit":   (row.get("produit_cible") or "")[:500],
-                "argument":  (row.get("argument_vente") or "")[:2000],
-                "impact":    (row.get("impact_observe") or "")[:500],
-                "heure_min": int(row.get("heure_min", 8) or 8),
-                "heure_max": int(row.get("heure_max", 20) or 20),
-                "source":    (row.get("source") or "csv")[:100],
-            })
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, categorie, situation, action, produit_cible,
+                       argument_vente, impact_observe, heure_min, heure_max, source
+                FROM sales.coaching_scripts
+                WHERE actif
+                ORDER BY id
+            """)
+            for row in cur.fetchall():
+                scripts.append({
+                    "id":        f"pg-{row['id']}",
+                    "categorie": (row["categorie"] or "")[:100],
+                    "situation": (row["situation"] or "")[:2000],
+                    "action":    (row["action"] or "")[:2000],
+                    "produit":   (row["produit_cible"] or "")[:500],
+                    "argument":  (row["argument_vente"] or "")[:2000],
+                    "impact":    (row["impact_observe"] or "")[:500],
+                    "heure_min": int(row["heure_min"] or 8),
+                    "heure_max": int(row["heure_max"] or 20),
+                    "source":    (row["source"] or "pg")[:100],
+                })
+    finally:
+        conn.close()
     return scripts
 
 
@@ -165,17 +184,13 @@ def insert_batch(col: Collection, batch: list[dict]) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Embed coaching scripts CSV → Milvus")
+    parser = argparse.ArgumentParser(description="Embed coaching scripts PostgreSQL → Milvus")
     parser.add_argument("--reset",   action="store_true", help="Supprimer et recréer la collection")
-    parser.add_argument("--dry-run", action="store_true", help="Charger CSV sans écrire dans Milvus")
+    parser.add_argument("--dry-run", action="store_true", help="Charger depuis PostgreSQL sans écrire dans Milvus")
     args = parser.parse_args()
 
-    if not CSV_PATH.exists():
-        print(f"ERREUR: CSV introuvable → {CSV_PATH}", file=sys.stderr)
-        sys.exit(1)
-
-    scripts = load_csv(CSV_PATH)
-    print(f"CSV chargé : {len(scripts)} scripts depuis {CSV_PATH.name}")
+    scripts = load_from_postgres()
+    print(f"PostgreSQL : {len(scripts)} scripts actifs chargés (sales.coaching_scripts)")
 
     if args.dry_run:
         print(f"DRY RUN — Aperçu des 3 premiers scripts :")

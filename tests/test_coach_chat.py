@@ -78,7 +78,7 @@ class TestValidateStoreAccess:
 # ─────────────────────────────────────────────────────────────────────────────
 
 try:
-    from modules.coaching.agents.guardrail.guardrail_agent import evaluate_guardrails
+    from app.sales.coaching.agents.guardrail.guardrail_agent import evaluate_guardrails
     _GUARDRAIL_AVAILABLE = True
 except ImportError:
     _GUARDRAIL_AVAILABLE = False

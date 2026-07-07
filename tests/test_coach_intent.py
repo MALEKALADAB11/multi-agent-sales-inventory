@@ -9,7 +9,7 @@ def _import_classify():
     try:
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
-        from modules.coaching.agents.coach.coach_chat import _classify_intent
+        from app.sales.coaching.agents.coach.coach_chat import _classify_intent
         return _classify_intent
     except Exception as exc:
         pytest.skip(f"_classify_intent import failed: {exc}")
@@ -19,7 +19,7 @@ def _import_dedup():
     try:
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
-        from modules.coaching.agents.coach.coach_chat import _is_duplicate
+        from app.sales.coaching.agents.coach.coach_chat import _is_duplicate
         return _is_duplicate
     except Exception as exc:
         pytest.skip(f"_is_duplicate import failed: {exc}")

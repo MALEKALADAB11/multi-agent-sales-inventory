@@ -13,7 +13,7 @@ from fastapi import FastAPI
 def _make_app():
     app = FastAPI()
     try:
-        from hitl_router import router
+        from app.api.hitl import router
         app.include_router(router)
     except ImportError as e:
         pytest.skip(f"hitl_router import failed: {e}")
@@ -43,7 +43,7 @@ class TestSubmitHitlReview:
     @pytest.mark.asyncio
     async def test_returns_review_id(self):
         try:
-            from hitl_router import submit_hitl_review
+            from app.api.hitl import submit_hitl_review
         except ImportError as e:
             pytest.skip(str(e))
 
@@ -66,7 +66,7 @@ class TestSubmitHitlReview:
     @pytest.mark.asyncio
     async def test_returns_none_on_db_error(self):
         try:
-            from hitl_router import submit_hitl_review
+            from app.api.hitl import submit_hitl_review
         except ImportError as e:
             pytest.skip(str(e))
 

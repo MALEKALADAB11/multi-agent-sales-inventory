@@ -10,7 +10,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sales-module"))
 
 import pytest
-from modules.coaching.agents.guardrail.guardrail_agent import (
+from app.sales.coaching.agents.guardrail.guardrail_agent import (
     _g1_stock_available,
     _g2_stockout_imminent,
     _g3_rag_source,
