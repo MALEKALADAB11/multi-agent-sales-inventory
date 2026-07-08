@@ -96,6 +96,30 @@ except ImportError:
 # Wrappers async avec Langfuse spans
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Observabilité complète des graphes ────────────────────────────────────────
+# Un CallbackHandler LangChain par cycle (créé depuis la trace racine) est
+# enregistré ici puis passé à CHAQUE ainvoke de sous-graphe : tous les nodes
+# LangGraph (receive_pos, react_analyst, rag_search, generate_strategy,
+# self_critique, …) ET les appels LLM LangChain (modèle, prompts, latence)
+# apparaissent imbriqués sous la trace du cycle dans Langfuse.
+_CYCLE_HANDLERS: dict = {}
+
+
+def _register_cycle_handler(cycle_id: str, lf_trace) -> None:
+    if lf_trace is None:
+        return
+    try:
+        _CYCLE_HANDLERS[cycle_id] = lf_trace.get_langchain_handler()
+    except Exception as e:
+        logger.debug(f"[LANGFUSE] handler cycle {cycle_id}: {e}")
+
+
+def _cycle_cfg(state: dict):
+    """Config LangGraph avec le handler Langfuse du cycle courant (ou None)."""
+    handler = _CYCLE_HANDLERS.get(_get_cycle_id(state))
+    return {"callbacks": [handler]} if handler else None
+
+
 async def _run_analyst(state: dict) -> dict:
     if not _ANALYST_OK:
         logger.warning("[ORCHESTRATOR] Analyst non disponible")
@@ -103,7 +127,7 @@ async def _run_analyst(state: dict) -> dict:
     try:
         agent = get_analyst_agent()
         t0 = time.time()
-        result = await agent.ainvoke(state)
+        result = await agent.ainvoke(state, _cycle_cfg(state))
         duration = (time.time() - t0) * 1000
 
         # Langfuse span pour l'agent analyste
@@ -148,7 +172,7 @@ async def _run_stratege(state: dict) -> dict:
     try:
         agent = get_stratege_agent()
         t0 = time.time()
-        result = await agent.ainvoke(state)
+        result = await agent.ainvoke(state, _cycle_cfg(state))
         duration = (time.time() - t0) * 1000
         nb_actions = len(result.get("strategie_actions") or [])
 
@@ -198,7 +222,7 @@ async def _run_coach(state: dict) -> dict:
     try:
         agent = get_coach_agent()
         t0 = time.time()
-        result = await agent.ainvoke(state)
+        result = await agent.ainvoke(state, _cycle_cfg(state))
         duration = (time.time() - t0) * 1000
 
         # Langfuse span pour l'agent coach
@@ -372,11 +396,15 @@ class CycleOrchestrator:
             triggered_by=triggered_by,
         )
 
+        # Observabilité totale : le handler LangChain du cycle trace chaque
+        # node LangGraph + chaque appel LLM sous la trace racine.
+        _register_cycle_handler(cycle_id, lf_trace)
+
         errors_count = 0
         final_state = state
 
         try:
-            final_state = await self.graph.ainvoke(state)
+            final_state = await self.graph.ainvoke(state, _cycle_cfg(state))
             errors_count = len(final_state.get("errors") or [])
         except Exception as e:
             errors_count = 1
@@ -414,6 +442,23 @@ class CycleOrchestrator:
         analyste_ms = float(metrics.get("analyste_llm_ms", 0) or 0)
         stratege_ms = float(metrics.get("stratege_llm_ms", 0) or 0)
         coach_ms = float(metrics.get("coach_llm_ms", 0) or 0)
+
+        # ── AlertBus : publier l'alerte sales si urgence élevée ───────────
+        # Le frontend conseiller (WS) et le monitoring y souscrivent.
+        # AlertCycleTrigger n'écoute PAS ce channel (pas de boucle).
+        if urgency in ("CRITICAL", "HIGH"):
+            try:
+                from app.sales.core.alert_bus import get_alert_bus
+                get_alert_bus().publish_sales_alert(
+                    store_id=internal_id,
+                    urgency=urgency,
+                    gap_amount=float(final_state.get("gap_amount", 0) or 0),
+                    gap_pct=gap,
+                    hours_remaining=max(0, 20 - datetime.now().hour),
+                    cycle_id=cycle_id,
+                )
+            except Exception as e:
+                logger.debug(f"[ORCHESTRATOR] publish_sales_alert: {e}")
 
         # ── Langfuse : finaliser la trace avec output + scores ────────────
         if _LANGFUSE_OK:
@@ -506,6 +551,9 @@ class CycleOrchestrator:
             f"actions={nb_act} | RAG={'Y' if rag_used else 'N'}({nb_rag}) | "
             f"erreurs={errors_count}"
         )
+
+        # Libérer le handler d'observabilité du cycle
+        _CYCLE_HANDLERS.pop(cycle_id, None)
 
         self.last_state = final_state
         self.last_result = {

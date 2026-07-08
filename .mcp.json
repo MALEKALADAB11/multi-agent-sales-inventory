@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "inventory-advisor": {
+      "command": "venv/Scripts/python.exe",
+      "args": ["app/inventory/services/mcp_server.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}

@@ -38,6 +38,7 @@ Output normalisé (toujours le même format) :
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
@@ -58,12 +59,17 @@ except ImportError:
     logger.info("[TS] StatsForecast non installé — fallback numpy actif")
 
 try:
+    if os.getenv("DISABLE_CHRONOS", "").lower() in ("1", "true"):
+        raise ImportError("Chronos désactivé par DISABLE_CHRONOS")
     import torch
     from chronos import BaseChronosPipeline  # type: ignore
     _CHRONOS_AVAILABLE = True
     logger.info("[TS] Chronos disponible ✓")
-except ImportError:
+except Exception as _torch_err:
+    # Exception (pas seulement ImportError) : sur Windows un torch cassé lève
+    # OSError WinError 1114 (DLL c10.dll) — ne doit jamais tuer le process.
     _CHRONOS_AVAILABLE = False
+    logger.info("[TS] Chronos indisponible (%s) — fallback actif", str(_torch_err)[:80])
 
 # Singleton Chronos pipeline — chargé une seule fois
 _chronos_pipeline = None

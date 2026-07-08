@@ -1253,6 +1253,33 @@ async def analyze_product_velocity(store_id: str) -> str:
         await conn.close()
 
 
+@tool
+async def get_purchase_orders_kanban(store_id: str) -> str:
+    """
+    Fetch the supply Kanban board — purchase orders in flight for this store,
+    grouped by statut (SUGGERE, BROUILLON, SOUMIS, CONFIRME, EXPEDIE, RECU...).
+    Use it to know whether a rupture/critical SKU already has a replenishment
+    order pending (avoid recommending push on products with no incoming stock,
+    or flagging a rupture that is already being resolved).
+
+    Cross-module call: goes through the inventory MCP server (async stdio),
+    per the mcp_wrappers.py architecture note — sales never touches the
+    supply schema directly.
+    """
+    try:
+        from app.inventory.tools.internal.mcp_wrappers import MCP_SERVER_PATH
+        from app.inventory.integrations.mcp_client import InventoryMCPClient
+
+        client = InventoryMCPClient(MCP_SERVER_PATH)
+        async with client.connect():
+            return await client.call_tool(
+                "list_purchase_orders", {"store_id": store_id}
+            )
+    except Exception as exc:
+        logger.warning("get_purchase_orders_kanban(%s): %s", store_id, exc)
+        return _j({"error": f"Kanban PO indisponible: {exc}"})
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # EXPORT
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1269,4 +1296,5 @@ REACT_ANALYST_TOOLS = [
     compute_ts_decomposition,
     forecast_multi_horizon,
     analyze_product_velocity,
+    get_purchase_orders_kanban,
 ]

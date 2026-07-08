@@ -105,6 +105,7 @@ temps réel complète couvrant performance actuelle, prévisions multi-horizon, 
 ### Bloc 4 — Stock & Vélocité produit (lien temps réel ventes→stock)
 - get_stock_alerts          : Ruptures + CA à risque
 - analyze_product_velocity  : Vélocité SKU (unités/jour) + jours avant rupture par produit
+- get_purchase_orders_kanban : Commandes fournisseur en cours (Kanban appro) — vérifie si un réassort est déjà lancé pour un SKU en rupture
 
 ### Bloc 5 — Contexte saisonnier
 - get_seasonal_context      : Facteurs saisonniers 3 ans (DOW, mois, événements Ramadan/Eid)
@@ -120,6 +121,7 @@ temps réel complète couvrant performance actuelle, prévisions multi-horizon, 
 ## RÈGLES MÉTIER :
 - Si stock_urgency_boost > 0 : ajoute-le à urgency_score (max 1.0)
 - Si nb_ruptures >= 2 et urgency_level "LOW" : monte à "MEDIUM"
+- Si nb_ruptures >= 2 : appelle get_purchase_orders_kanban — une rupture avec réassort déjà EXPEDIE/CONFIRME pèse moins qu'une rupture sans aucune commande en cours
 - Si trend_signal "DECELERATING" et gap_pct > 20 : monte urgence d'un niveau
 - Si overall_z_score > 2 (journée atypique) : mentionne-le dans analyst_summary
 - Si days_to_stockout <= 2 pour un top-produit : inclure dans strategy_query
@@ -229,7 +231,8 @@ Objectif: {daily_target} TND | Heure: {current_time}
 Outils disponibles:
   fetch_live_pos, compute_eod_forecast, compute_realtime_gap,
   get_intraday_trend, get_seasonal_context, get_historical_comparison, get_stock_alerts,
-  detect_sales_anomalies, compute_ts_decomposition, forecast_multi_horizon, analyze_product_velocity
+  detect_sales_anomalies, compute_ts_decomposition, forecast_multi_horizon, analyze_product_velocity,
+  get_purchase_orders_kanban
 
 Ordre recommandé: fetch_live_pos → compute_eod_forecast → compute_realtime_gap →
                   analyze_product_velocity → detect_sales_anomalies → forecast_multi_horizon

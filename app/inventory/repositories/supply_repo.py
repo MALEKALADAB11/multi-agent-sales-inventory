@@ -65,32 +65,93 @@ class SyncPurchaseOrderRepo:
 
     @staticmethod
     def list_purchase_orders(store_id: str, statut: Optional[str] = None) -> list[dict]:
-        """All POs for a store, optionally filtered by statut. Enriched with product_name."""
+        """
+        All POs for a store, optionally filtered by statut.
+        Enrichi product_name + croisement stock × demande pour le Kanban :
+          stock_current / avg_daily_sales (30 j) → days_to_stockout,
+          eta_days (livraison prévue), waiting_days (temps dans le statut),
+          stockout_before_delivery (prédiction rupture avant réception).
+        """
+        base_query = """
+            SELECT po.*, p.product_name,
+                   sl.quantity_available            AS stock_current,
+                   COALESCE(d.avg_daily, 0)         AS avg_daily_sales
+            FROM supply.purchase_orders po
+            LEFT JOIN inventory.products p  ON p.sku = po.sku
+            LEFT JOIN inventory.stock_levels sl
+                   ON sl.sku = po.sku AND sl.store_id = po.store_id
+            LEFT JOIN (
+                SELECT sku, store_id, SUM(quantity)::float / 30 AS avg_daily
+                FROM sales.transactions
+                WHERE date_only >= CURRENT_DATE - 30
+                  AND date_only <= CURRENT_DATE
+                  AND lig_ttc > 0
+                GROUP BY sku, store_id
+            ) d ON d.sku = po.sku AND d.store_id = po.store_id
+            WHERE po.store_id = %s {statut_clause}
+            ORDER BY po.date_commande DESC
+        """
         conn = SyncPurchaseOrderRepo._conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if statut and statut != "all":
-                    cur.execute("""
-                        SELECT po.*, p.product_name
-                        FROM supply.purchase_orders po
-                        LEFT JOIN inventory.products p ON p.sku = po.sku
-                        WHERE po.store_id = %s AND po.statut = %s
-                        ORDER BY po.date_commande DESC
-                    """, (store_id, statut))
+                    cur.execute(base_query.format(statut_clause="AND po.statut = %s"),
+                                (store_id, statut))
                 else:
-                    cur.execute("""
-                        SELECT po.*, p.product_name
-                        FROM supply.purchase_orders po
-                        LEFT JOIN inventory.products p ON p.sku = po.sku
-                        WHERE po.store_id = %s
-                        ORDER BY po.date_commande DESC
-                    """, (store_id,))
-                return [dict(r) for r in cur.fetchall()]
+                    cur.execute(base_query.format(statut_clause=""), (store_id,))
+                rows = [dict(r) for r in cur.fetchall()]
+            return [SyncPurchaseOrderRepo._enrich_kanban_fields(r) for r in rows]
         except Exception as exc:
             logger.warning("SyncPurchaseOrderRepo.list_purchase_orders(%s): %s", store_id, exc)
             return []
         finally:
             conn.close()
+
+    @staticmethod
+    def _enrich_kanban_fields(po: dict) -> dict:
+        """Champs dérivés pour les cartes Kanban — jamais bloquant."""
+        from datetime import date, datetime as _dt
+
+        try:
+            stock = float(po.get("stock_current") or 0)
+            avg   = float(po.get("avg_daily_sales") or 0)
+            # Couverture : même sémantique que l'agent d'analyse
+            # (999 = demande quasi nulle AVEC stock ; stock nul = 0 jour)
+            if avg > 0:
+                days_to_stockout = round(stock / avg, 1)
+            elif stock > 0:
+                days_to_stockout = 999.0
+            else:
+                days_to_stockout = 0.0
+            po["days_to_stockout"] = days_to_stockout
+
+            # ETA : jours restants avant la livraison prévue
+            eta = po.get("date_livraison_prevue")
+            eta_days = None
+            if eta:
+                eta_date = eta.date() if isinstance(eta, _dt) else eta
+                eta_days = (eta_date - date.today()).days
+            po["eta_days"] = eta_days
+
+            # Temps passé dans le statut courant
+            upd = po.get("updated_at") or po.get("created_at")
+            if upd:
+                upd_date = upd.date() if isinstance(upd, _dt) else upd
+                po["waiting_days"] = max(0, (date.today() - upd_date).days)
+            else:
+                po["waiting_days"] = None
+
+            # Prédiction : la rupture arrive-t-elle avant la livraison ?
+            terminal = po.get("statut") in ("RECU", "ANNULE")
+            if not terminal and eta_days is not None and days_to_stockout < 999:
+                po["stockout_before_delivery"] = days_to_stockout < eta_days
+                po["coverage_gap_days"] = round(days_to_stockout - eta_days, 1)
+            else:
+                po["stockout_before_delivery"] = None
+                po["coverage_gap_days"] = None
+        except Exception as exc:
+            logger.debug("PO kanban enrich skipped (%s): %s", po.get("po_id"), exc)
+        return po
 
     @staticmethod
     def get_purchase_order_by_id(po_id: str) -> Optional[dict]:

@@ -360,7 +360,14 @@ def compute_inventory_metrics(
     eoq               = compute_eoq(avg_daily_demand, unit_cost, holding_cost_pct, order_cost)
     formula_order_qty = max(moq, round(eoq))
 
-    days_remaining = stock_current / avg_daily_demand if avg_daily_demand > 0 else 999.0
+    # Sentinelle 999 = "couverture illimitée" — valable UNIQUEMENT si du stock
+    # existe sans demande. Stock nul ⇒ couverture nulle, quelle que soit la demande.
+    if avg_daily_demand > 0:
+        days_remaining = stock_current / avg_daily_demand
+    elif stock_current > 0:
+        days_remaining = 999.0
+    else:
+        days_remaining = 0.0
 
     risk_data = classify_risk(
         days_remaining, stock_current, stock_in_transit,

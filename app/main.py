@@ -55,8 +55,23 @@ from app.core.config import DEFAULT_STORE_ID
 
 _log_handler = logging.StreamHandler(sys.stderr)
 _log_handler.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%H:%M:%S"))
-logging.basicConfig(level=logging.INFO, handlers=[_log_handler])
+
+# Toutes les erreurs (ERROR/CRITICAL, tracebacks inclus) de tous les modules
+# sont extraites dans logs/errors.log — consultable sans filtrer la console.
+os.makedirs("logs", exist_ok=True)
+_err_handler = logging.FileHandler("logs/errors.log", encoding="utf-8")
+_err_handler.setLevel(logging.ERROR)
+_err_handler.setFormatter(logging.Formatter(
+    "%(asctime)s | %(name)s | %(levelname)s | %(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler, _err_handler])
 logger = logging.getLogger(__name__)
+
+# Langfuse est de la télémétrie best-effort : quand le serveur local est KO
+# (500), son SDK + backoff spamment la console avec retries et tracebacks
+# sans aucun impact sur les agents. On ne garde que le silence.
+logging.getLogger("langfuse").setLevel(logging.CRITICAL)
+logging.getLogger("backoff").setLevel(logging.CRITICAL)
 
 # ── Registry multi-connexions (remplace _active_stores slot unique) ───────────
 # store_id → set of active WebSocket connections
@@ -128,6 +143,20 @@ app.include_router(cycle_router)
 app.include_router(forecast_router)
 app.include_router(stores_router)
 app.include_router(monitoring_router)
+
+try:
+    from app.api.feedback import router as feedback_router
+    app.include_router(feedback_router)
+    logger.info("✅ Feedback loop router chargé")
+except ImportError as e:
+    logger.warning(f"⚠️ feedback_router non trouvé: {e}")
+
+try:
+    from app.api.kpis import router as kpis_router
+    app.include_router(kpis_router)
+    logger.info("✅ KPIs router chargé")
+except ImportError as e:
+    logger.warning(f"⚠️ kpis_router non trouvé: {e}")
 
 try:
     from app.sales.coaching.agents.coach.coach_chat import router as coach_rag_router
@@ -328,6 +357,21 @@ async def startup_event():
                         "severity": severity,
                         "message":  f"⚠️ Stock {severity} : SKU {sku_str} — {int(new_stock)} unités restantes",
                     })
+                    # AlertBus Redis → AlertCycleTrigger déclenche un cycle
+                    # de coaching immédiat sur ce magasin (données flux).
+                    try:
+                        from app.sales.core.alert_bus import get_alert_bus
+                        get_alert_bus().publish_stock_alert(
+                            store_id=store_id,
+                            sku=sku_str,
+                            product_name=product_name or f"SKU {sku_str}",
+                            stock_qty=int(new_stock),
+                            risk_level="CRITICAL" if severity == "rupture" else "HIGH",
+                            days_to_stockout=0.0 if severity == "rupture" else 0.5,
+                            revenue_at_risk=float(amount or 0) * 10,
+                        )
+                    except Exception as e:
+                        logger.debug("[RT_SYNC] alert_bus publish: %s", e)
             except Exception as e:
                 logger.debug("[RT_SYNC] broadcast: %s", e)
 
@@ -341,20 +385,57 @@ async def startup_event():
     logger.info("✅ Inventory ↔ Sales sync")
 
     orchestrator = CycleOrchestrator(json_svc=json_svc, timefm=timefm)
+
+    # ── Magasins du cycle proactif (fini le mono-magasin codé en dur) ──
+    # COACHING_STORE_IDS=I63,S01 pour une liste explicite ; sinon top-N par CA
+    # des 7 derniers jours (COACHING_MAX_STORES, défaut 3). Les 196 boutiques
+    # restent couvertes par AlertCycleTrigger (événementiel, pattern *).
+    active_stores = [DEFAULT_STORE_ID]
+    _env_stores = [s.strip() for s in os.getenv("COACHING_STORE_IDS", "").split(",") if s.strip()]
+    if _env_stores:
+        active_stores = _env_stores
+    else:
+        try:
+            import asyncpg as _apg
+            _max_stores = int(os.getenv("COACHING_MAX_STORES", "3"))
+            _conn = await _apg.connect(**_RT_DB_CFG, timeout=5)
+            _rows = await _conn.fetch("""
+                SELECT b.store_id
+                FROM sales.boutiques b
+                JOIN (SELECT store_id, SUM(lig_ttc) AS ca
+                      FROM sales.transactions
+                      WHERE date_only >= CURRENT_DATE - 7
+                      GROUP BY store_id) t ON t.store_id = b.store_id
+                WHERE b.active
+                ORDER BY t.ca DESC
+                LIMIT $1
+            """, _max_stores)
+            await _conn.close()
+            if _rows:
+                active_stores = [r["store_id"] for r in _rows]
+        except Exception as e:
+            logger.warning("⚠️ Top magasins DB indisponible (%s) — fallback %s", e, DEFAULT_STORE_ID)
+
     trigger = CronTrigger(
         orchestrator=orchestrator,
-        store_id=DEFAULT_STORE_ID,
+        store_ids=active_stores,
         interval_minutes=15,
     )
     set_orchestrator(orchestrator, trigger)
     app.state.trigger = trigger
     app.state.orchestrator = orchestrator
 
+    # ── Déclenchement événementiel : alerte stock critique → cycle immédiat ──
+    from app.sales.orchestration.alert_trigger import AlertCycleTrigger
+    alert_trigger = AlertCycleTrigger(orchestrator=orchestrator)
+    app.state.alert_trigger = alert_trigger
+
     async def _delayed_trigger_start():
         logger.info("⏳ CronTrigger démarrera après stabilisation des données...")
         await asyncio.sleep(10)
         trigger.start()
-        logger.info("✅ CronTrigger démarré après warm-up")
+        alert_trigger.start()
+        logger.info("✅ CronTrigger (%d magasins) + AlertCycleTrigger démarrés", len(active_stores))
 
     asyncio.create_task(_delayed_trigger_start())
     logger.info("✅ Orchestration préparée")
@@ -381,6 +462,8 @@ async def shutdown_event():
     if simulator: simulator.stop()
     trigger = getattr(app.state, "trigger", None)
     if trigger: trigger.stop()
+    alert_trigger = getattr(app.state, "alert_trigger", None)
+    if alert_trigger: alert_trigger.stop()
     logger.info("Shutting down cleanly.")
 
 

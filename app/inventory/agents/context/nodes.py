@@ -162,13 +162,30 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning("[Context/fetch] db_events failed: %s", e)
             return []
 
-    # Lancer les 5 fetches en parallèle
+    def _fetch_market_offers():
+        # Tendances marché : offres Ooredoo scrapées par le Stratège sales
+        # (lecture cache uniquement — aucun scraping dans le cycle inventory)
+        key = f"trends:{category}:{today_str}"
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        try:
+            from app.core.trends_provider import get_market_offers
+            result = get_market_offers(category)
+            _cache_set(key, result)
+            return result
+        except Exception as e:
+            logger.warning("[Context/fetch] market_offers failed: %s", e)
+            return []
+
+    # Lancer les 6 fetches en parallèle
     tasks = {
-        "historical": _fetch_historical,
-        "promotions": _fetch_promotions,
-        "weather":    _fetch_weather,
-        "holidays":   _fetch_holidays,
-        "events":     _fetch_events,
+        "historical":    _fetch_historical,
+        "promotions":    _fetch_promotions,
+        "weather":       _fetch_weather,
+        "holidays":      _fetch_holidays,
+        "events":        _fetch_events,
+        "market_offers": _fetch_market_offers,
     }
     results: Dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -179,13 +196,14 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 results[name] = future.result()
             except Exception as e:
                 logger.warning("[Context/fetch] parallel task '%s' failed: %s", name, e)
-                results[name] = [] if name in ("promotions", "holidays", "events") else {}
+                results[name] = [] if name in ("promotions", "holidays", "events", "market_offers") else {}
 
     historical_patterns = results.get("historical", {})
     promotions          = results.get("promotions", [])
     weather             = results.get("weather", {})
     holidays            = results.get("holidays", [])
     events              = results.get("events", [])
+    market_offers       = results.get("market_offers", [])
 
     signals = {
         "category":           category,
@@ -194,15 +212,16 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "weather":             weather,
         "holidays":            holidays,
         "events":              events,
+        "market_offers":       market_offers,
         "today":               today_str,
         "horizon":             str(date.today() + timedelta(days=7)),
     }
 
     logger.info(
         "[Context/fetch] SKU=%s store=%s | category=%s promos=%d "
-        "holidays=%d events=%d bad_weather=%d history_rows=%d",
+        "holidays=%d events=%d offers=%d bad_weather=%d history_rows=%d",
         sku, store_id, category,
-        len(promotions), len(holidays), len(events),
+        len(promotions), len(holidays), len(events), len(market_offers),
         weather.get("bad_weather_days", 0),
         historical_patterns.get("sample_size", 0),
     )
@@ -287,6 +306,19 @@ def _rule_based_interpret(
             dominant = "weather"
         uplift += weather_uplift
 
+    # Market offers (offres Ooredoo scrapées — tendances marché)
+    # Une offre active sur la catégorie tire la demande : +3% par offre, max +9%
+    offers = signals.get("market_offers", [])
+    offer_uplift_pct = SIGNAL_WEIGHTS.get("market_offer_uplift_pct", 3.0)
+    market_uplift = min(len(offers), 3) * offer_uplift_pct
+    if market_uplift > 0:
+        titles = ", ".join(str(o.get("title", ""))[:30] for o in offers[:3])
+        notes.append(f"{len(offers)} offre(s) Ooredoo actives ({titles}) → +{market_uplift:.1f}%")
+        if market_uplift > abs(promo_uplift) and market_uplift > holiday_uplift \
+                and market_uplift > abs(event_uplift) and market_uplift > abs(weather_uplift):
+            dominant = "market_offers"
+        uplift += market_uplift
+
     # Confidence
     sample_size  = signals.get("historical_patterns", {}).get("sample_size", 0)
     conf_min     = SIGNAL_WEIGHTS["confidence_min_sample"]
@@ -355,6 +387,15 @@ def create_interpret_node(llm, use_llm: bool):
             bad_weather_days=weather.get("bad_weather_days", 0),
             weather_days=_dumps(weather.get("days", [])),
         )
+
+        # Tendances marché (offres Ooredoo scrapées) — signal additionnel
+        market_offers = signals.get("market_offers", [])
+        if market_offers:
+            user_prompt += (
+                "\n\n## MARKET TRENDS — offres Ooredoo actives (scraping ooredoo.tn)\n"
+                "Une offre commerciale active sur cette catégorie tire la demande à la hausse.\n"
+                + _dumps(market_offers)
+            )
 
         try:
             response = llm.invoke([

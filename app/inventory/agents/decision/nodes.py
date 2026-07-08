@@ -112,12 +112,16 @@ def _build_recommendation_text(
     dominant = ctx.get("dominant_signal", "none")
     ctx_conf = ctx.get("confidence", "low")
 
+    # 999 = sentinelle "couverture illimitée" — ne jamais l'afficher tel quel
+    def _fmt_days(d: float) -> str:
+        return "plus d'un an de couverture (demande quasi nulle)" if d >= 999 else f"{d:.0f} jours"
+
     sentences = []
 
     # ── S1: What to do and when ───────────────────────────────────────────
     if action == "EXPEDITE":
         s1 = (
-            f"Expédier {order_qty:,} unités aujourd'hui — le stock s'épuise dans {adj_days:.0f} jours "
+            f"Expédier {order_qty:,} unités aujourd'hui — le stock s'épuise dans {_fmt_days(adj_days)} "
             f"et le délai de livraison standard est de {lead_time:.0f} jours, une rupture est donc "
             f"garantie avant l'arrivée d'une commande normale."
         )
@@ -125,24 +129,24 @@ def _build_recommendation_text(
         urgency_phrase = {"immediate": "aujourd'hui", "this_week": "cette semaine",
                           "this_month": "ce mois-ci"}.get(urgency, urgency)
         s1 = (
-            f"Commander {order_qty:,} unités {urgency_phrase} — le stock est à {adj_days:.0f} jours "
+            f"Commander {order_qty:,} unités {urgency_phrase} — le stock est à {_fmt_days(adj_days)} "
             f"contre un point de commande de {rop:.0f} unités et un délai de livraison de {lead_time:.0f} jours."
         )
     elif action == "MONITOR":
         s1 = (
-            f"Pas de commande pour l'instant — le stock est à {adj_days:.0f} jours, "
+            f"Pas de commande pour l'instant — le stock est à {_fmt_days(adj_days)}, "
             f"proche mais pas encore sous le point de commande de {rop:.0f} unités."
         )
     else:  # HOLD
         if base_risk.get("overstock_flag"):
             s1 = (
-                f"Ne pas commander — le stock dépasse le seuil maximal à {adj_days:.0f} jours, "
+                f"Ne pas commander — le stock dépasse le seuil maximal à {_fmt_days(adj_days)}, "
                 f"un ajout de stock augmenterait les coûts de stockage sans bénéfice de service."
             )
         else:
             s1 = (
-                f"Aucune action requise — le stock est à {adj_days:.0f} jours, "
-                f"bien au-dessus du point de commande de {rop:.0f} unités."
+                f"Aucune action requise — le stock couvre {_fmt_days(adj_days)}, "
+                f"au-dessus du point de commande de {rop:.0f} unités."
             )
 
     sentences.append(s1)
@@ -184,11 +188,17 @@ def _build_recommendation_text(
 
     # ── S4: Context influence ─────────────────────────────────────────────
     if uplift != 0.0 and dominant != "none":
-        day_delta = adj_days - base_days
-        s_ctx = (
-            f"Une hausse de demande de {uplift:+.1f}% liée à {dominant} (confiance : {ctx_conf}) "
-            f"a été appliquée, réduisant les jours ajustés de {base_days:.0f} à {adj_days:.0f}."
-        )
+        # Ne chiffrer l'effet que s'il est réel et hors sentinelle (évite "de 999 à 999")
+        if base_days < 999 and abs(adj_days - base_days) >= 0.5:
+            s_ctx = (
+                f"Une hausse de demande de {uplift:+.1f}% liée à {dominant} (confiance : {ctx_conf}) "
+                f"a été appliquée, réduisant les jours ajustés de {base_days:.0f} à {adj_days:.0f}."
+            )
+        else:
+            s_ctx = (
+                f"Une hausse de demande de {uplift:+.1f}% liée à {dominant} "
+                f"(confiance : {ctx_conf}) a été prise en compte, sans impact matériel sur la couverture."
+            )
         sentences.append(s_ctx)
     elif action in ("ORDER", "EXPEDITE") and dominant == "none":
         # Only mention lack of signals for ORDER/EXPEDITE where it's relevant
@@ -397,6 +407,19 @@ def create_decide_node(llm, use_llm: bool):
             adjusted_replenishment_cost = _safe_float(a_metrics.get("total_replenishment_cost")),
             adjusted_safety_stock       = _safe_float(a_metrics.get("safety_stock")),
         )
+
+        # Boucle de feedback : les arbitrages humains passés (HITL, PO annulés,
+        # raisons de rejet) modulent la décision — jamais bloquant.
+        try:
+            from app.core.feedback_service import get_learning_context_sync
+            fb_ctx = get_learning_context_sync(store_id=store_id, sku=sku)
+            if fb_ctx:
+                user_prompt += (
+                    "\n\n## HISTORIQUE FEEDBACK HUMAIN (à intégrer dans ta décision)\n"
+                    + fb_ctx
+                )
+        except Exception as _fb_err:
+            logger.debug("[Decision] feedback context skipped: %s", _fb_err)
 
         try:
             response = llm.invoke([

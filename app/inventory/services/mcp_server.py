@@ -7,6 +7,7 @@ This server provides tools for:
 - Stock status queries
 - Demand forecasting
 - Risk metrics computation
+- Purchase-order Kanban board (supply.purchase_orders lifecycle)
 """
 
 import asyncio
@@ -37,6 +38,13 @@ from app.inventory.agents.analysis.tools import (
     compute_demand_std,
 )
 from app.inventory.config.settings import DEFAULT_STORE
+# Supply layer — purchase-order Kanban (same repo the REST API uses,
+# so transitions/MOQ/sourcing rules are enforced identically here)
+from app.inventory.repositories.supply_repo import (
+    SyncPurchaseOrderRepo,
+    PurchaseOrderTransitionError,
+    ALLOWED_TRANSITIONS,
+)
 
 
 # Create MCP server
@@ -114,8 +122,113 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["sku"]
             }
+        ),
+        Tool(
+            name="list_purchase_orders",
+            description=(
+                "List purchase orders on the Kanban board for a store, grouped by statut "
+                "(SUGGERE, BROUILLON, SOUMIS, CONFIRME, EXPEDIE, RECU_PARTIEL, RECU, ANNULE, LITIGE). "
+                "Optionally filter to a single statut."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "store_id": {
+                        "type": "string",
+                        "description": "Store identifier",
+                        "default": DEFAULT_STORE
+                    },
+                    "statut": {
+                        "type": "string",
+                        "description": "Optional statut filter (e.g. SUGGERE). Omit for the whole board.",
+                        "enum": sorted(ALLOWED_TRANSITIONS.keys())
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="get_purchase_order",
+            description="Get full detail of one purchase order by its po_id",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "po_id": {
+                        "type": "string",
+                        "description": "Purchase order identifier"
+                    }
+                },
+                "required": ["po_id"]
+            }
+        ),
+        Tool(
+            name="suggest_purchase_order",
+            description=(
+                "Create an agent-suggested purchase order (statut SUGGERE) from an existing "
+                "recommendation. Supplier, MOQ and lead time are resolved from the sourcing "
+                "referential. The card lands on the Kanban and stays pending until a human "
+                "approves or rejects it — this tool can never trigger spend by itself."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "recommendation_id": {
+                        "type": "string",
+                        "description": "inventory.recommendations id to turn into a SUGGERE purchase order"
+                    }
+                },
+                "required": ["recommendation_id"]
+            }
+        ),
+        Tool(
+            name="move_purchase_order",
+            description=(
+                "Move a purchase order to a new statut on the Kanban, enforcing the lifecycle "
+                "transition rules. Moving into RECU/RECU_PARTIEL records the reception and "
+                "increments stock levels. Cards in SUGGERE cannot be moved by this tool — "
+                "approving or rejecting a suggestion is a human-only action in the UI."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "po_id": {
+                        "type": "string",
+                        "description": "Purchase order identifier"
+                    },
+                    "new_statut": {
+                        "type": "string",
+                        "description": "Target statut",
+                        "enum": sorted(ALLOWED_TRANSITIONS.keys())
+                    },
+                    "quantite_recue": {
+                        "type": "integer",
+                        "description": "Received quantity (only for RECU/RECU_PARTIEL; defaults to the ordered quantity)"
+                    }
+                },
+                "required": ["po_id", "new_statut"]
+            }
         )
     ]
+
+
+def _format_po(po: dict) -> str:
+    """One Kanban card as text (Decimal/date/UUID safe via str/float coercion)."""
+    qty_ordered = int(po.get("quantite_commandee") or 0)
+    qty_received = int(po.get("quantite_recue") or 0)
+    total = float(po.get("montant_total_ht") or 0)
+    lines = [
+        f"  [{po['statut']}] PO {po['po_id']} — {po.get('product_name') or po['sku']}",
+        f"    sku={po['sku']}  store={po['store_id']}  supplier={po.get('supplier_id') or 'N/A'}",
+        f"    qty={qty_ordered} (recue: {qty_received})  total={total:,.2f} DT HT",
+        f"    commande={po.get('date_commande')}  livraison prevue={po.get('date_livraison_prevue')}",
+    ]
+    if po.get("source") == "AGENT":
+        lines.append(
+            f"    source=AGENT  urgency={po.get('urgency') or 'N/A'}  "
+            f"confidence={po.get('confidence') or 'N/A'}"
+        )
+    if po.get("recommendation_id"):
+        lines.append(f"    recommendation_id={po['recommendation_id']}")
+    return "\n".join(lines)
 
 
 @server.call_tool()
@@ -260,6 +373,102 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                     f"  Lifecycle stage           : {st['lifecycle_stage']}"
                 )
         
+        elif name == "list_purchase_orders":
+            store_id = arguments.get("store_id", DEFAULT_STORE)
+            statut   = arguments.get("statut")
+            orders   = SyncPurchaseOrderRepo.list_purchase_orders(store_id, statut)
+            if not orders:
+                result = (
+                    f"No purchase orders for store '{store_id}'"
+                    + (f" with statut '{statut}'." if statut else ".")
+                )
+            else:
+                # Group by statut in lifecycle order so the output reads like the board
+                board_order = ["SUGGERE", "BROUILLON", "SOUMIS", "CONFIRME",
+                               "EXPEDIE", "RECU_PARTIEL", "RECU", "LITIGE", "ANNULE"]
+                by_statut: dict[str, list[dict]] = {}
+                for po in orders:
+                    by_statut.setdefault(po["statut"], []).append(po)
+                sections = []
+                for col in board_order:
+                    if col in by_statut:
+                        cards = "\n".join(_format_po(po) for po in by_statut[col])
+                        sections.append(f"── {col} ({len(by_statut[col])}) ──\n{cards}")
+                result = (
+                    f"=== Kanban PO: store {store_id} — {len(orders)} order(s) ===\n"
+                    + "\n\n".join(sections)
+                )
+
+        elif name == "get_purchase_order":
+            po_id = arguments.get("po_id")
+            po = SyncPurchaseOrderRepo.get_purchase_order_by_id(po_id)
+            if not po:
+                result = f"Purchase order '{po_id}' not found."
+            else:
+                allowed = sorted(ALLOWED_TRANSITIONS.get(po["statut"], set()))
+                result = (
+                    f"=== Purchase Order {po_id} ===\n"
+                    f"{_format_po(po)}\n"
+                    f"    transitions possibles: {allowed or '(terminal)'}"
+                )
+
+        elif name == "suggest_purchase_order":
+            recommendation_id = arguments.get("recommendation_id")
+            existing = SyncPurchaseOrderRepo.get_purchase_order_by_recommendation(recommendation_id)
+            if existing:
+                result = (
+                    f"A purchase order already exists for recommendation "
+                    f"'{recommendation_id}': PO {existing['po_id']} (statut {existing['statut']})."
+                )
+            else:
+                po = SyncPurchaseOrderRepo.create_suggestion_from_recommendation(recommendation_id)
+                if not po:
+                    result = (
+                        f"Could not create a suggestion from recommendation "
+                        f"'{recommendation_id}' — it must exist, reference a known "
+                        f"product, and have a usable suggested quantity."
+                    )
+                else:
+                    result = (
+                        f"Suggestion created on the Kanban (awaiting human approval):\n"
+                        f"{_format_po(po)}"
+                    )
+
+        elif name == "move_purchase_order":
+            po_id      = arguments.get("po_id")
+            new_statut = arguments.get("new_statut")
+            qty_recue  = arguments.get("quantite_recue")
+            existing = SyncPurchaseOrderRepo.get_purchase_order_by_id(po_id)
+            if not existing:
+                result = f"Purchase order '{po_id}' not found."
+            elif existing["statut"] == "SUGGERE":
+                # Human gate: SUGGERE -> BROUILLON/ANNULE must also flip the
+                # underlying recommendation, and only a human decides that.
+                result = (
+                    f"PO {po_id} is an agent suggestion (SUGGERE). Approving or "
+                    f"rejecting it is a human-only action — use the Kanban UI "
+                    f"(approve/reject), not this tool."
+                )
+            else:
+                try:
+                    updated = SyncPurchaseOrderRepo.update_status(
+                        po_id, new_statut, quantite_recue=qty_recue
+                    )
+                    if not updated:
+                        result = f"Purchase order '{po_id}' not found."
+                    else:
+                        result = (
+                            f"PO {po_id}: {existing['statut']} -> {new_statut}\n"
+                            f"{_format_po(updated)}"
+                        )
+                        if new_statut in ("RECU", "RECU_PARTIEL"):
+                            result += (
+                                "\n    Reception enregistree : stock incremente + "
+                                "mouvement RECEPTION_BC trace."
+                            )
+                except PurchaseOrderTransitionError as exc:
+                    result = f"Transition refusee: {exc}"
+
         else:
             return [TextContent(
                 type="text",

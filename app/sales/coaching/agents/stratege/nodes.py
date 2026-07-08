@@ -567,6 +567,17 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
         current_time=datetime.now().strftime("%H:%M"), hours_remaining=hours_remaining,
     )
 
+    # Boucle de feedback : taux de suivi des incitations + rejets HITL récents
+    # réinjectés pour que le Stratège adapte ses actions (jamais bloquant).
+    try:
+        import asyncio as _aio
+        from app.core.feedback_service import get_learning_context_sync
+        fb_ctx = await _aio.to_thread(get_learning_context_sync, sid, None)
+        if fb_ctx:
+            user_msg += "\n\n## FEEDBACK TERRAIN RÉCENT (adapte tes actions)\n" + fb_ctx
+    except Exception as _fb_err:
+        logger.debug(f"[STRATEGE] feedback context skipped: {_fb_err}")
+
     strategie_data = {}; llm_ok = False; llm_latency_ms = 0.0
     llm_response = ""; model_used = ""
 
