@@ -26,6 +26,19 @@ logger = logging.getLogger(__name__)
 # store_id -> list of connected WebSocket clients for the PO board.
 connections: Dict[str, List[Any]] = {}
 
+# The event loop the WebSocket objects are bound to (uvicorn's server loop).
+# A Starlette WebSocket can only be written from the loop that accepted it, so
+# a worker thread must hand the coroutine back to that loop rather than spin up
+# its own with asyncio.run(). Captured on the first WS accept (see
+# supply_routes.po_board_ws) and, defensively, at app startup.
+_server_loop: "asyncio.AbstractEventLoop | None" = None
+
+
+def set_server_loop(loop: "asyncio.AbstractEventLoop") -> None:
+    """Registers the loop that owns the WebSocket connections. Idempotent."""
+    global _server_loop
+    _server_loop = loop
+
 
 def _json_safe(obj: Any) -> Any:
     """
@@ -75,18 +88,45 @@ async def broadcast_po_suggested(po: Dict[str, Any]) -> None:
 
 def broadcast_po_suggested_sync(po: Dict[str, Any]) -> None:
     """
-    Sync wrapper for callers running outside an async context (the decision
-    agent's run() is plain sync code). Never raises — a failed broadcast must
-    not break the decision pipeline; the PO row is already committed either way.
+    Sync wrapper for callers running outside an async context — the decision
+    agent's run() is plain sync code executed in a ThreadPoolExecutor worker.
+
+    The coroutine is handed to the loop that owns the WebSockets rather than run
+    on a throwaway loop built by asyncio.run(): a Starlette WebSocket belongs to
+    the loop that accepted it, and creating/tearing down one loop per broadcast
+    is needless churn on the Windows Proactor loop.
+
+    Never raises, never blocks — a failed or slow broadcast must not stall the
+    decision pipeline; the PO row is already committed either way.
     """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(broadcast_po_suggested(po))
-        else:
-            loop.run_until_complete(broadcast_po_suggested(po))
-    except RuntimeError:
-        asyncio.run(broadcast_po_suggested(po))
+        # Already on an event loop (e.g. called from async route code).
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        if running is not None:
+            running.create_task(broadcast_po_suggested(po))
+            return
+
+        loop = _server_loop
+        if loop is None or loop.is_closed():
+            # No board client has ever connected, so nobody is listening.
+            logger.debug("[po_ws_bus] no server loop registered — skipping broadcast")
+            return
+
+        future = asyncio.run_coroutine_threadsafe(broadcast_po_suggested(po), loop)
+
+        def _log_failure(fut: Any) -> None:
+            exc = fut.exception()
+            if exc is not None:
+                logger.warning("[po_ws_bus] broadcast to board failed: %r", exc)
+
+        # Fire-and-forget: waiting here would block the agent worker on an event
+        # loop that may itself be busy, and the pipeline must never depend on a
+        # board client being responsive.
+        future.add_done_callback(_log_failure)
     except Exception as exc:
         logger.warning("[po_ws_bus] broadcast_po_suggested_sync failed: %s", exc)
 
