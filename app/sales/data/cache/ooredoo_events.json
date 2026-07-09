@@ -9,17 +9,17 @@
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-08T01:00:04.478732"
+      "date": "2026-07-09T22:02:01.129660"
     },
     {
-      "title": "INFINIX",
-      "type": "new_offer",
-      "category": "promotion",
-      "price": "569,00 DT",
-      "details": "INFINIX NOTE 60 PRO 12/256 5G | 1 569,00 DT",
+      "title": "[Go Back]",
+      "type": "tarif",
+      "category": "internet",
+      "price": "",
+      "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-08T01:00:04.504315"
+      "date": "2026-07-09T22:02:04.479129"
     }
   ],
   "active": [
@@ -31,17 +31,17 @@
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-08T01:00:04.478732"
+      "date": "2026-07-09T22:02:01.129660"
     },
     {
-      "title": "INFINIX",
-      "type": "new_offer",
-      "category": "promotion",
-      "price": "569,00 DT",
-      "details": "INFINIX NOTE 60 PRO 12/256 5G | 1 569,00 DT",
+      "title": "[Go Back]",
+      "type": "tarif",
+      "category": "internet",
+      "price": "",
+      "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-08T01:00:04.504315"
+      "date": "2026-07-09T22:02:04.479129"
     }
   ],
   "promotions": [],
@@ -54,20 +54,21 @@
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-08T01:00:04.478732"
-    },
-    {
-      "title": "INFINIX",
-      "type": "new_offer",
-      "category": "promotion",
-      "price": "569,00 DT",
-      "details": "INFINIX NOTE 60 PRO 12/256 5G | 1 569,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-08T01:00:04.504315"
+      "date": "2026-07-09T22:02:01.129660"
     }
   ],
-  "tarifs": [],
+  "tarifs": [
+    {
+      "title": "[Go Back]",
+      "type": "tarif",
+      "category": "internet",
+      "price": "",
+      "details": "",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-07-09T22:02:04.479129"
+    }
+  ],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-08T01:00:16.795406"
+  "fetched_at": "2026-07-09T22:02:10.773794"
 }

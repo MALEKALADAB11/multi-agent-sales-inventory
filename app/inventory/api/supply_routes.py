@@ -11,6 +11,7 @@ the inventory router's cache/WS machinery.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -62,6 +63,10 @@ _broadcast_po_status = po_ws_bus.broadcast_po_status
 @router.websocket("/ws/{store_id}")
 async def po_board_ws(websocket: WebSocket, store_id: str) -> None:
     await websocket.accept()
+    # The decision agent broadcasts from a worker thread; it needs a handle on
+    # the loop these sockets are bound to. This is the earliest point where we
+    # are guaranteed to be running on it.
+    po_ws_bus.set_server_loop(asyncio.get_running_loop())
     conns = po_ws_bus.connections.setdefault(store_id, [])
     conns.append(websocket)
     logger.info("[supply/ws] connected store=%s (total=%d)", store_id, len(conns))
@@ -208,6 +213,60 @@ async def create_purchase_order(
     logger.info("Purchase order %s created (BROUILLON) from recommendation %s",
                 po["po_id"], req.recommendation_id)
     return _decimal_safe(po)
+
+
+class SuggestPurchaseOrderRequest(BaseModel):
+    recommendation_id: str = Field(..., description="inventory.recommendations.id")
+
+
+@router.post("/purchase-orders/suggest")
+async def suggest_purchase_order(
+    request: Request,
+    req: SuggestPurchaseOrderRequest,
+) -> Dict[str, Any]:
+    """
+    Puts a SUGGERE card on the Kanban for a recommendation the agent has not
+    yet turned into one — the manual counterpart of the decision agent's
+    auto-suggestion, used by the "créer un ticket" action on a red product in
+    the inventory page.
+
+    Idempotent by design: the one-PO-per-recommendation rule is what makes it
+    safe to click twice. A second call returns the existing card (with
+    already_exists=true) instead of a 409, because from the operator's point of
+    view "the ticket is on the board" is the same successful outcome either way.
+    Unlike POST /purchase-orders it does NOT require the recommendation to be
+    approved — SUGGERE is precisely the pre-approval state, and the human gate
+    stays on the board's approve/reject buttons.
+    """
+    store_id = SyncPurchaseOrderRepo.get_recommendation_store_id(req.recommendation_id)
+    if not store_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Recommendation '{req.recommendation_id}' not found.",
+        )
+    await _require_store_access(request, store_id)
+
+    existing = SyncPurchaseOrderRepo.get_purchase_order_by_recommendation(req.recommendation_id)
+    if existing:
+        return _decimal_safe({**existing, "already_exists": True})
+
+    po = SyncPurchaseOrderRepo.create_suggestion_from_recommendation(
+        recommendation_id=req.recommendation_id,
+    )
+    if not po:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Could not suggest a purchase order for recommendation "
+                f"'{req.recommendation_id}' — it must reference a known product "
+                f"and carry a usable quantity."
+            ),
+        )
+
+    await po_ws_bus.broadcast_po_suggested(po)
+    logger.info("Purchase order %s suggested (SUGGERE) from recommendation %s",
+                po["po_id"], req.recommendation_id)
+    return _decimal_safe({**po, "already_exists": False})
 
 
 @router.patch("/purchase-orders/{po_id}")
