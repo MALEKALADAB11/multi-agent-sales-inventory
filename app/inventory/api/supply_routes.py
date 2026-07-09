@@ -79,6 +79,41 @@ async def po_board_ws(websocket: WebSocket, store_id: str) -> None:
         logger.info("[supply/ws] disconnected store=%s (remaining=%d)", store_id, len(conns))
 
 
+def _record_po_feedback(
+    po: Dict[str, Any],
+    po_id: str,
+    *,
+    decision: str,
+    decided_by: str,
+    reason: Optional[str] = None,
+) -> None:
+    """
+    Journalise la décision humaine sur un PO suggéré dans public.agent_feedback.
+    Le feedback_service agrège ces lignes et les réinjecte dans les prompts du
+    DecisionAgent/Stratège (boucle d'apprentissage). Jamais bloquant : la
+    transition du PO est déjà commitée quoi qu'il arrive ici.
+    """
+    try:
+        from app.core.feedback_service import record_feedback
+        record_feedback(
+            store_id=str(po.get("store_id") or "unknown"),
+            source="po",
+            decision=decision,                       # 'approved' | 'rejected'
+            ref_id=str(po_id),
+            sku=int(po["sku"]) if po.get("sku") is not None else None,
+            action_type="purchase_order",
+            reason=reason,
+            payload={
+                "decided_by": decided_by,
+                "quantite":   po.get("quantite_commandee"),
+                "urgency":    po.get("urgency"),
+                "statut":     po.get("statut"),
+            },
+        )
+    except Exception as exc:
+        logger.debug("Feedback PO %s non enregistré: %s", po_id, exc)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # REST endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +199,12 @@ async def create_purchase_order(
             ),
         )
 
+    # Kanban temps réel : sans ce broadcast, la nouvelle carte BROUILLON
+    # n'apparaît qu'au prochain rechargement de page. po_suggested est le
+    # seul event que le store Angular sait upserter (po_status_changed ne
+    # fait que déplacer une carte déjà connue).
+    await po_ws_bus.broadcast_po_suggested(po)
+
     logger.info("Purchase order %s created (BROUILLON) from recommendation %s",
                 po["po_id"], req.recommendation_id)
     return _decimal_safe(po)
@@ -242,6 +283,7 @@ async def approve_purchase_order(
         store_id=updated["store_id"], po_id=po_id, sku=updated["sku"],
         old_statut="SUGGERE", new_statut="BROUILLON",
     )
+    _record_po_feedback(updated, po_id, decision="approved", decided_by=req.decided_by)
     logger.info("Purchase order %s approved by %s (SUGGERE -> BROUILLON)", po_id, req.decided_by)
     return _decimal_safe(updated)
 
@@ -270,5 +312,7 @@ async def reject_purchase_order(
         store_id=updated["store_id"], po_id=po_id, sku=updated["sku"],
         old_statut="SUGGERE", new_statut="ANNULE",
     )
+    _record_po_feedback(updated, po_id, decision="rejected",
+                        decided_by=req.decided_by, reason=req.reason)
     logger.info("Purchase order %s rejected by %s (SUGGERE -> ANNULE)", po_id, req.decided_by)
     return _decimal_safe(updated)

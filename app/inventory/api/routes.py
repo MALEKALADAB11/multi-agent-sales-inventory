@@ -142,7 +142,8 @@ async def _push_update_to_store(store_id: str) -> None:
             payload = await loop.run_in_executor(
                 None,
                 lambda obj=business_objective: analyze_store(
-                    store_id, obj, force_refresh=True, fast=True
+                    store_id, obj, force_refresh=True, fast=True,
+                    page=1, page_size=0,
                 ),
             )
 
@@ -1063,6 +1064,17 @@ def analyze_store(
       GET /store/I63?page=2&page_size=100   → next 100
       GET /store/I63?page_size=0            → all (slow — avoid on large stores)
     """
+    # Direct Python calls (WS broadcast, get_summary) bypass FastAPI's
+    # dependency injection, so Query(...) sentinels leak through as defaults.
+    from fastapi.params import Query as _QueryParam
+    if isinstance(business_objective, _QueryParam):
+        business_objective = business_objective.default
+    if isinstance(force_refresh, _QueryParam):
+        force_refresh = force_refresh.default
+    if isinstance(page, _QueryParam):
+        page = page.default
+    if isinstance(page_size, _QueryParam):
+        page_size = page_size.default
     # Check cache first (no lock needed for read)
     if not force_refresh:
         cached = _get_cached(store_id, business_objective)
@@ -1530,6 +1542,30 @@ async def update_recommendation(
             "Recommendation %s → %s (by %s)",
             recommendation_id, req.status, req.decided_by or "unknown",
         )
+
+        # Boucle de feedback : la décision humaine (Approuver/Rejeter dans la
+        # page Inventory) est journalisée dans public.agent_feedback puis
+        # réinjectée dans les prompts DecisionAgent/Stratège par
+        # feedback_service.get_learning_context_sync. Jamais bloquant.
+        try:
+            from app.core.feedback_service import record_feedback
+            reco = SyncInventoryRepo.get_recommendation_by_id(recommendation_id) or {}
+            record_feedback(
+                store_id=str(reco.get("store_id") or "unknown"),
+                source="reco",
+                decision=req.status,                    # 'approved' | 'rejected'
+                ref_id=recommendation_id,
+                sku=int(reco["sku"]) if reco.get("sku") is not None else None,
+                action_type=reco.get("recommendation_type") or "recommendation",
+                payload={
+                    "decided_by":   req.decided_by,
+                    "order_qty":    reco.get("order_qty"),
+                    "urgency":      reco.get("urgency"),
+                },
+            )
+        except Exception as exc:
+            logger.debug("Feedback recommendation %s non enregistré: %s", recommendation_id, exc)
+
         return {
             "recommendation_id": recommendation_id,
             "status":            req.status,

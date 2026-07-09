@@ -1,20 +1,21 @@
 """
 
-coach_chat.py — Coach Chat "Claude-Like" v10.0 (Production)
+coach_chat.py — Coach Chat v11.0 (Production)
 =============================================================
-Philosophie : un coach qui PENSE, pas qui suit des règles.
+Philosophie : un coach qui PENSE, ancré dans les données réelles.
 
 ARCHITECTURE :
-  1. PERSONA-FIRST    — identité forte + 6 few-shots dans le prompt système
-  2. LEAN PROMPTS     — ~350 tokens système + ~200 tokens contexte = ~550 total
-                        (gpt-oss-120b:free digère mieux des prompts courts)
-  3. CONTEXT SELECTIF — seules les données utiles à CETTE question sont injectées
-  4. DEDUP CACHE 20s  — évite les réponses identiques sur double envoi rapide
-  5. RETRY 3 NIVEAUX  — OpenRouter full → OpenRouter stripped → Ollama → fallback intent
-  6. FALLBACK COHERENT— jamais d'alertes stock pour "bonjour"
-
-LLM primaire : OpenRouter gpt-oss-120b:free
-LLM fallback  : Ollama (premier modèle de chat disponible)
+  1. PERSONA-FIRST     — identité forte + méthode + few-shots dans le prompt système
+  2. STRATÈGE CÂBLÉ    — agent Stratège (LangGraph : météo réelle, fériés, promos,
+                         RAG, self-critique) invoqué serveur-side via l'orchestrateur
+                         résilient (cache 30 min, timeout borné, warm en arrière-plan)
+  3. RAG UNIFIÉ        — retriever partagé Milvus + fallback lexical corpus embarqué
+                         (le RAG ne tombe jamais à vide si Milvus/Ollama est down)
+  4. CONTEXT SELECTIF  — seules les données utiles à CETTE question sont injectées
+  5. DEDUP CACHE 20s   — évite les réponses identiques sur double envoi rapide
+  6. RETRY 4 NIVEAUX   — Mistral → OpenRouter full → OpenRouter stripped → Ollama
+                         → fallback intent
+  7. FALLBACK COHÉRENT — jamais d'alertes stock pour "bonjour"
 """
 
 import asyncio
@@ -66,9 +67,9 @@ _OR_MODEL_ROTATION = [
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
 ]
-MILVUS_URI       = "http://localhost:19530"
-COLLECTION       = "coaching_scripts"
-EMBED_DIM        = 768
+# Attente max du Stratège dans le flux chat (cache 30 min → généralement <1ms ;
+# cold start → le run continue en arrière-plan et chauffe le cache).
+COACH_STRATEGE_TIMEOUT = float(os.getenv("COACH_STRATEGE_TIMEOUT", "10"))
 
 DB_CFG = {
     "host":     os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
@@ -161,29 +162,40 @@ def _load_catalog(store_id: str) -> str:
         return _CATALOG_FALLBACK
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PERSONA SYSTÈME (stable — ~320 tokens)
+# PERSONA SYSTÈME v11 — identité + méthode + ancrage données + few-shots
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _build_system_prompt(catalog: str) -> str:
-    return f"""Tu es Coach, l'IA de vente d'Ooredoo Tunisie.
-Tu penses comme un directeur commercial senior qui fait du coaching terrain. Tu connais chaque produit par cœur, tu lis une situation de vente en un coup d'œil, tu donnes UN seul conseil actionnable. Pas de liste à rallonge, pas de langage corporatif.
+    return f"""Tu es COACH, l'IA de coaching commercial des boutiques Ooredoo Tunisie.
+Tu épaules le conseiller de vente en temps réel : scripts, objections, closing, upsell, conversion forfait, objectif du jour, stock. Tu penses comme un directeur commercial senior : tu lis la situation en un coup d'œil, tu choisis UNE action à fort impact, tu donnes l'argument exact, tu pousses au close.
+
+MÉTHODE (raisonne dans cet ordre, sans jamais l'afficher) :
+1. DIAGNOSTIC — que dit le bloc SITUATION ? (gap, heure, météo, stock, profil du conseiller)
+2. PRIORITÉ — l'action unique au meilleur ratio impact/temps MAINTENANT. La STRATÉGIE DU JOUR et les SCRIPTS TERRAIN fournis priment sur toute idée générique.
+3. PREUVE — chiffres réels de la SITUATION + prix exacts du CATALOGUE, rien d'autre.
+4. CLOSE — termine par une action immédiate et un encouragement.
+
+ANCRAGE DONNÉES (non négociable) :
+• Tout chiffre (prix, stock, CA, %) vient du bloc SITUATION ou du CATALOGUE — jamais de ta mémoire
+• Donnée absente = tu le dis en une demi-phrase et tu enchaînes sur ce que tu sais
+• Les ACTIONS STRATÈGE sont calculées sur la météo, le stock et les promos réels du jour — appuie-toi dessus en priorité
+• Les SCRIPTS TERRAIN sont des ventes réellement réussies en boutique — reprends leurs arguments, adapte-les au contexte
+• Aucun client, scénario ou situation inventé : si le message du conseiller ne décrit pas de client réel, tu n'en crées pas un
 
 TON STYLE :
 • Tutoiement chaleureux — tu es le collègue de confiance du conseiller
-• Décisif — 1 action concrète, pas 4 options
-• Court — 80 à 140 mots, sauf script complet explicitement demandé
-• Contextuel — tu t'appuies sur les vrais chiffres de la boutique
+• Décisif — 1 action concrète (2 max si urgence CRITICAL), jamais un menu d'options
+• Court — 80 à 140 mots ; script complet demandé = jusqu'à 180 mots, étapes numérotées
 • Termine toujours par "Vas-y !", "À toi !", "Allez !" ou "Maintenant !"
 
 JAMAIS :
 • Inventer un prix, une offre ou un SKU hors catalogue ci-dessous
-• Inventer un CLIENT, une SITUATION DE VENTE ou un SCÉNARIO qui n'est pas donné dans le bloc SITUATION ci-dessous — si la question du conseiller ne décrit aucun client réel, tu n'en inventes pas un
 • Répondre hors vente / stock / Ooredoo Tunisie
 • Écrire "je n'ai pas accès" ou "consulte le tableau de bord"
-• Produire du JSON, du code, des balises HTML
+• Produire du JSON, du code, de l'anglais, des balises HTML
 • Répéter deux fois la même information dans la même réponse
 
-SI TU NE COMPRENDS PAS LA QUESTION, ou si elle ne correspond à aucune situation de vente/stock réelle (message ambigu, hors-sujet non filtré, une question sans rapport) : NE PAS halluciner un client ou un script. Demande une clarification courte en 1 phrase, du style [clarification] ci-dessous.
+SI LE MESSAGE EST AMBIGU ou ne correspond à aucune situation de vente/stock réelle : NE PAS halluciner un client ou un script. Demande une clarification courte en 1 phrase, du style [clarification] ci-dessous.
 
 CATALOGUE OFFICIEL OOREDOO (seuls prix autorisés) :
 {catalog}
@@ -193,9 +205,11 @@ EXEMPLES DE RÉPONSES PARFAITES :
 [script iPhone] → «Script iPhone 16 Pro : 1. "Tu l'utilises pour quoi surtout ?" 2. Démo live puce A18 Pro — vitesse photo incomparable. 3. "1 299 TND ou 54 TND/mois sur 24 mois." 4. Bundle Assurance 9 TND/mois — écran remplacé en 48h. 5. Close : "Noir titane ou blanc naturel ?" Vas-y !»
 [objection trop cher] → «Réponds : "1 299 TND sur 24 mois = 54 TND/mois — moins qu'un café par jour. Et dans 2 ans valeur revente 400+ TND." Close : "Noir titane ou blanc naturel ?" À toi !»
 [bilan du jour] → «CA {{ca}} / {{target}} TND ({{perf}}%). Top : {{produit}} ({{qty}} vendus/7j). Dernière vente {{heure}}h. {{conseil Stratège en 1 ligne}}. Allez !»
+[question stratégie — actions Stratège fournies] → «Le Stratège a détecté {{cause en 5 mots}}. Priorité : {{action 1}} → {{produit}} ({{prix}} TND). Argument : "{{argument_vente}}". {{impact estimé}}. Vas-y !»
 [rupture stock] → «{{produit}} en rupture = {{nb}} ventes perdues en risque. Met le {{alternatif}} (349 TND) en avant + appelle le manager pour la commande. Maintenant !»
 [closing] → «Choix forcé : "Lequel vous correspond le mieux, noir ou blanc ?" Si résistance : "Il nous reste 2 unités — l'offre 0% expire ce soir." Silence 3 secondes. À toi !»
-[clarification — question incomprehensible ou sans client réel décrit] → «Je ne suis pas sûr de te suivre — tu veux un script de vente, un point sur le stock, ou un coup de main pour ton objectif du jour ? Dis-m'en un peu plus !»"""
+[donnée absente] → «Je n'ai pas le détail {{donnée}} sous la main, mais voilà ce que je vois : {{ce que la SITUATION donne}}. {{action}}. Allez !»
+[clarification — question incompréhensible ou sans client réel décrit] → «Je ne suis pas sûr de te suivre — tu veux un script de vente, un point sur le stock, ou un coup de main pour ton objectif du jour ? Dis-m'en un peu plus !»"""
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DEDUP CACHE (évite doublons sur envoi rapide — 20 secondes)
@@ -424,10 +438,12 @@ def _load_sales_detail_sync(store_id: str) -> dict:
 
 
 def _load_inventory_context_sync(store_id: str) -> dict:
-    """Stock complet : stats + alertes + top vendeurs + recos agent + KPI."""
+    """Stock complet : stats + alertes + top vendeurs + recos agent + KPI
+    + commandes fournisseur en cours + décisions humaines récentes."""
     import psycopg2, psycopg2.extras
     r = {"stats": {}, "alerts": [], "top_sellers": [], "agent_recos": [],
-         "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0}
+         "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0,
+         "pos": [], "decisions": []}
     try:
         conn = psycopg2.connect(**DB_CFG, connect_timeout=10)
         cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -510,6 +526,44 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                 for row in cur.fetchall()
             ]
 
+            # Commandes fournisseur vivantes (Kanban) — le coach doit savoir
+            # qu'une rupture a déjà sa commande en route avant de conseiller
+            # d'en repasser une (anti-hallucination / anti-conseil périmé).
+            cur.execute("""
+                SELECT COALESCE(p.nom, po.sku::text) AS nom, po.statut,
+                       po.quantite_commandee AS qty, po.source,
+                       po.date_livraison_prevue AS eta
+                FROM supply.purchase_orders po
+                LEFT JOIN sales.produits p ON p.sku = po.sku
+                WHERE po.store_id=%s AND po.statut NOT IN ('RECU','ANNULE')
+                ORDER BY po.updated_at DESC LIMIT 5
+            """, (store_id,))
+            r["pos"] = [
+                {"nom": row["nom"], "statut": row["statut"],
+                 "qty": int(row["qty"] or 0), "source": row["source"],
+                 "eta": str(row["eta"]) if row["eta"] else None}
+                for row in cur.fetchall()
+            ]
+
+            # Décisions humaines récentes (boucle feedback 0008) — approbations
+            # et rejets sur recommandations, PO et incitations des 7 derniers
+            # jours, pour que le coach reflète les derniers arbitrages.
+            cur.execute("""
+                SELECT af.source, af.decision, af.action_type, af.reason,
+                       COALESCE(p.nom, af.sku::text) AS nom
+                FROM public.agent_feedback af
+                LEFT JOIN sales.produits p ON p.sku = af.sku
+                WHERE af.store_id=%s
+                  AND af.created_at >= NOW() - INTERVAL '7 days'
+                ORDER BY af.created_at DESC LIMIT 5
+            """, (store_id,))
+            r["decisions"] = [
+                {"source": row["source"], "decision": row["decision"],
+                 "action": row["action_type"], "nom": row["nom"],
+                 "reason": (row["reason"] or "")[:80]}
+                for row in cur.fetchall()
+            ]
+
             # KPI terminaux et forfaits du jour
             cur.execute("""
                 SELECT
@@ -523,14 +577,19 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                 r["kpi_terminaux"] = int(row["kpi_terminaux"] or 0)
                 r["kpi_forfaits"]  = int(row["kpi_forfaits"]  or 0)
 
-            # CA moyen agent depuis advisor_profile
-            cur.execute("""
-                SELECT COALESCE(avg_daily_ca, 0) AS ca_moy
-                FROM monitoring.advisor_profile WHERE store_id=%s LIMIT 1
-            """, (store_id,))
-            row = cur.fetchone()
-            if row:
-                r["ca_moy_agent"] = float(row["ca_moy"] or 0)
+            # CA moyen agent depuis advisor_profile — la vue a été supprimée
+            # lors du nettoyage DB : to_regclass évite d'avorter la connexion
+            # (une erreur ici mettait psycopg2 en état aborted et logguait un
+            # warning à chaque message du coach).
+            cur.execute("SELECT to_regclass('monitoring.advisor_profile') AS v")
+            if (cur.fetchone() or {}).get("v"):
+                cur.execute("""
+                    SELECT COALESCE(avg_daily_ca, 0) AS ca_moy
+                    FROM monitoring.advisor_profile WHERE store_id=%s LIMIT 1
+                """, (store_id,))
+                row = cur.fetchone()
+                if row:
+                    r["ca_moy_agent"] = float(row["ca_moy"] or 0)
 
         finally:
             cur.close(); conn.close()
@@ -645,50 +704,79 @@ def _load_advisor_profile_sync(advisor_name: str, store_id: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3. RAG (Milvus + Ollama embeddings — coaching seulement)
+# 3. RAG (retriever partagé — Milvus sémantique + fallback lexical corpus)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _search_rag_sync(query: str, hour: int, top_k: int = 2, min_score: float = 0.32) -> tuple[list, bool]:
+def _search_rag_sync(query: str, hour: int, top_k: int = 3, min_score: float = 0.32) -> tuple[list, bool]:
     try:
-        import requests as _req
-        resp = _req.post(
-            f"{OLLAMA_URL}/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": query[:400]},
-            timeout=8,
-        )
-        emb = resp.json().get("embedding", [])
-        if not emb:
-            return [], False
-        if len(emb) < EMBED_DIM: emb += [0.0] * (EMBED_DIM - len(emb))
-        emb = emb[:EMBED_DIM]
-
-        from pymilvus import MilvusClient
-        client  = MilvusClient(uri=MILVUS_URI)
-        results = client.search(
-            collection_name=COLLECTION, data=[emb], limit=top_k + 2,
-            output_fields=["categorie","situation","action","produit","argument","impact","heure_min","heure_max"],
-        )
-        scripts = []
-        for hit in results[0]:
-            e     = hit["entity"]
-            score = float(hit["distance"])
-            if int(e.get("heure_min", 0)) <= hour <= int(e.get("heure_max", 24)):
-                score += 0.10
-            scripts.append({
-                "score":     round(score, 3),
-                "categorie": e.get("categorie", ""),
-                "situation": e.get("situation", ""),
-                "action":    e.get("action", "")[:100],
-                "argument":  e.get("argument", "")[:100],
-                "produit":   e.get("produit", ""),
-                "impact":    e.get("impact", ""),
-            })
-        scripts = sorted(scripts, key=lambda x: x["score"], reverse=True)[:top_k]
-        relevant = bool(scripts) and scripts[0]["score"] >= min_score
-        return scripts, relevant
+        from app.sales.data.rag_retriever import search_scripts
+        res = search_scripts(query, hour=hour, top_k=top_k, min_score=min_score)
+        if res["source"] == "corpus":
+            logger.info("[COACH RAG] Milvus indisponible — fallback corpus embarqué")
+        return res["scripts"], res["relevant"]
     except Exception as e:
-        logger.debug("[COACH RAG] %.50s", str(e))
+        logger.debug("[COACH RAG] %.80s", str(e))
         return [], False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3b. STRATÈGE (agent LangGraph : contexte réel météo/fériés/promos + RAG
+#     + self-critique) — invoqué via l'orchestrateur résilient
+# ══════════════════════════════════════════════════════════════════════════════
+
+_EMPTY_STRAT: dict = {"actions": [], "source": "none", "extras": {}}
+
+
+async def _get_stratege_for_chat(store_id: str, ca: float, target: float,
+                                 urgency: str) -> dict:
+    """
+    Invoque l'agent Stratège serveur-side pour ancrer le coach dans la vraie
+    stratégie du jour (météo Open-Meteo, fériés, promos actives, RAG, critique).
+
+    Résilience :
+      - Cache orchestrateur 30 min (clé store+gap) → la plupart des messages <1ms
+      - Cold start : attente bornée à COACH_STRATEGE_TIMEOUT ; au-delà, le run
+        continue en arrière-plan pour chauffer le cache — le chat n'est jamais bloqué
+      - Toute erreur → dict vide, le coach répond avec le reste du contexte
+    """
+    try:
+        from app.sales.coaching.orchestrator.bootstrap import get_orchestrator
+        orchestrator = get_orchestrator()
+    except Exception as e:
+        logger.debug("[COACH STRAT] Orchestrateur indisponible: %.60s", str(e))
+        return dict(_EMPTY_STRAT)
+
+    gap_amount = max(0.0, target - ca)
+    gap_pct    = round(gap_amount / target * 100, 1) if target > 0 else 0.0
+    cycle_id   = f"chat-{store_id}-{int(time.time())}"
+    state = {
+        "cycle_id":          cycle_id,
+        "pos_data":          {"store_id": store_id, "current_revenue": ca,
+                              "daily_target": target},
+        "gap_objectif":      gap_pct,
+        "gap_amount":        gap_amount,
+        "urgency_level":     urgency,
+        "strategie_actions": [],
+        "metrics":           {"cycle_id": cycle_id},
+    }
+
+    task = asyncio.create_task(orchestrator.invoke(state))
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task),
+                                        timeout=COACH_STRATEGE_TIMEOUT)
+        logger.info("[COACH STRAT] %s | %d actions | %.0fms",
+                    result.source, result.nb_actions, result.latency_ms)
+        return {"actions": result.actions, "source": result.source,
+                "extras": getattr(result, "extras", None) or {}}
+    except asyncio.TimeoutError:
+        logger.info("[COACH STRAT] > %.0fs — le Stratège continue en arrière-plan "
+                    "(cache chaud pour le prochain message)", COACH_STRATEGE_TIMEOUT)
+        task.add_done_callback(
+            lambda t: t.exception() if not t.cancelled() else None)
+        return {"actions": [], "source": "warming", "extras": {}}
+    except Exception as e:
+        logger.warning("[COACH STRAT] Erreur: %.80s", str(e))
+        return dict(_EMPTY_STRAT)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. SITUATION BLOCK (contexte sélectif par intent — ~100-220 tokens)
@@ -715,15 +803,33 @@ def _build_situation(
     recent_tx: list,
     inv_ctx: dict,
     advisor_profile: dict | None = None,
+    strat_extras: dict | None = None,
 ) -> str:
-    """Bloc de situation — adapté à l'intent, compact et actionnable."""
+    """
+    Bloc de situation CROSS-DOMAINE : les sorties des agents SALES (analyste,
+    stratège) ET INVENTORY (alertes stock, agent décision, KPIs) sont toujours
+    visibles — le coach peut répondre vente, stock, ou mixer les deux.
+    Le niveau de détail par domaine s'adapte à l'intent détecté.
+    """
+    strat_extras = strat_extras or {}
+
+    # Météo réelle du Stratège (Open-Meteo) prioritaire sur le label frontend
+    weather_line = weather
+    if strat_extras.get("weather_label"):
+        try:
+            eff = float(strat_extras.get("weather_effect", 0) or 0)
+            weather_line = f"{strat_extras['weather_label']} (trafic {eff:+.0%})"
+        except (TypeError, ValueError):
+            weather_line = strat_extras["weather_label"]
 
     lines = [
-        f"SITUATION {advisor_name} | {store_id} | {hour}h | {weather} | Urgence : {urgency}",
+        f"SITUATION {advisor_name} | {store_id} | {hour}h | Météo : {weather_line} | Urgence : {urgency}",
         f"Performance : {ca:,.0f}/{target:,.0f} TND ({perf:.0f}%) | Gap : {gap:,.0f} TND | {hours_left}h restantes",
     ]
+    if strat_extras.get("is_holiday") and strat_extras.get("holiday_name"):
+        lines.append(f"Jour férié aujourd'hui : {strat_extras['holiday_name']}")
 
-    # Advisor profile enrichment (S3.3)
+    # ── Profil conseiller (S3.3) ─────────────────────────────────────────────
     if advisor_profile:
         prof_parts = []
         if advisor_profile.get("seniority_days") is not None:
@@ -746,84 +852,125 @@ def _build_situation(
     if cause:
         lines.append(f"Cause gap : {cause}")
 
-    if mode == "coaching":
-        if actions:
-            a = actions[0]
+    # ── STRATÉGIE DU JOUR (agent Stratège — tous modes) ──────────────────────
+    strat_summary = strat_extras.get("strategie_summary", "")
+    focus         = strat_extras.get("focus_produits") or []
+    if strat_summary or actions:
+        lines.append("STRATÉGIE DU JOUR (agent Stratège — météo/stock/promos réels) :")
+        if strat_summary:
+            lines.append(f"  Résumé : {strat_summary[:200]}")
+        n_actions = 3 if mode in ("coaching", "cross_domain") else 1
+        for a in actions[:n_actions]:
             lines.append(
-                f"Action Stratège : {a.get('action','')} → {a.get('produit_cible','')} "
-                f"| Argument : {a.get('argument_vente','')[:80]}"
+                f"  {a.get('priorite', 1)}. {str(a.get('action', ''))[:120]} "
+                f"→ {a.get('produit_cible', '')} "
+                f"| «{str(a.get('argument_vente', ''))[:110]}» "
+                f"| {str(a.get('impact_estime', ''))[:60]}"
             )
-        if rag_scripts:
-            s = rag_scripts[0]
-            lines.append(
-                f"Script terrain [{s['categorie']}] : {s['action'][:90]} "
-                f"| {s.get('argument','')[:80]}"
-            )
+        if focus:
+            lines.append(f"  Produits focus : {', '.join(str(f) for f in focus[:3])}")
 
-    elif mode in ("inventory", "cross_domain"):
-        alerts   = inv_ctx.get("alerts", [])
-        top_inv  = inv_ctx.get("top_sellers", [])
-        stats    = inv_ctx.get("stats", {})
-        recos    = inv_ctx.get("agent_recos", [])
-        kpi_t    = inv_ctx.get("kpi_terminaux", 0)
-        kpi_f    = inv_ctx.get("kpi_forfaits", 0)
+    # ── VENTES (agent analyste — toujours visible, détaillé si recap) ────────
+    if top_sellers:
+        n = 3 if qtype == "recap" else 2
+        t_str = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:n])
+        lines.append(f"Ventes — top produits 7j : {t_str}")
+    if recent_tx:
+        r0 = recent_tx[0]
+        lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
 
+    # ── STOCK (agents inventory — toujours visible, détaillé si stock/mixte) ─
+    stats  = inv_ctx.get("stats", {})
+    alerts = inv_ctx.get("alerts", [])
+    recos  = inv_ctx.get("agent_recos", [])
+    if stats.get("total"):
         lines.append(
             f"Stock : {stats.get('total',0)} SKUs | "
             f"Ruptures : {stats.get('ruptures',0)} | "
             f"Critiques : {stats.get('critiques',0)} | "
             f"OK : {stats.get('ok_count',0)}"
         )
+    inv_detail = mode in ("inventory", "cross_domain")
+    if alerts:
+        n_alerts = 4 if inv_detail else 2
+        lines.append("Alertes stock :")
+        for a in alerts[:n_alerts]:
+            icon = "X" if a["level"] == "rupture" else "!"
+            lines.append(f"  {icon} {a['nom']} — {a['qty']} unité(s) | rupture J+{a['jours']:.0f}")
+    if inv_detail:
+        kpi_t = inv_ctx.get("kpi_terminaux", 0)
+        kpi_f = inv_ctx.get("kpi_forfaits", 0)
         if kpi_t or kpi_f:
             lines.append(f"KPI jour : {kpi_t} terminaux vendus · {kpi_f} forfaits vendus")
-        if alerts:
-            lines.append("Alertes :")
-            for a in alerts[:4]:
-                icon = "X" if a["level"] == "rupture" else "!"
-                lines.append(f"  {icon} {a['nom']} — {a['qty']} unité(s) | rupture J+{a['jours']:.0f}")
+        top_inv = inv_ctx.get("top_sellers", [])
         if top_inv:
-            lines.append("Top vendeurs (vélocité) :")
+            lines.append("Rotation (vélocité) :")
             for t in top_inv[:3]:
                 lines.append(f"  {t['nom']} — {t['sold']}/7j | stock {t['stock']} | J+{t['jours']:.0f}")
-        if recos:
-            lines.append("Agent Décision : " + " · ".join(
-                f"[{r['type']}] {r['nom']} x{r['qty']}" for r in recos[:2]
-            ))
-        if mode == "cross_domain" and actions:
-            a = actions[0]
-            lines.append(f"Stratège : {a.get('action','')} → {a.get('produit_cible','')}")
+    if recos:
+        n_recos = 3 if inv_detail else 1
+        lines.append("Agent Décision (réappro) : " + " · ".join(
+            f"[{r['type']}] {r['nom']} x{r['qty']}" for r in recos[:n_recos]
+        ))
 
-    elif qtype == "recap":
-        if top_sellers:
-            t3 = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:3])
-            lines.append(f"Top produits (7j) : {t3}")
-        if recent_tx:
-            r0 = recent_tx[0]
-            lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
-        if actions:
-            a = actions[0]
-            lines.append(f"Conseil Stratège : {a.get('action','')} → {a.get('produit_cible','')}")
-        ruptures = inv_ctx.get("stats", {}).get("ruptures", 0)
-        if ruptures > 0:
-            lines.append(f"Alerte : {ruptures} rupture(s) en cours")
-
-    else:  # conversation générale — aucun mot-clé métier détecté dans le message
-        # Filet de sécurité : même mal classée, la question peut porter sur des
-        # données réelles déjà chargées (dernière vente, top produits...). On les
-        # expose systématiquement pour éviter que le coach ignore la DB/les agents.
-        if recent_tx:
-            r0 = recent_tx[0]
-            lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
-        if top_sellers:
-            t3 = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:3])
-            lines.append(f"Top produits (7j) : {t3}")
-        if actions:
-            a = actions[0]
-            lines.append(f"Action du jour : {a.get('action','')} → {a.get('produit_cible','')}")
+    # ── COMMANDES EN COURS + DÉCISIONS HUMAINES (état frais — le coach ne
+    #    doit jamais conseiller de commander un produit dont la commande est
+    #    déjà en route, ni contredire un arbitrage humain récent) ────────────
+    pos = inv_ctx.get("pos", [])
+    if pos:
+        n_pos = 5 if inv_detail else 2
+        _STATUT_FR = {"SUGGERE": "suggérée (en attente manager)", "BROUILLON": "brouillon",
+                      "SOUMIS": "soumise", "CONFIRME": "confirmée",
+                      "EXPEDIE": "expédiée", "RECU_PARTIEL": "reçue partiellement",
+                      "LITIGE": "en litige"}
+        lines.append("Commandes fournisseur en cours (Kanban) :")
+        for po in pos[:n_pos]:
+            eta = f" — livraison prévue {po['eta']}" if po.get("eta") else ""
+            src = " [agent]" if po.get("source") == "AGENT" else ""
+            lines.append(
+                f"  {po['nom']} x{po['qty']} — {_STATUT_FR.get(po['statut'], po['statut'])}{src}{eta}"
+            )
         lines.append(
-            "Note : si des données ci-dessus répondent à la question, utilise-les. "
-            "Sinon, si la question est incomprehensible ou hors-sujet, demande une "
-            "clarification en 1 phrase — n'invente aucun client ni situation."
+            "  → Ces produits ont DÉJÀ une commande en route : ne pas conseiller "
+            "d'en repasser une, annoncer plutôt l'arrivée."
+        )
+    decisions = inv_ctx.get("decisions", [])
+    if decisions and inv_detail:
+        _DEC_FR = {"approved": "approuvé", "rejected": "rejeté",
+                   "followed": "suivi", "ignored": "ignoré"}
+        lines.append("Décisions humaines récentes (7j) : " + " · ".join(
+            f"{_DEC_FR.get(d['decision'], d['decision'])} — {d['nom'] or d['action']}"
+            + (f" ({d['reason']})" if d.get("reason") else "")
+            for d in decisions[:3]
+        ))
+
+    # ── SCRIPTS TERRAIN (RAG — intents coaching) ─────────────────────────────
+    if rag_scripts and mode in ("coaching", "cross_domain"):
+        try:
+            from app.sales.data.rag_retriever import format_scripts_block
+            block = format_scripts_block(rag_scripts, max_n=2)
+            if block:
+                lines.append(block)
+        except Exception:
+            s = rag_scripts[0]
+            lines.append(
+                f"Script terrain [{s['categorie']}] : {s['action'][:90]} "
+                f"| {s.get('argument','')[:80]}"
+            )
+
+    # ── Consigne de lecture ──────────────────────────────────────────────────
+    if mode == "cross_domain":
+        lines.append(
+            "Consigne : la question croise VENTE et STOCK — combine les deux "
+            "(ex : produit à pousser = demande forte ET stock disponible ; "
+            "rupture = proposer l'alternative en stock)."
+        )
+    elif qtype == "general":
+        lines.append(
+            "Note : si des données ci-dessus répondent à la question, utilise-les "
+            "(vente, stock, ou les deux). Sinon, si la question est incompréhensible "
+            "ou hors-sujet, demande une clarification en 1 phrase — n'invente aucun "
+            "client ni situation."
         )
 
     return "\n".join(lines)
@@ -1169,32 +1316,41 @@ async def coach_chat(request: Request, body: dict):
                              "hour": hour, "performance": perf},
         })
 
-    # ── Chargement contexte en parallèle ────────────────────────────────────
-    need_inv = mode in ("inventory", "cross_domain") or qtype == "recap"
+    # ── Chargement contexte en parallèle — CROSS-DOMAINE systématique ───────
+    # Le coach reçoit toujours les sorties des agents SALES (analyste, stratège)
+    # ET INVENTORY (alertes stock, agent décision) : il peut répondre vente,
+    # stock, ou mixer les deux quel que soit l'intent détecté.
     loop = asyncio.get_event_loop()
 
-    if need_inv:
-        pos_data, sales_detail, inv_ctx, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_inventory_context_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-    else:
-        pos_data, sales_detail, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-        inv_ctx = {"stats": {}, "alerts": [], "top_sellers": [], "agent_recos": [],
-                   "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0}
-
+    # POS d'abord (1 requête rapide) : le Stratège reçoit le vrai CA du jour
+    # → gap exact + clé de cache orchestrateur stable.
+    pos_data = await loop.run_in_executor(None, _load_pos_sync, store_id)
     ca     = ca_ctx or pos_data.get("ca", 0.0)
     target = target_ctx
+
+    # Le Stratège serveur-side n'est invoqué que si le frontend n'a pas déjà
+    # fourni ses actions (cycle planifié) — cache orchestrateur 30 min.
+    strat_coro = (
+        _get_stratege_for_chat(store_id, ca, target, urgency)
+        if not actions_ctx else None
+    )
+
+    sales_detail, inv_ctx, day_history, catalog, adv_profile, strat = await asyncio.gather(
+        loop.run_in_executor(None, _load_sales_detail_sync, store_id),
+        loop.run_in_executor(None, _load_inventory_context_sync, store_id),
+        loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
+        loop.run_in_executor(None, _load_catalog, store_id),
+        loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
+        strat_coro if strat_coro is not None else asyncio.sleep(0, result=dict(_EMPTY_STRAT)),
+    )
+
+    strat_extras = strat.get("extras") or {}
+    strat_source = strat.get("source", "frontend" if actions_ctx else "none")
+    if not actions_ctx:
+        actions_ctx = strat.get("actions") or []
+    if not cause_ctx and strat_extras.get("cause_racine"):
+        cause_ctx = strat_extras["cause_racine"]
+
     perf   = round((ca / target * 100), 1) if target > 0 else 0.0
     gap    = max(0.0, target - ca)
     nb_tx  = pos_data.get("nb_tx", 0) or len(sales_detail.get("recent_tx", []))
@@ -1202,19 +1358,19 @@ async def coach_chat(request: Request, body: dict):
     top_sellers = sales_detail.get("top_sellers", [])
     recent_tx   = sales_detail.get("recent_tx", [])
 
-    # ── RAG (coaching seulement) ─────────────────────────────────────────────
+    # ── RAG (intents coaching + cross-domaine) ───────────────────────────────
     rag_scripts, rag_relevant, rag_query, rag_ms = [], False, "", 0.0
-    if mode == "coaching" or qtype in ("script","objection","closing","upsell","forfait","objectif"):
+    if mode in ("coaching", "cross_domain") or qtype in ("script","objection","closing","upsell","forfait","objectif"):
         rag_query = f"{message} {qtype} vente telecom Ooredoo"
         if gap > target * 0.4:
             rag_query += " gap critique urgent"
         _rag_t0 = time.time()
         rag_scripts, rag_relevant = await loop.run_in_executor(
-            None, _search_rag_sync, rag_query, hour, 2
+            None, _search_rag_sync, rag_query, hour, 3
         )
         rag_ms = (time.time() - _rag_t0) * 1000
 
-    # ── Prompt (système lean + situation sélective) ─────────────────────────
+    # ── Prompt (système v11 + situation cross-domaine) ──────────────────────
     system_prompt = _build_system_prompt(catalog)
 
     situation_block = _build_situation(
@@ -1225,6 +1381,7 @@ async def coach_chat(request: Request, body: dict):
         actions=actions_ctx, rag_scripts=rag_scripts,
         top_sellers=top_sellers, recent_tx=recent_tx,
         inv_ctx=inv_ctx, advisor_profile=adv_profile,
+        strat_extras=strat_extras,
     )
     user_message = f"{situation_block}\n\nQUESTION DU CONSEILLER : {message}"
 
@@ -1312,7 +1469,8 @@ async def coach_chat(request: Request, body: dict):
                 for a in inv_ctx.get("alerts", [])
             }
         }
-        _focus = inv_ctx.get("focus_produits") or []
+        _focus = (strat_extras.get("focus_produits")
+                  or inv_ctx.get("focus_produits") or [])
         _grd = evaluate_guardrails(
             recommendation={
                 "product_to_push":     _focus[0] if _focus else None,
@@ -1503,7 +1661,7 @@ async def coach_chat(request: Request, body: dict):
         "mode":            mode,
         "domain":          domain,
         "question_type":   qtype,
-        "source":          f"v10_{model_used}",
+        "source":          f"v11_{model_used}",
         "model":           model_used,
         "confidence":      round(confidence, 3),
         "rag_used":        rag_relevant,
@@ -1545,6 +1703,9 @@ async def coach_chat(request: Request, body: dict):
             for a in inv_ctx.get("alerts", [])[:3]
         ],
         "agent_recos":      inv_ctx.get("agent_recos", [])[:3],
+        "strategie_actions": actions_ctx[:3],
+        "stratege_source":  strat_source,
+        "cause_racine":     cause_ctx,
         "scored_products":  _scored_products,
         "guardrail_status": _grd.get("status", "APPROVE"),
         "guardrail_issues": _grd.get("issues", []),
@@ -1648,31 +1809,35 @@ async def coach_chat_stream(request: Request, body: dict):
         return _SR(_greeting_gen(), media_type="text/event-stream",
                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    need_inv = mode in ("inventory", "cross_domain") or qtype == "recap"
-    loop     = asyncio.get_event_loop()
+    # Contexte CROSS-DOMAINE systématique (agents sales + inventory) + Stratège
+    # serveur-side si le frontend n'a pas fourni ses actions.
+    loop = asyncio.get_event_loop()
 
-    if need_inv:
-        pos_data, sales_detail, inv_ctx_data, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_inventory_context_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-    else:
-        pos_data, sales_detail, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-        inv_ctx_data = {"stats": {}, "alerts": [], "top_sellers": [], "agent_recos": [],
-                        "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0}
-
+    pos_data = await loop.run_in_executor(None, _load_pos_sync, store_id)
     ca     = ca_ctx or pos_data.get("ca", 0.0)
     target = target_ctx
+
+    strat_coro = (
+        _get_stratege_for_chat(store_id, ca, target, urgency)
+        if not actions_ctx else None
+    )
+
+    sales_detail, inv_ctx_data, day_history, catalog, adv_profile, strat = await asyncio.gather(
+        loop.run_in_executor(None, _load_sales_detail_sync, store_id),
+        loop.run_in_executor(None, _load_inventory_context_sync, store_id),
+        loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
+        loop.run_in_executor(None, _load_catalog, store_id),
+        loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
+        strat_coro if strat_coro is not None else asyncio.sleep(0, result=dict(_EMPTY_STRAT)),
+    )
+
+    strat_extras = strat.get("extras") or {}
+    strat_source = strat.get("source", "frontend" if actions_ctx else "none")
+    if not actions_ctx:
+        actions_ctx = strat.get("actions") or []
+    if not cause_ctx and strat_extras.get("cause_racine"):
+        cause_ctx = strat_extras["cause_racine"]
+
     perf   = round((ca / target * 100), 1) if target > 0 else 0.0
     gap    = max(0.0, target - ca)
 
@@ -1680,13 +1845,13 @@ async def coach_chat_stream(request: Request, body: dict):
     recent_tx   = sales_detail.get("recent_tx", [])
 
     rag_scripts, rag_relevant, rag_query, rag_ms = [], False, "", 0.0
-    if mode == "coaching" or qtype in ("script", "objection", "closing", "upsell", "forfait", "objectif"):
+    if mode in ("coaching", "cross_domain") or qtype in ("script", "objection", "closing", "upsell", "forfait", "objectif"):
         rag_query = f"{message} {qtype} vente telecom Ooredoo"
         if gap > target * 0.4:
             rag_query += " gap critique urgent"
         _rag_t0 = time.time()
         rag_scripts, rag_relevant = await loop.run_in_executor(
-            None, _search_rag_sync, rag_query, hour, 2
+            None, _search_rag_sync, rag_query, hour, 3
         )
         rag_ms = (time.time() - _rag_t0) * 1000
 
@@ -1699,6 +1864,7 @@ async def coach_chat_stream(request: Request, body: dict):
         actions=actions_ctx, rag_scripts=rag_scripts,
         top_sellers=top_sellers, recent_tx=recent_tx,
         inv_ctx=inv_ctx_data, advisor_profile=adv_profile,
+        strat_extras=strat_extras,
     )
     user_message = f"{situation_block}\n\nQUESTION DU CONSEILLER : {message}"
 
@@ -1713,27 +1879,42 @@ async def coach_chat_stream(request: Request, body: dict):
         model_used = ""
         streamed_ok = False
 
-        if OPENROUTER_KEY:
-            try:
-                messages = [{"role": "system", "content": system_prompt}]
-                if day_history:
-                    messages.extend(day_history[-8:])
-                messages.append({"role": "user", "content": user_message})
+        messages = [{"role": "system", "content": system_prompt}]
+        if day_history:
+            messages.extend(day_history[-8:])
+        messages.append({"role": "user", "content": user_message})
 
+        # Providers streaming par ordre de priorité : Mistral (rotation de
+        # modèles, quota indépendant), puis OpenRouter en secours.
+        providers: list[tuple[str, str, dict]] = []
+        if MISTRAL_KEY:
+            for _m in _MISTRAL_MODEL_ROTATION:
+                providers.append((_m, MISTRAL_URL, {
+                    "Authorization": f"Bearer {MISTRAL_KEY}",
+                    "Content-Type":  "application/json; charset=utf-8",
+                }))
+        if OPENROUTER_KEY:
+            providers.append((OPENROUTER_MODEL, OPENROUTER_URL, {
+                "Authorization": f"Bearer {OPENROUTER_KEY}",
+                "Content-Type":  "application/json; charset=utf-8",
+                "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                "X-Title":       "AI Sales Coach Ooredoo v11 stream",
+            }))
+
+        for _model, _url, _headers in providers:
+            if streamed_ok:
+                break
+            try:
                 body = json.dumps({
-                    "model": OPENROUTER_MODEL, "max_tokens": max_tokens,
+                    "model": _model, "max_tokens": max_tokens,
                     "temperature": temp, "messages": messages, "stream": True,
                 }, ensure_ascii=False).encode("utf-8")
 
-                headers = {
-                    "Authorization": f"Bearer {OPENROUTER_KEY}",
-                    "Content-Type":  "application/json; charset=utf-8",
-                    "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                    "X-Title":       "AI Sales Coach Ooredoo v10 stream",
-                }
-
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    async with client.stream("POST", OPENROUTER_URL, headers=headers, content=body) as resp:
+                    async with client.stream("POST", _url, headers=_headers, content=body) as resp:
+                        if resp.status_code >= 400:
+                            logger.warning("[COACH STREAM] %s → HTTP %s", _model, resp.status_code)
+                            continue
                         async for line in resp.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -1748,9 +1929,16 @@ async def coach_chat_stream(request: Request, body: dict):
                                     streamed_ok = True
                             except Exception:
                                 continue
-                model_used = OPENROUTER_MODEL
+                if streamed_ok:
+                    model_used = _model
             except Exception as e:
-                logger.warning("[COACH STREAM] OR error: %.80s", str(e))
+                logger.warning("[COACH STREAM] %s error: %.80s", _model, str(e))
+                # Si des tokens sont déjà partis, ne pas re-streamer un autre
+                # provider (texte dupliqué côté client) — on garde le partiel.
+                if full_reply:
+                    streamed_ok = True
+                    model_used = _model
+                    break
 
         # Fallback: non-streaming chain → word-by-word replay
         if not streamed_ok:
@@ -1907,7 +2095,7 @@ async def coach_chat_stream(request: Request, body: dict):
 
         asyncio.create_task(_persist_stream())
 
-        yield f'data: {json.dumps({"done": True, "reply": final_reply, "rag_used": rag_relevant, "source": f"v10_{model_used}", "model": model_used, "guardrail_status": _sgrd.get("status", "APPROVE"), "guardrail_issues": _sgrd.get("issues", []), "requires_hitl": _sgrd.get("requires_human_validation", False)})}\n\n'
+        yield f'data: {json.dumps({"done": True, "reply": final_reply, "rag_used": rag_relevant, "source": f"v11_{model_used}", "model": model_used, "stratege_source": strat_source, "strategie_actions": actions_ctx[:3], "cause_racine": cause_ctx, "guardrail_status": _sgrd.get("status", "APPROVE"), "guardrail_issues": _sgrd.get("issues", []), "requires_hitl": _sgrd.get("requires_human_validation", False)})}\n\n'
 
     return _SR(
         _sse_gen(),
@@ -1924,32 +2112,29 @@ async def coach_chat_stream(request: Request, body: dict):
 async def coach_health():
     return JSONResponse({
         "status":       "ok",
-        "version":      "10.0.0",
-        "architecture": "claude-like persona-first lean-prompts",
+        "version":      "11.0.0",
+        "architecture": "persona-first cross-domain, stratège server-side, RAG unifié",
         "features": [
-            "persona_first_prompting",
+            "persona_first_prompting_v11",
             "few_shot_in_system_prompt",
-            "lean_context_selection",
-            "intent_selective_context",
+            "cross_domain_context_always_loaded",
+            "stratege_server_side_orchestrated",
+            "stratege_cache_30min_background_warm",
+            "rag_unified_milvus_plus_corpus_fallback",
+            "intent_selective_detail",
             "response_dedup_cache_20s",
             "greeting_fast_path_no_llm",
             "off_topic_guard",
-            "retry_chain_3_levels",
+            "retry_chain_4_levels",
             "ollama_chat_fallback",
             "intent_aware_fallback",
             "response_validator",
             "async_persist_nonblocking",
             "parallel_context_loading",
-            "selective_inventory_loading",
             "dynamic_catalog_db_10min_ttl",
         ],
         "llm_primary":  OPENROUTER_MODEL,
         "llm_fallback": "ollama_local_chat_model",
         "llm_available": bool(OPENROUTER_KEY),
-        "prompt_tokens_approx": {
-            "system_persona": "~320",
-            "catalog":        "~80 (dynamique DB)",
-            "situation_block": "100-220 (intent-sélectif)",
-            "total_per_call":  "~500-620",
-        },
+        "stratege_timeout_s": COACH_STRATEGE_TIMEOUT,
     })
