@@ -10,7 +10,6 @@ import logging
 import os
 import re
 import time
-import requests
 from datetime import datetime
 
 from langchain_ollama import ChatOllama
@@ -35,8 +34,7 @@ OPENROUTER_KEY    = os.getenv("OPENROUTER_API_KEY", "")
 # Modèle héritage — fallback si factory non disponible
 OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL",   "nvidia/nemotron-3-super-120b-a12b:free")
 OPENROUTER_URL    = "https://openrouter.ai/api/v1/chat/completions"
-MILVUS_URI        = "http://localhost:19530"
-EMBED_DIM         = 768
+# Recherche RAG déléguée à app.sales.data.rag_retriever (Milvus + fallback corpus)
 COLLECTION        = "coaching_scripts"
 
 USE_OPENROUTER = bool(OPENROUTER_KEY)
@@ -226,50 +224,28 @@ async def node_rag_search(state: SalesAgentState) -> dict:
     elif urgency == "CRITICAL": parts.append("crise critique mobilisation équipe bundle maximum")
 
     rag_query = " ".join(parts)
-    scripts = []; rag_txt = ""; embed_ms = 0.0; milvus_ms = 0.0
+    scripts = []; rag_txt = ""; rag_source = "none"
 
+    # Retriever unifié : Milvus sémantique + fallback lexical corpus embarqué
+    # (timeouts courts — plus jamais 120s d'attente embedding dans un cycle).
     try:
-        t_embed = time.time()
-        try:
-            resp = requests.post(f"{OLLAMA_URL}/api/embeddings",
-                json={"model": "nomic-embed-text", "prompt": rag_query}, timeout=120)
-            resp.raise_for_status()
-            emb = resp.json().get("embedding", [])
-        except Exception as e:
-            logger.warning(f"[STRATEGE RAG] Embedding échoué: {e}"); emb = None
-        embed_ms = (time.time() - t_embed) * 1000
+        import asyncio as _aio
+        from app.sales.data.rag_retriever import search_scripts, format_scripts_block
+        rag_result = await _aio.to_thread(search_scripts, rag_query, hour, 3)
+        scripts    = rag_result["scripts"]
+        rag_source = rag_result["source"]
 
-        if not emb:
-            raise ValueError("Embedding vide")
-        if len(emb) < EMBED_DIM: emb = emb + [0.0] * (EMBED_DIM - len(emb))
-        emb = emb[:EMBED_DIM]
-
-        t_milvus = time.time()
-        from pymilvus import MilvusClient
-        client  = MilvusClient(uri=MILVUS_URI)
-        results = client.search(collection_name=COLLECTION, data=[emb], limit=6,
-            output_fields=["pg_id","categorie","situation","action","produit",
-                           "argument","impact","heure_min","heure_max","tags"])
-        milvus_ms = (time.time() - t_milvus) * 1000
-
-        for hit in results[0]:
-            e = hit["entity"]; score = float(hit["distance"])
-            if int(e.get("heure_min",0)) <= hour <= int(e.get("heure_max",24)): score += 0.12
-            if is_rainy and "meteo" in str(e.get("categorie","")).lower(): score += 0.08
-            scripts.append({"score":round(score,3),"categorie":e.get("categorie",""),
-                "situation":e.get("situation",""),"action":e.get("action",""),
-                "produit":e.get("produit",""),"argument":e.get("argument",""),
-                "impact":e.get("impact",""),"tags":e.get("tags","")})
-        scripts = sorted(scripts, key=lambda x: x["score"], reverse=True)[:3]
+        # Bonus météo : par temps de pluie, remonter les scripts météo
+        if is_rainy and scripts:
+            for s in scripts:
+                if "meteo" in str(s.get("categorie", "")).lower():
+                    s["score"] = round(s["score"] + 0.08, 3)
+            scripts = sorted(scripts, key=lambda x: x["score"], reverse=True)
 
         if scripts:
-            lines = ["\n\nRAG SCRIPTS (situations similaires réussies — utilise ces arguments):"]
-            for i, s in enumerate(scripts, 1):
-                lines.append(f"\n[Script #{i} | {s['categorie']} | score={s['score']:.2f}]\n"
-                    f"Situation : {s['situation'][:120]}\nAction    : {s['action'][:120]}\n"
-                    f"Produit   : {s['produit']}\nArgument  : {s['argument'][:150]}\nImpact    : {s['impact']}")
-            rag_txt = "\n".join(lines)
-        logger.info(f"[STRATEGE RAG] {len(scripts)} scripts | top={scripts[0]['categorie'] if scripts else 'N/A'}")
+            rag_txt = "\n\n" + format_scripts_block(scripts, max_n=3)
+        logger.info(f"[STRATEGE RAG] {len(scripts)} scripts | source={rag_source} | "
+                    f"top={scripts[0]['categorie'] if scripts else 'N/A'}")
     except Exception as e:
         logger.warning(f"[STRATEGE RAG] Erreur: {str(e)[:80]}")
 
@@ -279,7 +255,7 @@ async def node_rag_search(state: SalesAgentState) -> dict:
         {"query": rag_query[:300], "gap_pct": gap_pct, "urgency": urgency, "is_rainy": is_rainy},
         {"nb_scripts": len(scripts), "rag_used": rag_used,
          "top_score": scripts[0]["score"] if scripts else 0,
-         "embed_ms": round(embed_ms), "milvus_ms": round(milvus_ms)},
+         "source": rag_source},
         duration, metadata={"collection": COLLECTION})
 
     output = {**state, "rag_context": scripts, "rag_query": rag_query,

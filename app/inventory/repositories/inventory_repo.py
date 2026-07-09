@@ -1648,7 +1648,8 @@ class SyncInventoryRepo:
             import psycopg2.extras
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, status, decided_by, decided_at
+                    SELECT id, status, decided_by, decided_at,
+                           store_id, sku, recommendation_type, order_qty, urgency
                     FROM inventory.recommendations
                     WHERE id = %s
                 """, (recommendation_id,))

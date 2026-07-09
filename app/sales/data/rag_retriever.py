@@ -1,14 +1,18 @@
 """
-rag_retriever.py — Retriever RAG pour l'agent stratège Ooredoo.
-Lit les scripts de vente depuis Milvus et PostgreSQL.
+rag_retriever.py — Retriever RAG unifié (Coach Chat + Agent Stratège).
+Source primaire : Milvus (recherche sémantique via embeddings Ollama).
+Fallback       : corpus de scripts embarqué (scoring lexical) — le RAG ne
+                 retourne jamais "rien" parce qu'un service est down.
 
 Utilisation:
-    from app.sales.data.rag_retriever import get_rag_context
-    ctx = await get_rag_context(store_id, gap_pct, current_hour, query)
+    from app.sales.data.rag_retriever import search_scripts, format_scripts_block
+    result = search_scripts("client hésite trop cher", hour=16, top_k=3)
+    prompt_block = format_scripts_block(result["scripts"])
 """
 
 import logging
 import os
+import re
 import requests
 from datetime import datetime
 from typing import Optional
@@ -17,10 +21,15 @@ from app.core.config import DEFAULT_STORE_ID
 
 logger = logging.getLogger(__name__)
 
-MILVUS_URI  = "http://localhost:19530"
+MILVUS_URI  = os.getenv("MILVUS_URI", "http://localhost:19530")
 COLLECTION  = "coaching_scripts"
 EMBED_MODEL = "nomic-embed-text"
+EMBED_DIM   = 768
 OLLAMA_URL  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+RAG_TOP_K         = int(os.getenv("RAG_TOP_K", "3"))
+RAG_MIN_SCORE     = float(os.getenv("RAG_MIN_SCORE", "0.30"))
+RAG_EMBED_TIMEOUT = float(os.getenv("RAG_EMBED_TIMEOUT", "15"))
 
 # Cache singleton du client Milvus
 _milvus_client = None
@@ -72,21 +81,22 @@ def _get_client():
 
 
 def _embed(text: str) -> Optional[list]:
-    """Génère un embedding via Ollama."""
+    """Génère un embedding via Ollama (timeout court — le fallback lexical prend le relais)."""
     try:
-        # Timeout increased to 120s (2 min) because OLLAMA can be slow under load
-        # First attempt: 120s full timeout
         resp = requests.post(
             f"{OLLAMA_URL}/api/embeddings",
-            json={"model": EMBED_MODEL, "prompt": text},
-            timeout=120,  # Increased from 30 to 120 seconds
+            json={"model": EMBED_MODEL, "prompt": text[:500]},
+            timeout=RAG_EMBED_TIMEOUT,
         )
         resp.raise_for_status()
-        result = resp.json()
-        logger.info(f"[RAG] Embedding succès ({len(text)} chars)")
-        return result.get("embedding")
+        emb = resp.json().get("embedding")
+        if emb:
+            if len(emb) < EMBED_DIM:
+                emb = emb + [0.0] * (EMBED_DIM - len(emb))
+            return emb[:EMBED_DIM]
+        return None
     except requests.Timeout:
-        logger.warning(f"[RAG] Embedding timeout (120s) — OLLAMA trop lent")
+        logger.warning(f"[RAG] Embedding timeout ({RAG_EMBED_TIMEOUT:.0f}s) — fallback lexical")
         return None
     except requests.ConnectionError as e:
         logger.warning(f"[RAG] Embedding connexion échouée: {e}")
@@ -94,6 +104,166 @@ def _embed(text: str) -> Optional[list]:
     except Exception as e:
         logger.warning(f"[RAG] Embedding échoué: {e}")
         return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RECHERCHE UNIFIÉE — Milvus (sémantique) + corpus embarqué (lexical)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_STOPWORDS_FR = {
+    "le", "la", "les", "un", "une", "des", "de", "du", "au", "aux", "et", "ou",
+    "en", "sur", "pour", "avec", "sans", "dans", "que", "qui", "quoi", "est",
+    "sont", "mon", "ma", "mes", "ton", "ta", "tes", "son", "sa", "ses", "ce",
+    "cette", "ces", "il", "elle", "je", "tu", "on", "nous", "vous", "ils",
+    "pas", "plus", "moins", "tres", "comment", "quel", "quelle", "veut", "dit",
+}
+
+
+def _norm_txt(t: str) -> str:
+    t = t.lower()
+    for a, b in [("é", "e"), ("è", "e"), ("ê", "e"), ("ë", "e"), ("à", "a"),
+                 ("â", "a"), ("ô", "o"), ("î", "i"), ("ï", "i"), ("ç", "c"),
+                 ("ù", "u"), ("û", "u"), ("œ", "oe"), ("'", " "), ("-", " ")]:
+        t = t.replace(a, b)
+    return t
+
+
+def _tokens(t: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]{3,}", _norm_txt(t)) if w not in _STOPWORDS_FR}
+
+
+_corpus_cache: Optional[list] = None
+
+
+def _load_corpus() -> list:
+    """Corpus de scripts embarqué (même source que le seed Milvus)."""
+    global _corpus_cache
+    if _corpus_cache is None:
+        try:
+            from app.sales.data.seeds.seed_rag_scripts import SCRIPTS
+            _corpus_cache = SCRIPTS
+        except Exception as e:
+            logger.warning(f"[RAG] Corpus embarqué indisponible: {e}")
+            _corpus_cache = []
+    return _corpus_cache
+
+
+def _corpus_fallback(query: str, hour: int, top_k: int) -> list:
+    """Scoring lexical sur le corpus embarqué — utilisé si Milvus/Ollama down."""
+    corpus = _load_corpus()
+    if not corpus:
+        return []
+    q_tokens = _tokens(query)
+    if not q_tokens:
+        return []
+    scored = []
+    for s in corpus:
+        doc_tokens = _tokens(f"{s['situation']} {s['action']} {s['argument']}")
+        overlap = len(q_tokens & doc_tokens)
+        if overlap == 0:
+            continue
+        score = overlap / max(len(q_tokens), 1)
+        if _norm_txt(s["categorie"]) in _norm_txt(query):
+            score += 0.25
+        if int(s.get("heure_min", 0)) <= hour <= int(s.get("heure_max", 24)):
+            score += 0.10
+        scored.append({
+            "score":     round(min(score, 1.0), 3),
+            "categorie": s["categorie"],
+            "situation": s["situation"],
+            "action":    s["action"],
+            "produit":   s["produit"],
+            "argument":  s["argument"],
+            "impact":    s["impact"],
+        })
+    return sorted(scored, key=lambda x: x["score"], reverse=True)[:top_k]
+
+
+def search_scripts(
+    query: str,
+    hour: Optional[int] = None,
+    top_k: int = RAG_TOP_K,
+    min_score: float = RAG_MIN_SCORE,
+) -> dict:
+    """
+    Recherche unifiée de scripts de vente.
+
+    Returns:
+        {
+            "scripts":  [ {score, categorie, situation, action, produit, argument, impact}, ... ],
+            "relevant": bool,   # top score >= min_score
+            "source":   "milvus" | "corpus" | "none",
+        }
+    """
+    if hour is None:
+        hour = datetime.now().hour
+
+    # ── 1. Voie sémantique : Ollama embeddings + Milvus ──────────────────────
+    client = _get_client()
+    emb = _embed(query) if client is not None else None
+    if client is not None and emb:
+        try:
+            results = client.search(
+                collection_name=COLLECTION,
+                data=[emb],
+                limit=top_k + 3,
+                output_fields=["categorie", "situation", "action", "produit",
+                               "argument", "impact", "heure_min", "heure_max"],
+            )
+            scripts = []
+            for hit in results[0]:
+                e = hit["entity"]
+                score = float(hit["distance"])
+                if int(e.get("heure_min", 0)) <= hour <= int(e.get("heure_max", 24)):
+                    score += 0.10
+                scripts.append({
+                    "score":     round(score, 3),
+                    "categorie": e.get("categorie", ""),
+                    "situation": e.get("situation", ""),
+                    "action":    e.get("action", ""),
+                    "produit":   e.get("produit", ""),
+                    "argument":  e.get("argument", ""),
+                    "impact":    e.get("impact", ""),
+                })
+            # Dédupe par catégorie+action pour varier les angles proposés
+            seen, deduped = set(), []
+            for s in sorted(scripts, key=lambda x: x["score"], reverse=True):
+                key = (s["categorie"], s["action"][:60])
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(s)
+            scripts = deduped[:top_k]
+            if scripts:
+                relevant = scripts[0]["score"] >= min_score
+                return {"scripts": scripts, "relevant": relevant, "source": "milvus"}
+        except Exception as e:
+            logger.warning(f"[RAG] Recherche Milvus échouée: {str(e)[:100]}")
+
+    # ── 2. Fallback lexical : corpus embarqué ────────────────────────────────
+    scripts = _corpus_fallback(query, hour, top_k)
+    if scripts:
+        relevant = scripts[0]["score"] >= min_score
+        logger.info(f"[RAG] Fallback corpus — {len(scripts)} scripts (top={scripts[0]['score']:.2f})")
+        return {"scripts": scripts, "relevant": relevant, "source": "corpus"}
+
+    return {"scripts": [], "relevant": False, "source": "none"}
+
+
+def format_scripts_block(scripts: list, max_n: int = 3) -> str:
+    """Formate les scripts RAG pour injection prompt — compact mais complet."""
+    if not scripts:
+        return ""
+    lines = ["SCRIPTS TERRAIN PROUVÉS (base Ooredoo — adapte ces arguments) :"]
+    for i, s in enumerate(scripts[:max_n], 1):
+        lines.append(
+            f"[{i}] ({s['categorie']}, score {s['score']:.2f}) "
+            f"Situation : {s['situation'][:110]}\n"
+            f"    Action : {s['action'][:130]}\n"
+            f"    Argument : «{s['argument'][:180]}»\n"
+            f"    Impact observé : {s['impact'][:100]}"
+        )
+    return "\n".join(lines)
 
 
 def _build_query(

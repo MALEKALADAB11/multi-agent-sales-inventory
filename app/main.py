@@ -262,13 +262,13 @@ async def startup_event():
     def _on_sale(store_id: str, sku: str, units: int, product_name: str = None, amount: float = None) -> None:
         """
         Callback temps réel : une vente vient d'être enregistrée dans transactions_rt.
-        1. Décrémente quantity_available dans inventory.stock_levels (persistence PG)
-        2. Met à jour le cache mémoire _live_stock
-        3. Broadcast WebSocket immédiat avec le nouveau niveau de stock
-        4. Déclenche une alerte si stock critique
+        La persistance PG (décrement stock_levels + mouvement VENTE) est faite
+        par le trigger trg_sync_stock_on_sale — ici uniquement :
+        1. Met à jour le cache mémoire _live_stock
+        2. Broadcast WebSocket immédiat avec le nouveau niveau de stock
+        3. Déclenche une alerte si stock critique
         """
         sku_str = str(sku)
-        sku_int = int(sku) if str(sku).isdigit() else None
 
         # ── 1. Lire stock actuel depuis PG ou cache ────────────────────────
         try:
@@ -302,26 +302,14 @@ async def startup_event():
             sku_str, store_id, current, new_stock, units, severity
         )
 
-        # ── 2. Persister le décrement dans PostgreSQL (async, non bloquant) ─
+        # ── 2. Broadcast (la persistance PG est faite par le trigger DB) ────
+        # Le décrement de inventory.stock_levels ET l'écriture du mouvement
+        # VENTE dans supply.stock_movements sont assurés par le trigger
+        # trg_sync_stock_on_sale sur transactions_rt (migrations 0001+0009).
+        # L'UPDATE applicatif qui vivait ici échouait de toute façon :
+        # quantity_available est une colonne générée, non modifiable — et le
+        # réparer aurait décrémenté le stock deux fois (trigger + app).
         async def _persist_and_broadcast():
-            # Décrement stock_levels dans PG
-            if sku_int is not None:
-                try:
-                    import asyncpg as _apg
-                    _conn = await _apg.connect(**_RT_DB_CFG, timeout=5)
-                    await _conn.execute("""
-                        UPDATE inventory.stock_levels
-                        SET quantity_available = GREATEST(0, COALESCE(quantity_available, quantity, 0) - $1),
-                            quantity           = GREATEST(0, COALESCE(quantity, 0) - $2),
-                            last_sold          = NOW(),
-                            updated_at         = NOW()
-                        WHERE store_id = $3 AND sku = $4
-                    """, units, units, store_id, sku_int)
-                    await _conn.close()
-                    logger.debug("[RT_SYNC] PG stock_levels decremented: %s@%s -%d", sku_str, store_id, units)
-                except Exception as e:
-                    logger.debug("[RT_SYNC] PG decrement skipped: %s", e)
-
             # Broadcast immédiat vers le frontend — event dédié temps réel
             label = product_name or f"SKU {sku_str}"
             amount_str = f" — {amount:.0f} DT" if amount is not None else ""

@@ -29,10 +29,32 @@ class StrategieOutput:
     cached:     bool       = False
     latency_ms: float      = 0.0
     confidence: float      = 0.8
+    # Contexte riche produit par le Stratège (cause racine, résumé, focus
+    # produits, météo réelle…) — consommé par le Coach Chat pour ancrer
+    # ses réponses dans le vrai contexte boutique.
+    extras:     Dict[str, Any] = field(default_factory=dict)
     nb_actions: int        = field(init=False)
 
     def __post_init__(self):
         self.nb_actions = len(self.actions)
+
+
+def _extract_extras(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Extrait du state final du Stratège le contexte utile au Coach."""
+    summary = ((result.get("external_context") or {}).get("summary")) or {}
+    return {
+        "cause_racine":      result.get("cause_racine", ""),
+        "strategie_summary": result.get("strategie", ""),
+        "focus_produits":    result.get("focus_produits", []) or [],
+        "message_manager":   result.get("message_manager", ""),
+        "weather_label":     summary.get("weather_label", ""),
+        "weather_effect":    summary.get("weather_effect", 0.0),
+        "is_holiday":        summary.get("is_holiday", False),
+        "holiday_name":      summary.get("holiday_name", ""),
+        "critique_score":    result.get("critique_score", 0.0),
+        "rag_used":          result.get("rag_used", False),
+        "nb_rag_scripts":    result.get("nb_rag_scripts", 0),
+    }
 
 
 # ── Cache LRU simple avec TTL ──────────────────────────────────────────────────
@@ -143,6 +165,7 @@ class CoachStrategeOrchestrator:
                         cached     = False,
                         latency_ms = (time.time() - t0) * 1000,
                         confidence = 0.9,
+                        extras     = _extract_extras(result),
                     )
                     self.cache.set(store_id, gap_pct, output)
                     logger.info(
