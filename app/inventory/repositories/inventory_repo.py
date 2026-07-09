@@ -1562,7 +1562,16 @@ class SyncInventoryRepo:
         Chaîne causale : si alert_id n'est pas fourni, la recommandation est
         rattachée automatiquement à l'alerte 'pending' la plus récente du même
         (sku, store) — c'est elle qui a déclenché la décision.
-        Returns the UUID string of the inserted row, or None on failure.
+
+        L'index partiel uq_reco_pending_sku_store n'autorise qu'UNE
+        recommandation 'pending' par (sku, store). Un INSERT nu échouait donc à
+        chaque cycle dès qu'une recommandation pendante existait déjà : l'agent
+        ne rendait plus jamais d'id, et aucune suggestion n'atteignait le Kanban.
+        On rafraîchit la ligne pendante à la place — la décision la plus récente
+        fait autorité. La contrainte garde son rôle (pas de doublons) sans
+        bloquer le pipeline.
+
+        Returns the UUID string of the inserted/refreshed row, or None on failure.
         """
         conn = SyncInventoryRepo._conn()
         if conn is None:
@@ -1579,6 +1588,17 @@ class SyncInventoryRepo:
                                           WHERE a.sku = %s AND a.store_id = %s
                                             AND a.status = 'pending'
                                           ORDER BY a.created_at DESC LIMIT 1)))
+                    ON CONFLICT (sku, store_id) WHERE status = 'pending'
+                    DO UPDATE SET
+                        agent_run_id        = EXCLUDED.agent_run_id,
+                        recommendation_type = EXCLUDED.recommendation_type,
+                        recommendation_text = EXCLUDED.recommendation_text,
+                        suggested_quantity  = EXCLUDED.suggested_quantity,
+                        confidence          = EXCLUDED.confidence,
+                        urgency             = EXCLUDED.urgency,
+                        alert_id            = COALESCE(EXCLUDED.alert_id,
+                                                       inventory.recommendations.alert_id),
+                        created_at          = NOW()
                     RETURNING id
                 """, (
                     sku, store_id,
@@ -1590,8 +1610,8 @@ class SyncInventoryRepo:
                     urgency,
                     alert_id, sku, store_id,
                 ))
-                conn.commit()
                 row = cur.fetchone()
+                conn.commit()
                 return str(row[0]) if row else None
         except Exception as exc:
             logger.warning(

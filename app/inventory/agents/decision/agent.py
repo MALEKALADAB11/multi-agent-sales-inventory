@@ -225,10 +225,7 @@ class InventoryDecisionAgent:
             # Best-effort only: a failure here must never break the decision
             # pipeline, the recommendation above is already committed.
             if recommendation_id:
-                self._suggest_purchase_order(
-                    recommendation_id=recommendation_id,
-                    agent_run_id=agent_run_id or own_run_id,
-                )
+                self._suggest_purchase_order(recommendation_id=recommendation_id)
 
             final = {
                 "sku":                    sku,
@@ -390,11 +387,7 @@ class InventoryDecisionAgent:
             )
             return None
 
-    def _suggest_purchase_order(
-        self,
-        recommendation_id: str,
-        agent_run_id: Optional[str],
-    ) -> None:
+    def _suggest_purchase_order(self, recommendation_id: str) -> None:
         """
         Auto-creates a SUGGERE purchase order from the recommendation just
         persisted, and pushes it to the Kanban over WebSocket in real time.
@@ -406,7 +399,6 @@ class InventoryDecisionAgent:
 
             po = SyncPurchaseOrderRepo.create_suggestion_from_recommendation(
                 recommendation_id=recommendation_id,
-                agent_run_id=agent_run_id,
             )
             if po:
                 broadcast_po_suggested_sync(po)

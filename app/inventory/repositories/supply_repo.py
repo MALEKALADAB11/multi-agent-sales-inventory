@@ -347,7 +347,6 @@ class SyncPurchaseOrderRepo:
     @staticmethod
     def create_suggestion_from_recommendation(
         recommendation_id: str,
-        agent_run_id: Optional[str] = None,
     ) -> Optional[dict]:
         """
         Auto-creates a SUGGERE purchase order straight from a *pending*
@@ -415,21 +414,24 @@ class SyncPurchaseOrderRepo:
                 total_cost = qty * float(unit_cost)
                 lead_days  = (sourcing or {}).get("lead_time_days") or row["lead_time_days"] or 14
 
+                # NB : ne pas écrire agent_decision_id — c'est un uuid, alors que
+                # l'agent ne dispose que d'un agent_run_id entier. Le lien vers la
+                # décision passe par recommendation_id, qui porte la FK.
                 cur.execute("""
                     INSERT INTO supply.purchase_orders
                         (sku, supplier_id, store_id, quantite_commandee,
                          prix_unitaire_ht, montant_total_ht, statut, source,
-                         urgency, confidence, agent_decision_id,
+                         urgency, confidence,
                          date_livraison_prevue, recommendation_id)
                     VALUES
                         (%s, %s, %s, %s, %s, %s, 'SUGGERE', 'AGENT',
-                         %s, %s, %s,
+                         %s, %s,
                          CURRENT_DATE + (%s || ' days')::interval, %s)
                     RETURNING *
                 """, (
                     row["sku"], supplier_id, row["store_id"], qty,
                     unit_cost, total_cost,
-                    row["urgency"], row["confidence"], agent_run_id,
+                    row["urgency"], row["confidence"],
                     lead_days, recommendation_id,
                 ))
                 created = dict(cur.fetchone())
