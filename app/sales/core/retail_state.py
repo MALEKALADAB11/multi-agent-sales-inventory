@@ -20,7 +20,13 @@ Design rules:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+import operator
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
+
+
+def _merge_dict(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """Reducer LangGraph : fusion de dicts écrits par plusieurs branches parallèles."""
+    return {**(a or {}), **(b or {})}
 
 
 class RetailState(TypedDict, total=False):
@@ -45,8 +51,11 @@ class RetailState(TypedDict, total=False):
 
     # ── Sales Branch outputs (AnalystAgent) ───────────────────────────────
     gap_pct:           float        # % gap vs daily target
+    gap_objectif:      float        # alias historique consommé par main.py/_build_payload
     gap_amount:        float        # TND gap
     forecast_eod:      float        # end-of-day CA forecast
+    coverage:          float        # % couverture gap par le forecast
+    attainment:        float        # % atteinte objectif
     urgency_level:     str          # LOW / MEDIUM / HIGH / CRITICAL
     urgency_score:     float        # [0.0 – 1.0]
     analyst_summary:   str          # LLM-generated summary
@@ -81,6 +90,8 @@ class RetailState(TypedDict, total=False):
     external_context:  Dict[str, Any]           # weather, events, heatmap
     external_signals:  List[Dict[str, Any]]
     estimated_impact:  Dict[str, Any]
+    context_heatmap:   Dict[str, Any]            # heatmap risques (stratège) → dashboard
+    context_signals:   List[Dict[str, Any]]      # signaux contexte (stratège) → dashboard
 
     # ── CoachAgent outputs (cross-domain fusion) ──────────────────────────
     coach_recommendation:  Dict[str, Any]      # final ranked product recommendation
@@ -103,8 +114,13 @@ class RetailState(TypedDict, total=False):
     hitl_approver:  Optional[str]
 
     # ── Observability ─────────────────────────────────────────────────────
-    agents_invoked:  List[str]
+    # Reducers obligatoires : ces trois canaux sont écrits par les 4 branches
+    # parallèles dans le même superstep LangGraph — sans reducer, le graphe
+    # lève InvalidUpdateError (« Can receive only one value per step »).
+    # Contrat : chaque node ne retourne que SON delta (nouveaux éléments),
+    # jamais la liste/dict cumulé lu depuis le state.
+    agents_invoked:  Annotated[List[str], operator.add]
     total_latency_ms: int
-    metrics:         Dict[str, Any]
-    errors:          List[str]
+    metrics:         Annotated[Dict[str, Any], _merge_dict]
+    errors:          Annotated[List[str], operator.add]
     trace:           Any           # Langfuse trace handle (not serialized)

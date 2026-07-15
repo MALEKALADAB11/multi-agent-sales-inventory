@@ -33,6 +33,7 @@ import os
 import time
 import uuid
 import logging
+import socket
 from datetime import datetime
 from typing import Optional, Any
 from contextlib import contextmanager
@@ -46,22 +47,63 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 _lf = None
+_lf_checked = False
+
+
+def _host_reachable(host: str, timeout: float = 1.0) -> bool:
+    """
+    Sonde TCP avant d'instancier le SDK.
+
+    Sans elle, un Langfuse éteint coûtait ~60 s par requête du coach : le SDK
+    retente 3 fois avec backoff exponentiel, et ces retries s'exécutent sur le
+    chemin de réponse. L'observabilité ne doit jamais peser sur le service
+    qu'elle observe.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(host)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
 
 
 def get_langfuse():
     """Retourne l'instance Langfuse singleton, ou None si indisponible."""
-    global _lf
-    if _lf is not None:
+    global _lf, _lf_checked
+    if _lf is not None or _lf_checked:
         return _lf
+
+    _lf_checked = True   # une seule tentative par process : pas de sonde par requête
+    host = os.getenv("LANGFUSE_HOST", "http://localhost:3001")
+
+    if os.getenv("LANGFUSE_ENABLED", "true").lower() != "true":
+        logger.info("Langfuse desactive (LANGFUSE_ENABLED=false)")
+        return None
+
+    if not _host_reachable(host):
+        logger.warning("Langfuse injoignable (%s) — tracing desactive pour ce process", host)
+        return None
+
     try:
         from langfuse import Langfuse
         _lf = Langfuse(
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local"),
-            host=os.getenv("LANGFUSE_HOST", "http://localhost:3001"),
-            timeout=10,  # borne les uploads — un Langfuse lent ne doit jamais bloquer l'app
+            host=host,
+            # L'upload tourne dans les threads du task_manager (jamais dans
+            # l'event loop) : un timeout court n'y protège rien et faisait
+            # échouer l'ingestion des gros batchs (ReadTimeout après 3 retries).
+            # 2 threads + batchs de 50 : draine la file plus vite que le rythme
+            # de production des spans (sinon « analytics-python queue is full »
+            # et traces perdues). Le volume inventory est aussi échantillonné
+            # côté producteur (LANGFUSE_INVENTORY_SAMPLE, défaut 0.1).
+            timeout=30,
+            threads=2,
+            flush_at=50,
         )
-        logger.info("Langfuse v2 connecte -> %s", os.getenv("LANGFUSE_HOST", "http://localhost:3001"))
+        logger.info("Langfuse v2 connecte -> %s", host)
         return _lf
     except Exception as e:
         logger.warning(f"Langfuse indisponible: {e}")
@@ -147,7 +189,9 @@ class LangfuseTracer:
                     **(metadata or {}),
                 },
             )
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] trace_llm_call: {e}")
 
@@ -180,7 +224,9 @@ class LangfuseTracer:
                     "agent": agent_name,
                 },
             )
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] trace_rag_search: {e}")
 
@@ -235,7 +281,9 @@ class LangfuseTracer:
         try:
             self.lf.score(trace_id=trace_id, name=name,
                           value=round(value, 3), comment=comment[:200])
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] score: {e}")
 
@@ -312,7 +360,9 @@ class _CycleTrace:
             self.lf.score(trace_id=self.cycle_id, name="cycle-quality",
                           value=score_val,
                           comment=f"urgency={urgency} gap={gap:.1f}% actions={nb_actions}")
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] cycle finish: {e}")
 

@@ -94,7 +94,15 @@ def _get_weather_cache_lock(key: str) -> _threading.Lock:
 
 
 def _get_conn():
-    return psycopg2.connect(**_DB_CONFIG, connect_timeout=8)
+    # Pool partagé app.core.db : évite une connexion directe par appel outil
+    # (8 workers batch × 4 threads contexte saturaient max_connections).
+    from app.core import db as core_db
+    return core_db.getconn()
+
+
+def _put_conn(conn):
+    from app.core import db as core_db
+    core_db.putconn(conn)
 
 
 def _wmo_label(code: int) -> str:
@@ -105,13 +113,15 @@ def _store_location(store_id: str) -> Dict[str, Any]:
     """Lit latitude/longitude depuis sales.boutiques."""
     try:
         conn = _get_conn()
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                "SELECT latitude, longitude, ville FROM sales.boutiques WHERE store_id = %s",
-                (str(store_id),)
-            )
-            row = cur.fetchone()
-        conn.close()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT latitude, longitude, ville FROM sales.boutiques WHERE store_id = %s",
+                    (str(store_id),)
+                )
+                row = cur.fetchone()
+        finally:
+            _put_conn(conn)
         if row and row["latitude"] and row["longitude"]:
             return {
                 "lat":      float(row["latitude"]),
@@ -270,7 +280,7 @@ def get_historical_patterns(category: str, store_id: str) -> Dict[str, Any]:
                     }
 
         finally:
-            conn.close()
+            _put_conn(conn)
 
     except Exception as e:
         logger.warning("get_historical_patterns DB failed category=%s: %s", category, e)
@@ -300,7 +310,7 @@ def get_active_promotions(sku: str, category: str, store_id: str) -> List[dict]:
                 """, (horizon, today, str(sku), str(category)))
                 rows = cur.fetchall()
         finally:
-            conn.close()
+            _put_conn(conn)
         results = []
         for row in rows:
             start = row["start_date"]
@@ -475,7 +485,7 @@ def get_upcoming_events(category: str, days_ahead: int = 7) -> List[dict]:
                 """, (horizon, today))
                 rows = cur.fetchall()
         finally:
-            conn.close()
+            _put_conn(conn)
     except Exception as e:
         logger.warning("get_upcoming_events DB failed category=%s: %s", category, e)
         return []
@@ -523,7 +533,7 @@ def get_product_category(sku: str) -> str:
                 cur.execute("SELECT categorie FROM sales.produits WHERE sku = %s", (int(sku),))
                 row = cur.fetchone()
         finally:
-            conn.close()
+            _put_conn(conn)
         if row and row[0]:
             return str(row[0])
     except Exception as e:

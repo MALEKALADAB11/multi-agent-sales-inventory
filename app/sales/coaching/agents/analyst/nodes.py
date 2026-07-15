@@ -856,12 +856,32 @@ async def node_build_strategy_query(state: SalesAgentState) -> dict:
         else:
             intent = "maintenir performance upsell cross-sell opportunité"
 
+        # Signaux temps réel du moteur TS (heures en retard, tendance, faisabilité)
+        ts        = state.get("ts_analysis") or {}
+        trend     = state.get("trend_signal") or ts.get("trend_signal", "")
+        feas      = state.get("feasibility")  or ts.get("feasibility", "")
+        gap_hours = state.get("hourly_gaps")  or ts.get("hourly_gaps", [])
+        ts_parts  = []
+        if trend == "DECELERATING":
+            ts_parts.append("rythme vente en décélération relance immédiate")
+        elif trend == "ACCELERATING":
+            ts_parts.append("rythme vente en accélération capitaliser momentum")
+        if gap_hours:
+            hrs = " ".join(f"{e['hour']}h" for e in gap_hours[:3])
+            ts_parts.append(f"heures sous performance {hrs}")
+        if feas == "VERY_HARD":
+            ts_parts.append("rattrapage très difficile prioriser actions fort impact")
+        next_h = (state.get("next_hours_forecast") or ts.get("next_hours") or [])
+        if next_h:
+            ts_parts.append(f"prochaine heure attendue {next_h[0].get('expected_ca', 0):.0f} TND")
+
         strategy_query = (
             f"{intent} {strategy_intent} "
             f"gap {gap_pct:.1f}% montant restant {gap_amount:.0f} TND "
             f"forecast fin journée {forecast_eod:.0f} TND "
             f"panier moyen {features.get('avg_ticket', 0)} TND "
             f"tendance gap {memory_insights.get('gap_trend', 'unknown')} "
+            f"{' '.join(ts_parts)} "
             f"catégories {category_text} produits {product_text}"
         ).strip()
 
@@ -882,6 +902,16 @@ async def node_build_strategy_query(state: SalesAgentState) -> dict:
         "coverage":        state.get("coverage",      0),
         "urgency_level":   urgency,
         "urgency_score":   state.get("urgency_score", 0),
+        "forecast_mape":   state.get("forecast_mape", 0),
+        "forecast_engine": (state.get("ts_analysis") or {}).get("model_engine", ""),
+        "forecast_ci":     {"low":  (state.get("ts_analysis") or {}).get("eod_ci_low", 0),
+                            "high": (state.get("ts_analysis") or {}).get("eod_ci_high", 0)},
+        "tomorrow_forecast": (state.get("ts_analysis") or {}).get("tomorrow_forecast", 0),
+        "trend_signal":    state.get("trend_signal", "UNKNOWN"),
+        "feasibility":     state.get("feasibility", "UNKNOWN"),
+        "hourly_ledger":   (state.get("ts_analysis") or {}).get("hourly_ledger", []),
+        "hourly_gaps":     state.get("hourly_gaps", []),
+        "next_hours":      state.get("next_hours_forecast", []),
         "avg_ticket":      features.get("avg_ticket",  0),
         "nb_transactions": features.get("nb_transactions", 0),
         "top_categories":  top_categories,

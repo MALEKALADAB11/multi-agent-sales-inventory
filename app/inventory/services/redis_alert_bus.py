@@ -33,18 +33,29 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Singleton Redis client ─────────────────────────────────────────────────────
+# ── Clients Redis par event loop ───────────────────────────────────────────────
+# Un client asyncio Redis est lié à SA boucle : le partager entre la boucle
+# FastAPI et les boucles temporaires de dispatch_alerts_sync provoquait des
+# publications perdues (« Connection closed by server ») et un spam
+# « RuntimeError: Event loop is closed » quand le GC détruisait les connexions
+# d'une boucle fermée. WeakKeyDictionary : les entrées des boucles mortes
+# disparaissent d'elles-mêmes.
 
-_redis_client = None
-_redis_available: bool = False
+import weakref
+
+_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any]" = weakref.WeakKeyDictionary()
+_failed:  "weakref.WeakSet[asyncio.AbstractEventLoop]" = weakref.WeakSet()
 
 
 async def _get_redis():
-    """Lazy-init Redis async client. Thread-safe via asyncio."""
-    global _redis_client, _redis_available
+    """Client Redis async de la boucle courante (lazy-init, un par loop)."""
+    loop = asyncio.get_running_loop()
 
-    if _redis_client is not None:
-        return _redis_client if _redis_available else None
+    client = _clients.get(loop)
+    if client is not None:
+        return client
+    if loop in _failed:
+        return None
 
     try:
         import redis.asyncio as aioredis  # type: ignore
@@ -54,7 +65,7 @@ async def _get_redis():
         db       = int(os.getenv("REDIS_DB", "0"))
         password = os.getenv("REDIS_PASSWORD") or None
 
-        _redis_client = aioredis.Redis(
+        client = aioredis.Redis(
             host=host,
             port=port,
             db=db,
@@ -63,25 +74,24 @@ async def _get_redis():
             socket_connect_timeout=2,
             socket_timeout=2,
         )
-        await _redis_client.ping()
-        _redis_available = True
+        await client.ping()
+        _clients[loop] = client
         logger.info("[AlertBus] Redis connecté — %s:%d/db%d", host, port, db)
+        return client
 
     except ImportError:
         logger.warning("[AlertBus] redis.asyncio non installé — alertes désactivées")
-        _redis_available = False
     except Exception as exc:
         logger.warning("[AlertBus] Redis indisponible (%s) — alertes non publiées", exc)
-        _redis_available = False
 
-    return _redis_client if _redis_available else None
+    _failed.add(loop)
+    return None
 
 
 def _reset_client() -> None:
-    """Réinitialise le client (tests unitaires)."""
-    global _redis_client, _redis_available
-    _redis_client    = None
-    _redis_available = False
+    """Réinitialise les clients (tests unitaires)."""
+    _clients.clear()
+    _failed.clear()
 
 
 # ── Publish ────────────────────────────────────────────────────────────────────
@@ -248,27 +258,24 @@ def dispatch_alerts_sync(
     Utilise l'event loop existant si disponible (ex: FastAPI).
     """
     # Exécuté depuis les workers du pipeline (threads sans event loop).
-    # Chaque dispatch crée SA boucle et SON client Redis, fermé avant la fin
-    # de la boucle : un client global réutilisé entre plusieurs asyncio.run()
-    # laissait des connexions orphelines et loop.close() pendait indéfiniment
-    # sous Windows (pipeline bloqué). L'attente est bornée : le pipeline ne
-    # dépend jamais de Redis.
+    # Chaque dispatch crée SA boucle ; _get_redis fournit un client propre à
+    # cette boucle (jamais partagé avec la boucle FastAPI), fermé ici AVANT
+    # la fin de la boucle — sinon le GC détruit la connexion après coup et
+    # spamme « RuntimeError: Event loop is closed ». L'attente est bornée :
+    # le pipeline ne dépend jamais de Redis.
     import threading
 
     def _run() -> None:
         async def _dispatch_and_close() -> None:
-            _reset_client()  # client lié à CETTE boucle
             try:
                 await dispatch_inventory_alerts(decisions, store_id)
             finally:
-                global _redis_client
-                client = _redis_client
+                client = _clients.pop(asyncio.get_running_loop(), None)
                 if client is not None:
                     try:
                         await client.aclose()
                     except Exception:
                         pass
-                _reset_client()  # aucun client orphelin inter-boucles
         try:
             asyncio.run(_dispatch_and_close())
         except Exception as exc:

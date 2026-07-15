@@ -135,6 +135,14 @@ class InventoryPipelineTrace:
     def start(self):
         if self._lf is None:
             return
+        # Échantillonnage : 1 trace par SKU par batch × batchs continus × N
+        # boutiques saturait la file d'upload (« analytics-python queue is
+        # full ») et le serveur Langfuse (CPU 90%+). On ne trace qu'une
+        # fraction des SKUs — suffisant pour observer le pipeline.
+        import random
+        sample = float(os.getenv("LANGFUSE_INVENTORY_SAMPLE", "0.1"))
+        if random.random() >= sample:
+            return
         try:
             import datetime
             session = self.batch_id or f"{self.store_id}-{datetime.date.today().isoformat()}"

@@ -93,3 +93,6 @@ sales-module/.env
 .env
 backups/
 data-archive/
+
+# Cache local des embeddings RAG (regenerable via: python -m app.sales.data.rag.ingest --all)
+.rag_cache/

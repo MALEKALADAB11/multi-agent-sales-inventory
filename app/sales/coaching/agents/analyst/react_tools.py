@@ -29,6 +29,8 @@ from typing import Any
 import asyncpg
 from langchain_core.tools import tool
 
+from app.core.db import acquire_conn, release_conn
+
 logger = logging.getLogger(__name__)
 
 DB_CONFIG = {
@@ -44,7 +46,8 @@ STORE_OPEN_HOUR = 9
 
 
 async def _conn() -> asyncpg.Connection:
-    return await asyncpg.connect(**DB_CONFIG, timeout=8, command_timeout=25)
+    """Connexion du pool partage. A rendre via release_conn() dans un finally."""
+    return await acquire_conn(connect_timeout=8)
 
 
 def _j(obj: Any) -> str:
@@ -108,7 +111,7 @@ async def fetch_live_pos(store_id: str) -> str:
         logger.warning("[fetch_live_pos] %s: %s", store_id, e)
         return _j({"error": str(e), "current_ca": 0, "daily_target": 1000})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -287,7 +290,7 @@ async def compute_eod_forecast(store_id: str, current_ca: float, current_hour: i
         logger.warning("[compute_eod_forecast] %s: %s", store_id, e)
         return _j({"error": str(e), "eod_weighted": current_ca, "ci_low": current_ca, "ci_high": current_ca * 1.5})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -445,7 +448,7 @@ async def get_intraday_trend(store_id: str) -> str:
         logger.warning("[get_intraday_trend] %s: %s", store_id, e)
         return _j({"error": str(e), "trend_signal": "UNKNOWN"})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -525,7 +528,7 @@ async def get_seasonal_context(store_id: str) -> str:
         logger.warning("[get_seasonal_context] %s: %s", store_id, e)
         return _j({"error": str(e)})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -598,7 +601,7 @@ async def get_historical_comparison(store_id: str) -> str:
         logger.warning("[get_historical_comparison] %s: %s", store_id, e)
         return _j({"error": str(e)})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -691,7 +694,7 @@ async def get_stock_alerts(store_id: str) -> str:
             "top_alerts": [], "summary": "Données stock indisponibles.",
         })
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -806,7 +809,7 @@ async def detect_sales_anomalies(store_id: str) -> str:
         logger.warning("[detect_sales_anomalies] %s: %s", store_id, e)
         return _j({"error": str(e), "anomalies": [], "interpretation": "Analyse indisponible"})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -939,7 +942,7 @@ async def compute_ts_decomposition(store_id: str) -> str:
         logger.warning("[compute_ts_decomposition] %s: %s", store_id, e)
         return _j({"error": str(e)})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1121,7 +1124,7 @@ async def forecast_multi_horizon(store_id: str, current_ca: float, current_hour:
         logger.warning("[forecast_multi_horizon] %s: %s", store_id, e)
         return _j({"error": str(e)})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1250,7 +1253,7 @@ async def analyze_product_velocity(store_id: str) -> str:
         logger.warning("[analyze_product_velocity] %s: %s", store_id, e)
         return _j({"error": str(e), "products": [], "summary": "Analyse indisponible."})
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 @tool
