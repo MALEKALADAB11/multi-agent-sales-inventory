@@ -20,6 +20,12 @@ from app.sales.core.config import get_config
 from app.sales.core.state import SalesAgentState
 from app.sales.coaching.agents.stratege.tools import fetch_full_context
 from app.core.config import DEFAULT_STORE_ID
+from app.core.config import config as core_config
+from app.sales.data.rag.settings import (
+    DOMAIN_DECISION,
+    DOMAIN_INVENTORY_PLAYBOOK,
+    DOMAIN_SALES_SCRIPT,
+)
 from app.sales.coaching.agents.stratege.prompts import (
     STRATEGE_SYSTEM_PROMPT,
     STRATEGE_USER_PROMPT,
@@ -28,14 +34,13 @@ from app.sales.coaching.agents.stratege.prompts import (
 logger = logging.getLogger(__name__)
 config = get_config()
 
-OLLAMA_URL        = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")
+OLLAMA_URL        = core_config.OLLAMA_BASE_URL
 OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",       "llama3.2:latest")
 OPENROUTER_KEY    = os.getenv("OPENROUTER_API_KEY", "")
-# Modèle héritage — fallback si factory non disponible
-OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL",   "nvidia/nemotron-3-super-120b-a12b:free")
+OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL",   "nvidia/nemotron-3-nano-30b-a3b:free")
 OPENROUTER_URL    = "https://openrouter.ai/api/v1/chat/completions"
-# Recherche RAG déléguée à app.sales.data.rag_retriever (Milvus + fallback corpus)
-COLLECTION        = "coaching_scripts"
+# Recherche déléguée au moteur RAG cross-domaine (app.sales.data.rag)
+COLLECTION        = os.getenv("RAG_COLLECTION", "retail_knowledge")
 
 USE_OPENROUTER = bool(OPENROUTER_KEY)
 
@@ -128,10 +133,8 @@ def get_llm():
 
 async def _get_critical_stock(store_id=DEFAULT_STORE_ID, threshold=5):
     try:
-        import asyncpg
-        conn = await asyncpg.connect(host="localhost", port=5432,
-            database="ooredoo_sales", user="postgres", password="admin", timeout=3)
-        try:
+        from app.core.db import acquire
+        async with acquire(connect_timeout=3) as conn:
             rows = await conn.fetch("""
                 SELECT s.sku,
                        s.product_name,
@@ -146,8 +149,6 @@ async def _get_critical_stock(store_id=DEFAULT_STORE_ID, threshold=5):
             return [{"sku": str(r["sku"]), "product_name": str(r["product_name"]),
                      "stock_qty": int(r["stock_qty"]), "risk_level": str(r["stock_risk"])}
                     for r in rows]
-        finally:
-            await conn.close()
     except Exception as e:
         logger.warning(f"[STRATEGE STOCK] Fallback: {e}")
         return [{"sku":"5021240","product_name":"iPhone 16 Pro",
@@ -226,26 +227,34 @@ async def node_rag_search(state: SalesAgentState) -> dict:
     rag_query = " ".join(parts)
     scripts = []; rag_txt = ""; rag_source = "none"
 
-    # Retriever unifié : Milvus sémantique + fallback lexical corpus embarqué
-    # (timeouts courts — plus jamais 120s d'attente embedding dans un cycle).
+    # Moteur RAG cross-domaine : le stratège reçoit les scripts de vente ET les
+    # playbooks stock quand la boutique est en tension, plus la mémoire des
+    # stratégies déjà jouées — il évite ainsi de rejouer ce qui n'a pas marché.
+    nb_stock_alerts = len(state.get("stock_alerts") or [])
+    domains = [DOMAIN_SALES_SCRIPT, DOMAIN_DECISION]
+    if nb_stock_alerts:
+        domains.append(DOMAIN_INVENTORY_PLAYBOOK)
+
     try:
         import asyncio as _aio
-        from app.sales.data.rag_retriever import search_scripts, format_scripts_block
-        rag_result = await _aio.to_thread(search_scripts, rag_query, hour, 3)
-        scripts    = rag_result["scripts"]
-        rag_source = rag_result["source"]
+        from app.sales.data.rag import format_context_block, retrieve
+        rag_result = await _aio.to_thread(
+            retrieve, rag_query, store_id=sid, hour=hour, top_k=4, domains=domains,
+        )
+        scripts    = rag_result.docs
+        rag_source = rag_result.mode
 
         # Bonus météo : par temps de pluie, remonter les scripts météo
         if is_rainy and scripts:
             for s in scripts:
-                if "meteo" in str(s.get("categorie", "")).lower():
-                    s["score"] = round(s["score"] + 0.08, 3)
-            scripts = sorted(scripts, key=lambda x: x["score"], reverse=True)
+                if "meteo" in f"{s.categorie} {s.doc_type}".lower():
+                    s.score = round(s.score + 0.08, 3)
+            scripts = sorted(scripts, key=lambda x: x.score, reverse=True)
 
         if scripts:
-            rag_txt = "\n\n" + format_scripts_block(scripts, max_n=3)
-        logger.info(f"[STRATEGE RAG] {len(scripts)} scripts | source={rag_source} | "
-                    f"top={scripts[0]['categorie'] if scripts else 'N/A'}")
+            rag_txt = "\n\n" + format_context_block(scripts)
+        logger.info(f"[STRATEGE RAG] {len(scripts)} docs | mode={rag_source} | "
+                    f"top={scripts[0].domain if scripts else 'N/A'}")
     except Exception as e:
         logger.warning(f"[STRATEGE RAG] Erreur: {str(e)[:80]}")
 
@@ -254,7 +263,7 @@ async def node_rag_search(state: SalesAgentState) -> dict:
     _lf_span(trace, "rag_search",
         {"query": rag_query[:300], "gap_pct": gap_pct, "urgency": urgency, "is_rainy": is_rainy},
         {"nb_scripts": len(scripts), "rag_used": rag_used,
-         "top_score": scripts[0]["score"] if scripts else 0,
+         "top_score": scripts[0].score if scripts else 0,
          "source": rag_source},
         duration, metadata={"collection": COLLECTION})
 
@@ -297,6 +306,21 @@ async def node_analyze_context(state: SalesAgentState) -> dict:
     elif w_eff >= 0.08: factors.append(f"Beau temps ({summary.get('weather_label','')}) — trafic +{w_eff:.0%}")
     if holidays.get("is_holiday_today"):
         factors.append(f"Jour férié : {holidays.get('today_holiday',{}).get('name','')}")
+    # Événements marché (festivals, rentrée, promos concurrents) — en cours d'abord
+    # (impact ventes immédiat), puis imminents ≤7j (préparer stock/équipe).
+    for ev in (context.get("events_en_cours") or [])[:2]:
+        up = ev.get("uplift", {})
+        top_cat = max(up, key=up.get) if up else ""
+        factors.append(
+            f"Événement en cours : {ev['nom']} (intensité {ev.get('intensite','?')})"
+            + (f" — uplift {top_cat} +{up[top_cat]:.0%}" if top_cat and up.get(top_cat) else "")
+        )
+    for ev in (context.get("events_a_venir") or [])[:2]:
+        if 0 < ev.get("jours_avant", 99) <= 7:
+            factors.append(
+                f"Événement dans {ev['jours_avant']}j : {ev['nom']} "
+                f"(intensité {ev.get('intensite','?')}) — anticiper stock/équipe"
+            )
     if gap_pct > 50:    factors.append(f"Gap structurel très élevé ({gap_pct:.1f}%)")
     elif gap_pct > 30:  factors.append(f"Gap élevé ({gap_pct:.1f}%)")
     elif gap_pct > 15:  factors.append(f"Gap modéré ({gap_pct:.1f}%)")
@@ -384,9 +408,9 @@ def _generate_alerts(gap_pct, urgency, hour, hrs_rem, w_eff, weather_label,
 # ══════════════════════════════════════════════════════════════════════════════
 
 _OR_MODEL_ROTATION = [
-    os.getenv("OPENROUTER_MODEL",          "nvidia/nemotron-3-super-120b-a12b:free"),
-    os.getenv("OPENROUTER_MODEL_FALLBACK", "openai/gpt-oss-120b:free"),
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    os.getenv("OPENROUTER_MODEL",          "nvidia/nemotron-3-nano-30b-a3b:free"),
+    os.getenv("OPENROUTER_MODEL_FALLBACK", "nvidia/nemotron-3-super-120b-a12b:free"),
+    "openai/gpt-oss-120b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
 ]
 
@@ -396,41 +420,54 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
     t0 = time.time()
     import httpx
     for model in _OR_MODEL_ROTATION:
-        try:
-            async with httpx.AsyncClient(timeout=45) as client:
-                resp = await client.post(
-                    OPENROUTER_URL,
-                    headers={
-                        "Authorization": f"Bearer {OPENROUTER_KEY}",
-                        "Content-Type":  "application/json",
-                        "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                        "X-Title":       "AI Sales Coach Ooredoo - Stratege",
-                    },
-                    json={
-                        "model":       model,
-                        "max_tokens":  800,
-                        "temperature": 0.1,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user",   "content": user_msg},
-                        ],
-                    },
-                )
-            data = resp.json()
-            if "error" in data:
-                code = data["error"].get("code", 0)
-                msg  = data["error"].get("message", "?")[:80]
-                logger.warning(f"[STRATEGE OR] {model} → {code}: {msg}")
-                if code in (429, 503):
-                    continue  # rate-limit → essayer le modèle suivant
-                return "", (time.time() - t0) * 1000
-            content = data["choices"][0]["message"]["content"].strip()
-            ms = (time.time() - t0) * 1000
-            logger.info(f"[STRATEGE OR] OK — {len(content)} chars | {ms:.0f}ms | {model}")
-            return content, ms
-        except Exception as e:
-            logger.warning(f"[STRATEGE OR] {model} exception: {str(e)[:60]}")
-            continue
+        # Le stratège doit rendre du JSON : on l'exige du modèle plutôt que de
+        # réparer sa sortie à coups de regex. Tous les modèles ne supportent pas
+        # response_format — on retente sans dès que le serveur le refuse.
+        for payload_extra in ({"response_format": {"type": "json_object"}}, {}):
+            try:
+                async with httpx.AsyncClient(timeout=45) as client:
+                    resp = await client.post(
+                        OPENROUTER_URL,
+                        headers={
+                            "Authorization": f"Bearer {OPENROUTER_KEY}",
+                            "Content-Type":  "application/json",
+                            "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                            "X-Title":       "AI Sales Coach Ooredoo - Stratege",
+                        },
+                        json={
+                            "model":       model,
+                            "max_tokens":  800,
+                            "temperature": 0.1,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user",   "content": user_msg},
+                            ],
+                            # nemotron-3-* raisonne à voix haute et vide son budget
+                            # de tokens avant d'écrire le JSON. Le stratège applique
+                            # des règles, il n'a pas à réfléchir en anglais.
+                            "reasoning": {"enabled": False},
+                            **payload_extra,
+                        },
+                    )
+                data = resp.json()
+                if "error" in data:
+                    code = data["error"].get("code", 0)
+                    msg  = data["error"].get("message", "?")[:80]
+                    if payload_extra and "response_format" in str(msg).lower():
+                        logger.info(f"[STRATEGE OR] {model} sans response_format")
+                        continue  # retente le même modèle en texte libre
+                    logger.warning(f"[STRATEGE OR] {model} → {code}: {msg}")
+                    if code in (429, 503):
+                        break     # rate-limit → modèle suivant
+                    return "", (time.time() - t0) * 1000
+
+                content = data["choices"][0]["message"]["content"].strip()
+                ms = (time.time() - t0) * 1000
+                logger.info(f"[STRATEGE OR] OK — {len(content)} chars | {ms:.0f}ms | {model}")
+                return content, ms
+            except Exception as e:
+                logger.warning(f"[STRATEGE OR] {model} exception: {str(e)[:60]}")
+                break
     return "", (time.time() - t0) * 1000
 
 
@@ -532,9 +569,24 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
         "holiday_name": (holidays.get("today_holiday",{}) or {}).get("name",""),
     }, indent=2, ensure_ascii=False)
 
+    def _ev_brief(e: dict) -> dict:
+        up = e.get("uplift", {}) or {}
+        return {
+            "nom":         e.get("nom", ""),
+            "intensite":   e.get("intensite", ""),
+            "fin":         e.get("fin", ""),
+            "jours_avant": e.get("jours_avant", 0),
+            "uplift":      {k: f"+{v:.0%}" for k, v in up.items() if v},
+            "strategie":   (e.get("strategie", "") or "")[:180],
+        }
+
     events_data = json.dumps({
         "active_promotions": [{"title": e.get("title",""), "price": e.get("price","")}
                                for e in (events.get("promotions",[]) or [])[:2]],
+        # Événements marché PG (festivals partenaires Ooredoo, rentrée, promos
+        # concurrents) : en cours = agir aujourd'hui ; à venir = préparer stock.
+        "events_en_cours": [_ev_brief(e) for e in (context.get("events_en_cours") or [])[:3]],
+        "events_a_venir":  [_ev_brief(e) for e in (context.get("events_a_venir") or [])[:3]],
     }, indent=2, ensure_ascii=False)
 
     user_msg = STRATEGE_USER_PROMPT.format(
@@ -557,18 +609,18 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
     strategie_data = {}; llm_ok = False; llm_latency_ms = 0.0
     llm_response = ""; model_used = ""
 
-    # ── Essayer Mistral d'abord (quota indépendant), puis OpenRouter, puis Ollama ──
-    if MISTRAL_KEY:
-        logger.info("[STRATEGE] Node 4 — Appel Mistral direct...")
-        llm_response, llm_latency_ms = await _call_mistral_stratege(
-            system_with_rag, user_msg, urgency_level)
-        model_used = "mistral"
-
-    if not llm_response and USE_OPENROUTER:
+    # ── OpenRouter/nano-30b d'abord, puis Mistral (quota indépendant), puis Ollama ──
+    if USE_OPENROUTER:
         logger.info(f"[STRATEGE] Node 4 — Appel OpenRouter ({OPENROUTER_MODEL})...")
         llm_response, llm_latency_ms = await _call_openrouter_stratege(
             system_with_rag, user_msg, urgency_level)
         model_used = OPENROUTER_MODEL
+
+    if not llm_response and MISTRAL_KEY:
+        logger.info("[STRATEGE] Node 4 — Appel Mistral direct...")
+        llm_response, llm_latency_ms = await _call_mistral_stratege(
+            system_with_rag, user_msg, urgency_level)
+        model_used = "mistral"
 
     if not llm_response:
         logger.info(f"[STRATEGE] Node 4 — Appel Ollama ({OLLAMA_MODEL})...")
@@ -901,10 +953,17 @@ def _make_fallback_strategy(gap_pct, urgency, summary, hours_remaining, rag_scri
     w_eff = float(summary.get("weather_effect", 0))
     is_rainy = w_eff <= -0.10; w_label = summary.get("weather_label", "")
     if rag_scripts:
-        actions = [{"priorite":i,"action":s["action"][:150],"produit_cible":s["produit"][:100],
-                    "argument_vente":s["argument"][:200],"impact_estime":s["impact"][:100]}
-                   for i,s in enumerate(rag_scripts[:3],1)]
-        focus = list(dict.fromkeys(s["produit"] for s in rag_scripts[:3]))
+        # rag_context contient des RetrievedDocument : action/argument/impact
+        # vivent dans le payload, quel que soit le domaine du document.
+        def _p(doc, key: str) -> str:
+            return str((getattr(doc, "payload", None) or {}).get(key, "") or "")
+
+        actions = [{"priorite": i, "action": _p(s, "action")[:150],
+                    "produit_cible": (s.produit or "")[:100],
+                    "argument_vente": _p(s, "argument")[:200],
+                    "impact_estime": _p(s, "impact")[:100]}
+                   for i, s in enumerate(rag_scripts[:3], 1)]
+        focus = [p for p in dict.fromkeys(s.produit for s in rag_scripts[:3]) if p]
     elif is_rainy:
         actions = [
             {"priorite":1,"action":"Proposer AirPods Pro 3 résistants eau","produit_cible":"AirPods Pro 3","argument_vente":"Certifiés IPX4 résistants à l'eau","impact_estime":"+279 TND panier"},
@@ -948,6 +1007,17 @@ def _build_context_signals(context, factors):
     all_promos = (events.get("promotions",[]) or []) + (events.get("new_offers",[]) or [])
     if all_promos:
         signals.append({"type":"event","level":"med","label":f"🎯 {len(all_promos)} offre(s) — {all_promos[0].get('title','')[:40]}","value":0.3})
+    # Événements marché (festivals partenaires, rentrée…) — en cours puis imminents
+    for ev in (context.get("events_en_cours") or [])[:2]:
+        lvl = {"LOW":"low","MEDIUM":"med","HIGH":"high","EXTREME":"high"}.get(ev.get("intensite"), "med")
+        signals.append({"type":"event","level":lvl,
+            "label":f"🎪 {ev['nom'][:45]} — en cours jusqu'au {ev.get('fin','')}",
+            "value":{"low":0.3,"med":0.5,"high":0.8}.get(lvl,0.5)})
+    for ev in (context.get("events_a_venir") or [])[:1]:
+        if 0 < ev.get("jours_avant", 99) <= 14:
+            signals.append({"type":"event","level":"med",
+                "label":f"🎪 {ev['nom'][:45]} dans {ev['jours_avant']}j — préparer stock",
+                "value":0.4})
     return signals
 
 

@@ -1,9 +1,12 @@
 """
-Agent Analyste — Architecture ReAct (Reason + Act).
+Agent Analyste — v4 déterministe temps réel.
 
 Graphe :
   receive_pos → validate_data → load_memory
-    → react_analyst   ← VRAI agent ReAct (remplace 6 nodes statiques)
+    → ts_analysis          ← VRAI moteur séries temporelles (Holt-Winters
+                              saisonnier + profil intraday + gap horaire),
+                              zéro LLM dans le chemin critique (< 1s)
+    → compare_with_memory  ← tendance vs cycles précédents
   → build_strategy_query → save_memory → END
 """
 
@@ -15,10 +18,11 @@ from .nodes import (
     node_receive_pos,
     node_validate_data,
     node_load_memory,
+    node_compare_with_memory,
     node_build_strategy_query,
     node_save_memory,
 )
-from .react_analyst import node_react_analyst
+from .ts_node import node_ts_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +37,9 @@ def build_analyst_graph() -> StateGraph:
     graph.add_node("validate_data",       node_validate_data)
     graph.add_node("load_memory",         node_load_memory)
 
-    # ── Node ReAct — remplace feature_engineering + compute_gap + call_timesfm
-    #                + compare_with_memory + detect_urgency + llm_summary
-    graph.add_node("react_analyst",       node_react_analyst)
+    # ── Node analytique déterministe — forecast EOD + gap horaire + urgence
+    graph.add_node("ts_analyst",          node_ts_analysis)
+    graph.add_node("compare_with_memory", node_compare_with_memory)
 
     # ── Nodes sortie (inchangés)
     graph.add_node("build_strategy_query", node_build_strategy_query)
@@ -45,12 +49,13 @@ def build_analyst_graph() -> StateGraph:
     graph.set_entry_point("receive_pos")
     graph.add_edge("receive_pos",          "validate_data")
     graph.add_edge("validate_data",        "load_memory")
-    graph.add_edge("load_memory",          "react_analyst")
-    graph.add_edge("react_analyst",        "build_strategy_query")
+    graph.add_edge("load_memory",          "ts_analyst")
+    graph.add_edge("ts_analyst",           "compare_with_memory")
+    graph.add_edge("compare_with_memory",  "build_strategy_query")
     graph.add_edge("build_strategy_query", "save_memory")
     graph.add_edge("save_memory",          END)
 
-    logger.info("[ANALYST] Graphe ReAct construit — 7 nodes (react_analyst remplace 6 nodes statiques)")
+    logger.info("[ANALYST] Graphe v4 construit — 7 nodes, moteur TS déterministe (ts_analysis)")
     return graph
 
 

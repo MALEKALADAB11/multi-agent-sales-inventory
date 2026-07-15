@@ -13,6 +13,8 @@ from typing import Optional
 import asyncpg
 import httpx
 
+from app.core.db import acquire
+
 logger = logging.getLogger(__name__)
 
 _DB_CONFIG = {
@@ -47,8 +49,7 @@ _WEATHER_TTL = 300
 async def _fetch_store_coords(store_id: str) -> dict:
     """Lit latitude/longitude depuis sales.boutiques. Fallback Tunis centre."""
     try:
-        conn = await asyncpg.connect(**_DB_CONFIG, timeout=5, command_timeout=10)
-        try:
+        async with acquire(connect_timeout=5) as conn:
             row = await conn.fetchrow(
                 "SELECT latitude, longitude, ville FROM sales.boutiques WHERE store_id = $1",
                 store_id
@@ -56,8 +57,6 @@ async def _fetch_store_coords(store_id: str) -> dict:
             if row and row["latitude"] and row["longitude"]:
                 return {"lat": float(row["latitude"]), "lon": float(row["longitude"]),
                         "city": row["ville"] or store_id}
-        finally:
-            await conn.close()
     except Exception:
         pass
     return {"lat": 36.8065, "lon": 10.1815, "city": "Tunis"}
@@ -182,6 +181,8 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
     """
     result = {
         "events_actifs":     [],
+        "events_en_cours":   [],
+        "events_a_venir":    [],
         "seasonal_factors":  {},
         "competitors":       [],
         "competitor_pricing": [],
@@ -190,8 +191,7 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
         "source":            "postgresql_market",
     }
     try:
-        conn = await asyncpg.connect(**_DB_CONFIG, timeout=8, command_timeout=15)
-        try:
+        async with acquire(connect_timeout=8) as conn:
             ev_rows = await conn.fetch("""
                 SELECT event_name, event_type, sous_type,
                        start_date, end_date, intensite, scope,
@@ -200,8 +200,19 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
                 FROM market.events
                 WHERE start_date <= CURRENT_DATE + INTERVAL '30 days'
                   AND end_date   >= CURRENT_DATE
-                ORDER BY start_date ASC LIMIT 10
+                -- En cours d'abord, puis les plus proches ; LIMIT élargi car le
+                -- scraper FIC ajoute ~20 concerts datés sur juillet-août.
+                ORDER BY (start_date <= CURRENT_DATE) DESC, start_date ASC
+                LIMIT 25
             """)
+            today = date.today()
+
+            def _uplift(x) -> float:
+                # Les seeds historiques stockent des pourcentages (25.0),
+                # les récents des fractions (0.25) — normaliser en fraction.
+                v = float(x or 0)
+                return round(v / 100, 4) if v > 1 else v
+
             result["events_actifs"] = [
                 {
                     "nom":       r["event_name"],
@@ -211,17 +222,23 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
                     "fin":       str(r["end_date"]),
                     "intensite": r["intensite"],
                     "scope":     r["scope"],
+                    "en_cours":  r["start_date"] <= today <= r["end_date"],
+                    "jours_avant": max(0, (r["start_date"] - today).days),
                     "uplift": {
-                        "terminal":   float(r["uplift_terminal"] or 0),
-                        "forfait":    float(r["uplift_forfait"] or 0),
-                        "sim":        float(r["uplift_sim"] or 0),
-                        "recharge":   float(r["uplift_recharge"] or 0),
-                        "accessoire": float(r["uplift_accessoire"] or 0),
+                        "terminal":   _uplift(r["uplift_terminal"]),
+                        "forfait":    _uplift(r["uplift_forfait"]),
+                        "sim":        _uplift(r["uplift_sim"]),
+                        "recharge":   _uplift(r["uplift_recharge"]),
+                        "accessoire": _uplift(r["uplift_accessoire"]),
                     },
                     "strategie": r["note_strategie"] or "",
                 }
                 for r in ev_rows
             ]
+            # Séparation en cours / à venir : un festival déjà commencé et une
+            # rentrée dans 3 semaines n'appellent pas la même action terrain.
+            result["events_en_cours"] = [e for e in result["events_actifs"] if e["en_cours"]]
+            result["events_a_venir"]  = [e for e in result["events_actifs"] if not e["en_cours"]]
 
             sp_rows = await conn.fetch("""
                 SELECT categorie, mois, jour_semaine,
@@ -327,8 +344,6 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
                 f"{len(result['competitors'])} concurrents, "
                 f"MNP bilan={result['mnp_net'].get('bilan', 0)}"
             )
-        finally:
-            await conn.close()
     except Exception as e:
         logger.warning(f"[STRATEGE-PG] market_intelligence_pg failed: {e}")
         result["source"] = "fallback"
@@ -398,14 +413,25 @@ async def fetch_full_context(store_id: str) -> dict:
         summary["is_holiday"]   = False
         summary["holiday_name"] = ""
 
-    events_actifs = market.get("events_actifs", [])
-    summary["active_promos"] = len(events_actifs)
+    events_actifs   = market.get("events_actifs", [])
+    events_en_cours = market.get("events_en_cours", [])
+    events_a_venir  = market.get("events_a_venir", [])
+    summary["active_promos"]    = len(events_actifs)
+    summary["nb_events_en_cours"] = len(events_en_cours)
+    summary["nb_events_a_venir"]  = len(events_a_venir)
+    if events_en_cours:
+        top_ev = max(events_en_cours,
+                     key=lambda e: {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "EXTREME": 3}.get(e.get("intensite"), 0))
+        summary["event_en_cours"] = top_ev["nom"]
 
     total_effect = summary.get("weather_effect", 0)
     if holidays.get("is_holiday_today"):
         total_effect += 0.30
-    if events_actifs:
-        intensite = events_actifs[0].get("intensite", "LOW")
+    # Seuls les événements EN COURS impactent le trafic du jour ; un événement
+    # à venir prépare le stock mais ne booste pas les ventes d'aujourd'hui.
+    if events_en_cours:
+        intensite = max((e.get("intensite", "LOW") for e in events_en_cours),
+                        key=lambda i: {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "EXTREME": 3}.get(i, 0))
         total_effect += {"LOW": 0.05, "MEDIUM": 0.15, "HIGH": 0.30, "EXTREME": 0.50}.get(intensite, 0)
     summary["total_effect"] = round(total_effect, 2)
 
@@ -419,6 +445,8 @@ async def fetch_full_context(store_id: str) -> dict:
         "market":             market,
         "events":             ooredoo_events,
         "events_actifs":      events_actifs,
+        "events_en_cours":    events_en_cours,
+        "events_a_venir":     events_a_venir,
         "seasonal_factors":   market.get("seasonal_factors", {}),
         "competitors":        market.get("competitors", []),
         "competitor_pricing": market.get("competitor_pricing", []),

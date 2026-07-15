@@ -35,7 +35,9 @@ services:
 
   standalone:
     container_name: milvus-standalone
-    image: milvusdb/milvus:v2.4.9
+    # 2.5.x : full-text search natif (fonction BM25 -> sparse vector) + hybrid_search
+    # avec RRFRanker. Indispensable au retriever hybride (app/sales/data/rag/).
+    image: milvusdb/milvus:v2.5.14
     command: ["milvus", "run", "standalone"]
     restart: unless-stopped
     security_opt:

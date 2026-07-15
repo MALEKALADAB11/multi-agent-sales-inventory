@@ -17,6 +17,7 @@ Chaque cycle = 1 trace Langfuse hierarchique :
     |-- score (analyste-quality)
     |-- score (stratege-quality)
 """
+import asyncio
 import logging
 import time
 import uuid
@@ -516,7 +517,9 @@ class CycleOrchestrator:
                                 f"coach={'Y' if final_state.get('conseil_final') else 'N'}",
                     )
 
-                    lf.flush()
+                    # Pas de lf.flush() ici : c'est un queue.join() synchrone qui
+                    # attend l'upload réseau et gèle l'event loop pendant plusieurs
+                    # secondes par cycle. Le worker Langfuse flushe en arrière-plan.
                     logger.debug(f"[LANGFUSE] Cycle {cycle_id} trace complete | quality={score_val}")
                 except Exception as e:
                     logger.debug(f"[LANGFUSE] Cycle finalize: {e}")
@@ -531,10 +534,12 @@ class CycleOrchestrator:
                 nb_rag_scripts=nb_rag,
             )
             if errors_count == 0 and final_state.get("strategie_actions"):
-                try:
-                    enrich_rag_from_cycle(cycle_id, final_state, internal_id)
-                except Exception:
-                    pass
+                # Embeddings Ollama + insert Milvus sont synchrones (requests) et
+                # peuvent prendre 15s+ par script : exécution hors event loop,
+                # sinon tout le serveur (WS dashboard inclus) gèle pendant l'enrichissement.
+                asyncio.create_task(asyncio.to_thread(
+                    enrich_rag_from_cycle, cycle_id, final_state, internal_id
+                ))
 
         # ── Console ────────────────────────────────────────────────────────
         _console_tracer.cycle_end(

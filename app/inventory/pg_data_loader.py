@@ -14,47 +14,26 @@ Couvrir : stock_history, sales_history, product_master, promotions,
           SKU listing, store listing.
 """
 
-import os
 import logging
 from typing import Optional, List
 
 import pandas as pd
 import psycopg2
-from psycopg2.pool import ThreadedConnectionPool
 from app.core.config import DEFAULT_STORE_ID
+from app.core import db as core_db
 
 logger = logging.getLogger(__name__)
 
-DB_CONFIG = {
-    "host":     os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
-    "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
-    "dbname":   os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
-    "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
-    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
-}
 
-_pool: ThreadedConnectionPool = None
-
-
-def _get_pool() -> ThreadedConnectionPool:
-    global _pool
-    if _pool is None:
-        _pool = ThreadedConnectionPool(2, 10, **DB_CONFIG, connect_timeout=10)
-    return _pool
-
+# Connexions : pool partagé app.core.db (un seul pool pour tout le process,
+# borné — évite de saturer max_connections côté serveur pendant les batchs).
 
 def _conn():
-    return _get_pool().getconn()
+    return core_db.getconn()
 
 
 def _release(conn):
-    try:
-        _get_pool().putconn(conn)
-    except Exception:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    core_db.putconn(conn)
 
 
 def _read_sql(sql: str, params=None) -> pd.DataFrame:

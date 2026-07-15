@@ -15,6 +15,7 @@ try:
 except ImportError:
     aioredis = None
 
+from app.core.db import acquire_conn, release_conn
 from app.sales.core.config import get_config
 from app.sales.data.postgres_provider import DB_CONFIG, normalize_store_id
 
@@ -23,15 +24,8 @@ config = get_config()
 
 
 async def get_pg_connection() -> asyncpg.Connection:
-    return await asyncpg.connect(
-        host=DB_CONFIG["host"],
-        port=DB_CONFIG["port"],
-        database=DB_CONFIG["database"],
-        user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"],
-        timeout=10,
-        command_timeout=30,
-    )
+    """Connexion du pool partage. A rendre via release_conn() dans un finally."""
+    return await acquire_conn(connect_timeout=10)
 
 
 # La table agent_memory est créée par les migrations Alembic
@@ -102,7 +96,7 @@ async def load_analyst_memory(store_id: str, limit: int = 5) -> dict:
         }
 
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 async def save_analyst_memory(
@@ -134,7 +128,7 @@ async def save_analyst_memory(
         return False
 
     finally:
-        await conn.close()
+        await release_conn(conn)
 
 
 def compare_with_memory(current: dict, memory: dict) -> dict:
@@ -378,6 +372,11 @@ def build_analyst_memory_payload(state: dict) -> dict:
         "coverage": state.get("coverage", 0),
         "urgency_level": state.get("urgency_level", "LOW"),
         "urgency_score": state.get("urgency_score", 0),
+        "forecast_mape": state.get("forecast_mape", 0),
+        "forecast_engine": (state.get("ts_analysis") or {}).get("model_engine", ""),
+        "trend_signal": state.get("trend_signal", "UNKNOWN"),
+        "feasibility": state.get("feasibility", "UNKNOWN"),
+        "nb_hourly_gaps": len(state.get("hourly_gaps") or []),
         "avg_ticket": features.get("avg_ticket", 0),
         "nb_transactions": features.get("nb_transactions", 0),
         "top_categories": features.get("top_categories", []),

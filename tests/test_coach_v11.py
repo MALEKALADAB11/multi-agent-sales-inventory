@@ -2,8 +2,8 @@
 Tests — Coach Chat v11 : Stratège câblé serveur-side + RAG unifié + prompt cross-domaine
 
 Couvre:
-  - RAG unifié : fallback lexical corpus quand Milvus/Ollama indisponibles
-  - format_scripts_block : injection prompt complète (situation/argument/impact)
+  - Moteur RAG : abstention sur hors-sujet, dépriorisation des ruptures, citations
+  - Dégradation : RAG muet → le coach refuse d'inventer prix et SKU
   - _build_system_prompt v11 : sections ancrage/méthode/catalogue présentes
   - _build_situation : cross-domaine (ventes + stock + stratège) quel que soit l'intent
   - _get_stratege_for_chat : succès, timeout borné (warm arrière-plan), orchestrateur absent
@@ -17,7 +17,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import asyncio
 import pytest
 
-from app.sales.data import rag_retriever as rr
+from app.sales.data.rag import (
+    DOMAIN_PRODUCT, DOMAIN_SALES_SCRIPT, RetrievalResult, RetrievedDocument,
+    format_context_block,
+)
+from app.sales.data.rag.rerank import is_relevant, score_documents
 from app.sales.coaching.agents.coach import coach_chat as cc
 from app.sales.coaching.orchestrator.coach_stratege_orchestrator import (
     StrategieOutput, _extract_extras,
@@ -28,42 +32,110 @@ from app.sales.coaching.orchestrator.coach_stratege_orchestrator import (
 # RAG unifié — fallback lexical
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRagFallback:
+class TestRagEngine:
+    """Le moteur RAG : scoring, abstention, formatage. Aucun service requis."""
 
-    def test_corpus_fallback_objection_prix(self):
-        scripts = rr._corpus_fallback("client hesite trop cher comment closer", 16, 3)
-        assert len(scripts) >= 1
-        assert scripts[0]["score"] > 0.3
-        # champs complets pour l'injection prompt
-        for s in scripts:
-            for field in ("categorie", "situation", "action", "argument", "impact"):
-                assert s[field]
+    def _doc(self, **kw):
+        d = RetrievedDocument(
+            doc_id=kw.get("doc_id", "x1"), domain=kw.get("domain", DOMAIN_SALES_SCRIPT),
+            title=kw.get("title", "titre"), text=kw.get("text", "objection prix trop cher"),
+            sku=kw.get("sku", ""), produit=kw.get("produit", ""),
+            payload=kw.get("payload", {}),
+        )
+        d.cosine = kw.get("cosine", 0.70)
+        d.bm25 = kw.get("bm25", 15.0)
+        d.bm25_rank = kw.get("bm25_rank", 0)
+        d.dense_rank = kw.get("dense_rank", 0)
+        return d
 
-    def test_corpus_fallback_empty_query(self):
-        assert rr._corpus_fallback("", 12, 3) == []
+    def test_abstention_sur_hors_sujet(self):
+        """Une requête hors-sujet ne doit PAS être déclarée pertinente.
 
-    def test_search_scripts_degrades_to_corpus(self, monkeypatch):
-        """Milvus down + embeddings down → le RAG répond quand même via le corpus."""
-        monkeypatch.setattr(rr, "_get_client", lambda: None)
-        monkeypatch.setattr(rr, "_embed", lambda text: None)
-        res = rr.search_scripts("objection trop cher iphone", hour=15, top_k=3)
-        assert res["source"] == "corpus"
-        assert len(res["scripts"]) >= 1
+        Régression : « recette du couscous » ramenait un conseil de coaching à 0,69
+        parce que le score post-boosts (créneau + boutique + fraîcheur) dépassait le
+        seuil. L'abstention juge désormais les preuves brutes, pas le score final.
+        """
+        faible = [self._doc(cosine=0.44, bm25=5.8)]
+        assert is_relevant(faible) is False
 
-    def test_search_scripts_never_raises(self, monkeypatch):
-        monkeypatch.setattr(rr, "_get_client", lambda: None)
-        monkeypatch.setattr(rr, "_load_corpus", lambda: [])
-        res = rr.search_scripts("nimporte quoi xyz", hour=10)
-        assert res == {"scripts": [], "relevant": False, "source": "none"}
+    def test_pertinent_si_cosinus_solide(self):
+        assert is_relevant([self._doc(cosine=0.62, bm25=0.0)]) is True
 
-    def test_format_scripts_block(self):
-        scripts = rr._corpus_fallback("client hesite trop cher", 16, 2)
-        block = rr.format_scripts_block(scripts, max_n=2)
-        assert "SCRIPTS TERRAIN" in block
-        assert "Impact observé" in block
+    def test_pertinent_si_lexical_fort(self):
+        """Un SKU exact peut avoir un cosinus médiocre mais un BM25 écrasant."""
+        assert is_relevant([self._doc(cosine=0.40, bm25=31.0)]) is True
 
-    def test_format_scripts_block_empty(self):
-        assert rr.format_scripts_block([]) == ""
+    def test_produit_en_rupture_est_deprecie(self):
+        """Ne jamais faire remonter un produit qu'on ne peut pas vendre."""
+        dispo = self._doc(doc_id="a", domain=DOMAIN_PRODUCT, sku="111",
+                          payload={"stock_dispo": 5})
+        rompu = self._doc(doc_id="b", domain=DOMAIN_PRODUCT, sku="222",
+                          payload={"stock_dispo": 0})
+        ranked = score_documents([dispo, rompu], "iphone",
+                                 out_of_stock_skus=frozenset({"222"}))
+        assert ranked[0].doc_id == "a"
+        assert ranked[-1].boosts.get("rupture") == -0.40
+
+    def test_marge_inconnue_nest_pas_zero(self):
+        """« marge 0 % » est un mensonge quand la marge n'est pas renseignée."""
+        doc = self._doc(domain=DOMAIN_PRODUCT, produit="IPHONE", sku="1",
+                        payload={"prix_ttc": 6349.0, "marge_pct": None,
+                                 "stock_dispo": None, "live": True})
+        block = format_context_block([doc])
+        assert "marge non renseignée" in block
+        assert "marge 0" not in block
+
+    def test_bloc_cite_ses_sources(self):
+        doc = self._doc(payload={"situation": "client hésite", "action": "closer",
+                                 "argument": "arg", "impact": "imp"})
+        block = format_context_block([doc])
+        assert "[S1]" in block
+
+    def test_bloc_vide_si_aucun_document(self):
+        assert format_context_block([]) == ""
+
+
+class TestCoachRagWiring:
+
+    def test_coach_delegue_au_moteur(self, monkeypatch):
+        captured = {}
+
+        def fake_retrieve(query, **kw):
+            captured["query"] = query
+            captured["store_id"] = kw.get("store_id")
+            r = RetrievalResult()
+            r.docs = [RetrievedDocument(doc_id="d", domain=DOMAIN_SALES_SCRIPT,
+                                        title="t", text="txt")]
+            r.relevant, r.mode = True, "hybrid"
+            return r
+
+        monkeypatch.setattr("app.sales.data.rag.retrieve", fake_retrieve)
+        docs, relevant, block = cc._search_rag_sync("comment closer", 16, "I63")
+        assert relevant is True and len(docs) == 1
+        assert captured["query"] == "comment closer"
+        assert captured["store_id"] == "I63"
+
+    def test_rag_indisponible_ne_leve_pas(self, monkeypatch):
+        def boom(query, **kw):
+            raise RuntimeError("Milvus down")
+        monkeypatch.setattr("app.sales.data.rag.retrieve", boom)
+        docs, relevant, block = cc._search_rag_sync("closer", 16, "I63")
+        assert docs == [] and relevant is False and block == ""
+
+    def test_prompt_avertit_quand_rag_vide(self):
+        """Sans documents, le coach doit se taire sur les prix — pas inventer.
+
+        Régression : Milvus et Ollama tombés, le coach a proposé « Galaxy A54
+        (SKU 5020160) à 399 TND » — ce SKU est un Samsung X160 à 120 TND.
+        """
+        situation = cc._build_situation(
+            advisor_name="Malek", store_id="I63", hour=16, ca=650, target=1007,
+            perf=64.5, gap=357, hours_left=4, urgency="HIGH", weather="", cause="",
+            mode="inventory", qtype="alerte", actions=[], rag_scripts=[],
+            top_sellers=[], recent_tx=[], inv_ctx={}, rag_block="",
+        )
+        assert "AUCUN DOCUMENT" in situation
+        assert "n'écris ni prix, ni SKU" in situation
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +147,8 @@ class TestSystemPromptV11:
     def test_contains_core_sections(self):
         sp = cc._build_system_prompt("CATALOG_SENTINEL")
         for marker in ("MÉTHODE", "ANCRAGE DONNÉES", "TON STYLE", "JAMAIS",
-                       "CATALOG_SENTINEL", "ACTIONS STRATÈGE", "SCRIPTS TERRAIN"):
+                       "CATALOG_SENTINEL", "ACTIONS STRATÈGE",
+                       "HIÉRARCHIE DES SOURCES", "cite sa référence"):
             assert marker in sp, f"section manquante: {marker}"
 
     def test_anti_hallucination_rules(self):
@@ -83,17 +156,11 @@ class TestSystemPromptV11:
         assert "jamais de ta mémoire" in sp
         assert "tu n'en crées pas un" in sp
 
-    def test_coach_rag_delegates_to_shared_retriever(self, monkeypatch):
-        calls = {}
-        def fake_search(query, hour=None, top_k=3, min_score=0.32):
-            calls["query"] = query
-            return {"scripts": [{"score": 0.9, "categorie": "closing", "situation": "s",
-                                 "action": "a", "produit": "p", "argument": "g", "impact": "i"}],
-                    "relevant": True, "source": "milvus"}
-        monkeypatch.setattr("app.sales.data.rag_retriever.search_scripts", fake_search)
-        scripts, relevant = cc._search_rag_sync("comment closer", 16)
-        assert relevant is True and len(scripts) == 1
-        assert "closer" in calls["query"]
+    def test_interdit_sku_sans_fiche(self):
+        """Régression : le coach a associé un nom de produit au SKU d'un autre."""
+        sp = cc._build_system_prompt("x")
+        assert "QUE s'il figure dans une fiche [P*]" in sp
+        assert "Ne jamais associer le nom d'un produit au SKU ou au prix d'un autre" in sp
 
 
 # ─────────────────────────────────────────────────────────────────────────────

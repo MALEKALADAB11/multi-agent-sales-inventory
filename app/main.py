@@ -222,6 +222,12 @@ async def startup_event():
     _last_payload.clear()
     _agent_running.clear()
 
+    # Pool asyncpg partagé, ouvert sur la boucle uvicorn : les outils agents le
+    # réutilisent au lieu d'ouvrir une connexion par appel.
+    from app.core.db import get_async_pool
+    if await get_async_pool() is None:
+        logger.warning("⚠️ Pool asyncpg indisponible — connexions directes en repli")
+
     # Le schéma appartient aux migrations Alembic — l'app vérifie, ne crée pas.
     from app.core.schema_check import verify_schema
     verify_schema()
@@ -441,6 +447,23 @@ async def startup_event():
             logger.warning(f"⚠️ TimesFM preload: {e}")
 
     asyncio.create_task(_preload_timesfm())
+
+    # ── Scraper événements (FIC, offres Ooredoo) → market.events, quotidien ──
+    try:
+        from app.sales.coaching.agents.stratege.events_scraper import refresh_events_loop
+        asyncio.create_task(refresh_events_loop())
+        logger.info("✅ Events scraper programmé (rafraîchissement quotidien)")
+    except Exception as e:
+        logger.warning(f"⚠️ Events scraper non démarré: {e}")
+
+    # ── Kanban : auto-confirmation des BC SOUMIS > 24h sans action humaine ──
+    try:
+        from app.inventory.services.po_auto_confirm import auto_confirm_loop
+        asyncio.create_task(auto_confirm_loop())
+        logger.info("✅ Auto-confirmation BC programmée (SOUMIS -> CONFIRME après 24h)")
+    except Exception as e:
+        logger.warning(f"⚠️ Auto-confirmation BC non démarrée: {e}")
+
     logger.info("🚀 All systems started — v5.0.0")
 
 
@@ -452,6 +475,10 @@ async def shutdown_event():
     if trigger: trigger.stop()
     alert_trigger = getattr(app.state, "alert_trigger", None)
     if alert_trigger: alert_trigger.stop()
+
+    from app.core.db import close_async_pool
+    await close_async_pool()
+
     logger.info("Shutting down cleanly.")
 
 
@@ -803,7 +830,17 @@ def _build_payload(analysis: dict) -> dict:
     next_holiday = holidays.get("next_holiday") or {}
     event_str    = ""
 
-    if holidays.get("is_holiday_today"):
+    # Priorité : événement marché EN COURS (festival partenaire Ooredoo…),
+    # puis événement imminent, puis jour férié — c'est ce qui impacte les
+    # ventes/le stock aujourd'hui.
+    events_en_cours = external_ctx.get("events_en_cours") or []
+    events_a_venir  = external_ctx.get("events_a_venir") or []
+    if events_en_cours:
+        event_str = f"🎪 {events_en_cours[0]['nom']} (en cours)"
+    elif events_a_venir and events_a_venir[0].get("jours_avant", 99) <= 14:
+        ev = events_a_venir[0]
+        event_str = f"🎪 {ev['nom']} dans {ev['jours_avant']}j"
+    elif holidays.get("is_holiday_today"):
         event_str = f"🎉 {(holidays.get('today_holiday') or {}).get('name','Jour férié')}"
     elif next_holiday.get("name"):
         event_str = f"📅 {next_holiday['name']} dans {next_holiday.get('days_until',0)}j"
@@ -811,12 +848,39 @@ def _build_payload(analysis: dict) -> dict:
     all_promos = (events_data.get("promotions") or []) + (events_data.get("new_offers") or [])
     promo_str  = f"🎯 {len(all_promos)} offre(s) Ooredoo" if all_promos else ""
 
+    # La modal "Offres Ooredoo actives" du dashboard lit store_context.active_offers
+    # (title/price/category/details/script) — n'envoyer que le compteur laissait
+    # la liste vide alors que le badge annonçait N offres.
+    active_offers = [
+        {
+            "title":    o.get("title", ""),
+            "price":    o.get("price", ""),
+            "category": o.get("category", ""),
+            "details":  o.get("details", ""),
+            "script":   (
+                f"Mentionnez « {o.get('title','')} »"
+                + (f" à {o['price']}" if o.get("price") else "")
+                + " — vérifiez l'éligibilité du client et proposez le bundle associé."
+            ),
+        }
+        for o in all_promos[:8] if o.get("title")
+    ]
+
     store_context = {
-        "weather":     weather_str,
-        "event":       event_str,
-        "promo":       promo_str,
-        "stock_alert": "📦 Stock critique — vérifier boutique",
-        "temperature": f"{weather_sum.get('temperature',22)}°C",
+        "weather":       weather_str,
+        "event":         event_str,
+        "promo":         promo_str,
+        "active_offers": active_offers,
+        "events_en_cours": [
+            {"nom": e["nom"], "fin": e.get("fin",""), "intensite": e.get("intensite","")}
+            for e in events_en_cours[:3]
+        ],
+        "events_a_venir": [
+            {"nom": e["nom"], "debut": e.get("debut",""), "jours_avant": e.get("jours_avant",0)}
+            for e in events_a_venir[:3]
+        ],
+        "stock_alert":   "📦 Stock critique — vérifier boutique",
+        "temperature":   f"{weather_sum.get('temperature',22)}°C",
     }
 
     hour          = datetime.now().hour
