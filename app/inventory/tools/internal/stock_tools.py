@@ -484,17 +484,36 @@ class _DataCache:
 
     @classmethod
     def forecast(cls) -> pd.DataFrame:
+        """
+        FIX: this used to load sales_history and relabel quantity_sold ->
+        predicted_demand -- i.e. actuals passed off as a forecast, the same
+        bug get_forecast_data() in this file was already fixed for (see its
+        docstring). Reads inventory.demand_forecast directly instead, same
+        COALESCE(corrected_demand, baseline_demand, demand_24h) priority as
+        get_forecast_data()/InventoryRepo.get_forecast_range() use, so
+        _quick_risk() in routes.py sees the demand-sensing corrected value
+        when one exists instead of a stale sales relabel.
+        """
         if cls._fresh("forecast"):
             return cls._cache["forecast"]
-        from app.inventory.pg_data_loader import load_sales_history
+        cols = ["sku", "store_id", "date", "predicted_demand",
+                "baseline_demand", "corrected_demand", "correction_method"]
         try:
-            df = load_sales_history(days=30)
-            if not df.empty and "quantity_sold" in df.columns:
-                df = df.rename(columns={"quantity_sold": "predicted_demand"})
-            cls._cache["forecast"] = df; cls._ts["forecast"] = _time.time()
-            return df
-        except Exception:
-            return pd.DataFrame(columns=["sku", "store_id", "predicted_demand"])
+            rows = _query("""
+                SELECT sku, store_id, forecast_date AS date,
+                       COALESCE(corrected_demand, baseline_demand, demand_24h) AS predicted_demand,
+                       baseline_demand, corrected_demand, correction_method
+                FROM inventory.demand_forecast
+                WHERE forecast_date >= CURRENT_DATE
+            """)
+            df = pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+            if not df.empty:
+                df["sku"] = df["sku"].astype(str)
+        except Exception as e:
+            logger.warning("[_DataCache.forecast] query error: %s", e)
+            df = pd.DataFrame(columns=cols)
+        cls._cache["forecast"] = df; cls._ts["forecast"] = _time.time()
+        return df
 
     @classmethod
     def record_sale(cls, sku: str, store_id: str, units: int) -> None:
@@ -563,4 +582,4 @@ def get_forecast(sku, store_id: str = DEFAULT_STORE_ID) -> pd.DataFrame:
         })
     if "predicted_demand" not in df.columns:
         df["predicted_demand"] = 1.0
-    return df 
+    return df

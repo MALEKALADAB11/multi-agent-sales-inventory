@@ -1,5 +1,3 @@
-# Docker volumes 
-volumes/
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
@@ -38,25 +36,7 @@ ENV/
 *~
 
 # Data directories
-app/inventory/data/forecasts/
-app/inventory/data/cleaned/
-app/inventory/data/processed/
-data/raw/
-
-# Root-level data files (large, not for git)
-sales_history.csv
-stock_history.csv
-transaction_vente_test_100500_fast.csv
-boutique_actif.xls
-product.xls
-stock_centre.xls
-product_master.csv
-promotions.csv
-coaching_scripts_v2.csv
-
-# Generated large data
-generated_data/transactions_6months.csv
-data_generer/
+data/
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
@@ -79,8 +59,4 @@ q
 # ── ML experiment tracking ────────────────────────────────────────────────────
 mlruns/
 .timesfm_cache/
-volumes/etcd/
-volumes/minio/
-volumes/milvus/
-backups/
-data-archive/
+volumes/

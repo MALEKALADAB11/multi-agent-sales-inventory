@@ -34,10 +34,13 @@ FORECAST_OUTPUT_PATH = FORECAST_DIR / "timesFM_future_forecast.csv"
 # of this file.
 SENSING_MODEL_PATH = os.getenv(
     "SENSING_MODEL_PATH",
-    str(BASE_DIR / "app" / "inventory" / "forecasting" / "models" / "sensing_model_v1.txt"),
+    str(BASE_DIR / "app" / "inventory" / "forecasting" / "models" / "sensing_model_v1.ubj"),
 )
 BASELINE_DAYS_BACK = int(os.getenv("BASELINE_DAYS_BACK", "730"))
-SENSING_HORIZON_DAYS = int(os.getenv("SENSING_HORIZON_DAYS", "14"))
+# Must match run_sensing_job.py's SENSING_HORIZON_DAYS (currently 7, not 14):
+# beyond ~7 days out, recent_actual_avg / stockout_flag_7d have no real actuals
+# to look back on yet, so the correction features would be silently 0.0/False.
+SENSING_HORIZON_DAYS = int(os.getenv("SENSING_HORIZON_DAYS", "7"))
 
 
 # ─────────────────────────────────────────────────────────────

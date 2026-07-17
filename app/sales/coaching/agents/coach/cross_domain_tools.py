@@ -203,6 +203,66 @@ def get_stock_alerts(store_id: str, severity_filter: str = "high") -> List[Dict[
         return []
 
 
+# ── Outil 3bis — get_demand_forecast_batch (Demand Sensing Integration) ─────
+
+def get_demand_forecast_batch(skus: List[str], store_id: str, days: int = 7) -> Dict[str, float]:
+    """
+    Demande quotidienne moyenne prévue par SKU, sur les `days` prochains jours,
+    depuis inventory.demand_forecast (pipeline demand-sensing : baseline TS
+    + correction xgboost).
+
+    Remplace la dépendance historique à supply.reorder_params.demande_moy_jour,
+    table qui n'a plus aucun script d'alimentation actif. Même priorité
+    COALESCE(corrected_demand, baseline_demand, demand_24h) que le reste du
+    code (stock_tools.get_forecast_data / InventoryRepo.get_forecast_range /
+    coach_chat._load_inventory_context_sync).
+
+    Batch (un seul aller-retour DB pour tous les SKUs), pas un call par SKU —
+    même optimisation que get_stock_levels_batch.
+
+    Returns: {sku_str: avg_daily_demand} — un SKU absent du dict signifie
+    qu'aucun forecast n'existe encore pour lui (pas de baseline_demand ni de
+    corrected_demand ni de demand_24h sur la fenêtre) ; l'appelant doit
+    prévoir son propre fallback.
+    """
+    if not skus:
+        return {}
+    try:
+        import asyncpg
+
+        async def _fetch():
+            conn = await asyncpg.connect(
+                host="localhost", port=5432,
+                database="ooredoo_sales", user="postgres", password="root",
+                timeout=3,
+            )
+            try:
+                sku_ints = [int(s) for s in skus if str(s).strip()]
+                if not sku_ints:
+                    return {}
+                rows = await conn.fetch("""
+                    SELECT sku,
+                           AVG(COALESCE(corrected_demand, baseline_demand, demand_24h)) AS avg_demand
+                    FROM inventory.demand_forecast
+                    WHERE store_id = $1 AND sku = ANY($2::int[])
+                      AND forecast_date >= CURRENT_DATE
+                      AND forecast_date < CURRENT_DATE + ($3 || ' days')::interval
+                      AND COALESCE(corrected_demand, baseline_demand, demand_24h) IS NOT NULL
+                    GROUP BY sku
+                """, store_id, sku_ints, str(days))
+                return {
+                    str(r["sku"]): float(r["avg_demand"])
+                    for r in rows if r["avg_demand"] is not None
+                }
+            finally:
+                await conn.close()
+
+        return asyncio.get_event_loop().run_until_complete(_fetch())
+    except Exception as e:
+        logger.debug("[CoachTools] get_demand_forecast_batch: %s", e)
+        return {}
+
+
 # ── Outil 4 — get_recommendable_products ────────────────────────────────────
 
 def get_recommendable_products(
@@ -215,6 +275,13 @@ def get_recommendable_products(
     Retourne les produits candidats depuis DB (stock > 0, disponibles).
     Filtre dynamiquement les ruptures.
     Utilisé par le Balancing Engine.
+
+    days_to_stockout est recalculé depuis la demande-sensing pipeline
+    (inventory.demand_forecast) quand un forecast existe pour le SKU —
+    stock_current / demande_quotidienne_prévue — au lieu du champ
+    "days_remaining" du repo, qui dépendait de la table
+    supply.reorder_params désormais morte. Fallback inchangé sur
+    "days_remaining" quand aucun forecast n'existe encore pour ce SKU.
     """
     try:
         from app.inventory.repositories.inventory_repo import SyncInventoryRepo
@@ -226,23 +293,36 @@ def get_recommendable_products(
             limit=max_products,
         ) or []
 
-        return [
-            {
-                "sku":            str(p.get("sku", "")),
+        skus = [str(p.get("sku", "")) for p in products if p.get("sku")]
+        demand_by_sku = get_demand_forecast_batch(skus, store_id, days=7)
+
+        result = []
+        for p in products:
+            stock_current = int(p.get("stock_current", p.get("stock_qty", 0)))
+            if stock_current <= 0:  # G9 implicite
+                continue
+
+            sku = str(p.get("sku", ""))
+            avg_daily_demand = demand_by_sku.get(sku)
+            if avg_daily_demand and avg_daily_demand > 0:
+                days_to_stockout = round(stock_current / avg_daily_demand, 1)
+            else:
+                days_to_stockout = float(p.get("days_remaining", 30))  # fallback dynamique
+
+            result.append({
+                "sku":            sku,
                 "name":           str(p.get("nom", p.get("name", ""))),
                 "price":          float(p.get("prix_ttc", p.get("price", 0))),
-                "stock_current":  int(p.get("stock_current", p.get("stock_qty", 0))),  # dynamique
+                "stock_current":  stock_current,  # dynamique
                 "stock_optimal":  float(p.get("stock_optimal", p.get("reorder_point", 0)) or 1) * 2,
                 "margin_pct":     float(p.get("margin_pct", 20)),
-                "days_to_stockout": float(p.get("days_remaining", 30)),   # dynamique
+                "days_to_stockout": days_to_stockout,
                 "category":       str(p.get("category", p.get("categorie", "unknown"))),
                 "risk_level":     str(p.get("risk_level", "LOW")),
                 "is_top_seller":  bool(p.get("is_top_seller", False)),
                 "active_promo":   bool(p.get("active_promo", False)),
-            }
-            for p in products
-            if int(p.get("stock_current", p.get("stock_qty", 0))) > 0  # G9 implicite
-        ]
+            })
+        return result
     except Exception as e:
         logger.debug("[CoachTools] get_recommendable_products: %s", e)
         return []
