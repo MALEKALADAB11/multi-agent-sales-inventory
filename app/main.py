@@ -256,7 +256,7 @@ async def startup_event():
         "port":     int(os.getenv("POSTGRES_PORT", "5432")),
         "database": os.getenv("POSTGRES_DB", "ooredoo_sales"),
         "user":     os.getenv("POSTGRES_USER", "postgres"),
-        "password": os.getenv("POSTGRES_PASSWORD", "admin"),
+        "password": os.getenv("POSTGRES_PASSWORD", "root"),
     }
 
     def _on_sale(store_id: str, sku: str, units: int, product_name: str = None, amount: float = None) -> None:
@@ -546,7 +546,7 @@ async def _get_advisors_from_pg(store_id: str, cr: float, dt: float) -> list:
     try:
         conn = await asyncpg.connect(
             host="localhost", port=5432,
-            database="ooredoo_sales", user="postgres", password="admin",
+            database="ooredoo_sales", user="postgres", password="root",
             timeout=5,
         )
         try:
@@ -581,7 +581,7 @@ async def _get_advisors_from_pg(store_id: str, cr: float, dt: float) -> list:
         if not sellers or all(s["revenue_today"] == 0 for s in sellers):
             conn2 = await asyncpg.connect(
                 host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="admin",
+                database="ooredoo_sales", user="postgres", password="root",
                 timeout=5,
             )
             try:
@@ -1047,7 +1047,7 @@ def _fetch_critical_stock_sync(store_id: str) -> list:
             "port":     int(os.getenv("POSTGRES_PORT", 5432)),
             "dbname":   os.getenv("POSTGRES_DB", "ooredoo_sales"),
             "user":     os.getenv("POSTGRES_USER", "postgres"),
-            "password": os.getenv("POSTGRES_PASSWORD", "admin"),
+            "password": os.getenv("POSTGRES_PASSWORD", "root"),
             "connect_timeout": 5,
         })
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

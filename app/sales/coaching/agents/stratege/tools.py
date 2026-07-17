@@ -20,7 +20,7 @@ _DB_CONFIG = {
     "port":     int(os.getenv("POSTGRES_PORT", "5432")),
     "database": os.getenv("POSTGRES_DB", "ooredoo_sales"),
     "user":     os.getenv("POSTGRES_USER", "postgres"),
-    "password": os.getenv("POSTGRES_PASSWORD", "admin"),
+    "password": os.getenv("POSTGRES_PASSWORD", "root"),
 }
 
 WEATHER_CODES = {

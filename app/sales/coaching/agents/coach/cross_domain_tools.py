@@ -34,7 +34,7 @@ async def get_sales_context(store_id: str, advisor_id: str = "") -> Dict[str, An
         import asyncpg
         conn = await asyncpg.connect(
             host="localhost", port=5432,
-            database="ooredoo_sales", user="postgres", password="admin",
+            database="ooredoo_sales", user="postgres", password="root",
             timeout=3,
         )
         try:
@@ -262,7 +262,7 @@ def retrieve_advisor_history(advisor_id: str, store_id: str) -> Dict[str, Any]:
         async def _fetch():
             conn = await asyncpg.connect(
                 host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="admin",
+                database="ooredoo_sales", user="postgres", password="root",
                 timeout=3,
             )
             try:
@@ -314,7 +314,7 @@ def check_promotions(sku: str, store_id: str) -> Dict[str, Any]:
         async def _fetch():
             conn = await asyncpg.connect(
                 host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="admin",
+                database="ooredoo_sales", user="postgres", password="root",
                 timeout=3,
             )
             try:
@@ -548,7 +548,7 @@ def get_realtime_kpis(store_id: str) -> Dict[str, Any]:
         async def _fetch():
             conn = await asyncpg.connect(
                 host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="admin",
+                database="ooredoo_sales", user="postgres", password="root",
                 timeout=3,
             )
             try:

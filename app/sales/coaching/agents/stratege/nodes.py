@@ -132,7 +132,7 @@ async def _get_critical_stock(store_id=DEFAULT_STORE_ID, threshold=5):
     try:
         import asyncpg
         conn = await asyncpg.connect(host="localhost", port=5432,
-            database="ooredoo_sales", user="postgres", password="admin", timeout=3)
+            database="ooredoo_sales", user="postgres", password="root", timeout=3)
         try:
             rows = await conn.fetch("""
                 SELECT s.sku,

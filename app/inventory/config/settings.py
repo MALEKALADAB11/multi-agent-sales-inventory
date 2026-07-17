@@ -10,8 +10,8 @@ from typing import Optional, Literal
 from dotenv import load_dotenv
 from app.core.config import DEFAULT_STORE_ID
 
-# Load .env from inventory-module root
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# Load .env from project root (not inventory module)
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 # ─────────────────────────────────────────────────────────────
 # Base paths
@@ -28,6 +28,16 @@ SALES_HISTORY_PATH = PROCESSED_DATA_DIR / "sales_history.csv"
 PRODUCT_MASTER_PATH = PROCESSED_DATA_DIR / "product_master.csv"
 PROMOTIONS_PATH = PROCESSED_DATA_DIR / "promotions.csv"
 FORECAST_OUTPUT_PATH = FORECAST_DIR / "timesFM_future_forecast.csv"
+
+# Demand sensing layer (baseline + LightGBM correction, see
+# app/inventory/forecasting/) — env-overridable, same style as the rest
+# of this file.
+SENSING_MODEL_PATH = os.getenv(
+    "SENSING_MODEL_PATH",
+    str(BASE_DIR / "app" / "inventory" / "forecasting" / "models" / "sensing_model_v1.txt"),
+)
+BASELINE_DAYS_BACK = int(os.getenv("BASELINE_DAYS_BACK", "730"))
+SENSING_HORIZON_DAYS = int(os.getenv("SENSING_HORIZON_DAYS", "14"))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -76,7 +86,10 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 
-    groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
+    groq_api_key_1: Optional[str] = os.getenv("GROQ_API_KEY_1")
+    groq_api_key_2: Optional[str] = os.getenv("GROQ_API_KEY_2")
+    groq_api_key_3: Optional[str] = os.getenv("GROQ_API_KEY_3")
+    groq_api_key_4: Optional[str] = os.getenv("GROQ_API_KEY_4")
     groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     groq_base_url: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
@@ -128,7 +141,7 @@ class Settings:
     db_port: int = int(os.getenv("DB_PORT", "5432"))
     db_name: str = os.getenv("DB_NAME", "ooredoo_sales")
     db_user: str = os.getenv("DB_USER", "postgres")
-    db_password: str = os.getenv("DB_PASSWORD", "admin")
+    db_password: str = os.getenv("DB_PASSWORD", "root")
 
     # App
     environment: str = os.getenv("ENVIRONMENT", "development")
@@ -141,7 +154,6 @@ class Settings:
 settings = Settings()
 
 # Backward compatibility
-GROQ_API_KEY = settings.groq_api_key
 LLM_MODEL = settings.llm_model or settings.groq_model
 LLM_TEMPERATURE = settings.llm_temperature
 LLM_BASE_URL = settings.llm_base_url or settings.groq_base_url

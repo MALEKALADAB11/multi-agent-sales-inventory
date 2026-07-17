@@ -436,7 +436,7 @@ async def node_save_memory(state: Dict[str, Any]) -> Dict[str, Any]:
     """Persist cycle summary to PostgreSQL coach_interactions for future RAG."""
     try:
         import asyncpg, json as _json, os
-        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:admin@localhost:5432/ooredoo_sales")
+        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:root@localhost:5432/ooredoo_sales")
         pool = await asyncpg.create_pool(db_url, min_size=1, max_size=2)
         async with pool.acquire() as conn:
             await conn.execute("""

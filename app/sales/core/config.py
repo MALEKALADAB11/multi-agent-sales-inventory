@@ -73,7 +73,7 @@ class SalesModuleConfig(BaseSettings):
     enable_multi_store:      bool = False
     max_concurrent_stores:   int  = 5
     enable_pg_checkpointing: bool = False
-    pg_checkpointer_url:     str  = "postgresql://postgres:admin@localhost:5432/ooredoo_sales"
+    pg_checkpointer_url:     str  = "postgresql://postgres:root@localhost:5432/ooredoo_sales"
 
     # ── Inventory module connection ──────────────────────────────────────────
     inventory_api_url:       str  = "http://localhost:8001"

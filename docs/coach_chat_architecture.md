@@ -48,7 +48,7 @@ FastAPI root main.py (port 8000)
 | `POSTGRES_HOST` | `localhost` | DB |
 | `POSTGRES_DB` | `ooredoo_sales` | DB |
 | `POSTGRES_USER` | `postgres` | DB |
-| `POSTGRES_PASSWORD` | `admin` | DB |
+| `POSTGRES_PASSWORD` | `root` | DB |
 
 ### Mapping store_id (frontend → DB)
 

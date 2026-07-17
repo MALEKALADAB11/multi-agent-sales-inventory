@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # Détection des moteurs disponibles
 try:
     from statsforecast import StatsForecast
-    from statsforecast.models import AutoARIMA, AutoETS, AutoCES
+    from statsforecast.models import AutoARIMA, AutoETS, AutoCES, MSTL
     _SF_AVAILABLE = True
     logger.info("[TS] StatsForecast disponible ✓")
 except ImportError:
@@ -77,8 +77,22 @@ _chronos_pipeline = None
 
 # ── Singleton StatsForecast models ────────────────────────────────────────────
 
-def _get_sf_models():
-    """Retourne les modèles StatsForecast — instanciés une seule fois."""
+# MSTL(season_length=[7, 365]) needs roughly 2 full annual cycles to fit reliably
+# (statsforecast/statsmodels MSTL requires n > 2 * max(season_length) in practice).
+# Below that, keep the original weekly-only ensemble rather than let MSTL degrade
+# silently (or throw and fall through to Chronos/numpy, which is a worse regression
+# than just staying weekly-only). See implementation guide Section 5 Step 0.
+MSTL_MIN_N = 730
+
+
+def _get_sf_models(n: int = 0):
+    """Retourne les modèles StatsForecast — instanciés une seule fois.
+
+    n: longueur de la série. >= MSTL_MIN_N -> MSTL avec saisonnalité annuelle.
+       Sinon -> ensemble hebdomadaire original (comportement inchangé).
+    """
+    if n >= MSTL_MIN_N:
+        return [MSTL(season_length=[7, 365])]
     return [
         AutoARIMA(season_length=7, allowdrift=True, stepwise=True),
         AutoETS(season_length=7, damped=True),
@@ -125,17 +139,22 @@ def _forecast_statsforecast(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         sf = StatsForecast(
-            models=_get_sf_models(),
+            models=_get_sf_models(n),
             freq=freq,
             n_jobs=1,
         )
         sf.fit(df)
         pred = sf.predict(h=horizon, level=[80])
 
-    # Colonnes: unique_id, ds, AutoARIMA, AutoETS, AutoCES
-    # + AutoARIMA-lo-80, AutoARIMA-hi-80, etc.
-    model_cols = ["AutoARIMA", "AutoETS", "AutoCES"]
-    available  = [c for c in model_cols if c in pred.columns]
+    # Colonnes: unique_id, ds, <model names>, + <model>-lo-80, <model>-hi-80, etc.
+    # Detected dynamically instead of hardcoded — the model list varies (weekly
+    # ensemble AutoARIMA/AutoETS/AutoCES vs single MSTL column) depending on n,
+    # see _get_sf_models(). A hardcoded list here would silently produce an empty
+    # `available` (and therefore NaN forecast) whenever MSTL is selected.
+    available = [
+        c for c in pred.columns
+        if c not in ("unique_id", "ds") and "-lo-" not in c and "-hi-" not in c
+    ]
 
     forecast_vals = pred[available].mean(axis=1).values
 

@@ -96,7 +96,10 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"No product data found for SKU {sku}")
 
     # Sales history: PostgreSQL via pg_data_loader (3 ans, features temporelles incluses)
-    sales_df = get_sales_history(sku, store_id)
+    # days=730 (was default 365) — required so extract_series_from_sales below can
+    # actually see 2 years of history; annual-seasonality (MSTL, season_length=365)
+    # is a no-op if sales_df itself is capped at 365 days. See implementation guide 1.5.
+    sales_df = get_sales_history(sku, store_id, days=730)
 
     # Profil saisonnier 3 ans — facteurs par mois, événement, saison, jour de semaine
     seasonal_profile = {}
@@ -113,7 +116,7 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     ts_result: Dict[str, Any] = {}
     if _TS_ENGINE_AVAILABLE and not sales_df.empty:
         try:
-            series = extract_series_from_sales(sales_df, sku, store_id, days_back=90)
+            series = extract_series_from_sales(sales_df, sku, store_id, days_back=730)
             if len(series) >= 7:
                 ts_result = ts_forecast(series, horizon=30)
                 logger.debug(

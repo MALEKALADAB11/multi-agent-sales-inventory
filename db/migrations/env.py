@@ -34,7 +34,7 @@ def _db_url() -> str:
     port = os.getenv("DB_PORT", "5432")
     name = os.getenv("DB_NAME", "ooredoo_sales")
     user = os.getenv("DB_USER", "postgres")
-    pwd = os.getenv("DB_PASSWORD", "")
+    pwd = os.getenv("DB_PASSWORD", "root")
     return f"postgresql://{user}:{pwd}@{host}:{port}/{name}"
 
 

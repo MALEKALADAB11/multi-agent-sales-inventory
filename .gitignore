@@ -37,17 +37,11 @@ ENV/
 *.swo
 *~
 
-#data
-inventory-module/data/forecasts/
-inventory-module/data/cleaned/
-inventory-module/data/processed/
-shared-module/data/raw/
-shared_module/data/raw/
-sales-module/data/product.xls
-sales-module/data/boutique_actif.xls
-sales-module/data/stock_centre.xls
-sales-module/data/transaction_vente*
-monitoring-module/data/
+# Data directories
+app/inventory/data/forecasts/
+app/inventory/data/cleaned/
+app/inventory/data/processed/
+data/raw/
 
 # Root-level data files (large, not for git)
 sales_history.csv
@@ -85,11 +79,8 @@ q
 # ── ML experiment tracking ────────────────────────────────────────────────────
 mlruns/
 .timesfm_cache/
-sales-module/data/transactions_2025_2026_v2.csv
 volumes/etcd/
 volumes/minio/
 volumes/milvus/
-sales-module/.env
-.env
 backups/
 data-archive/

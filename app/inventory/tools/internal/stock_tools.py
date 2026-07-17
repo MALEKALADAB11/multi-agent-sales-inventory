@@ -45,7 +45,7 @@ DB_CONFIG = {
     "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
     "dbname":   os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
     "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
-    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
+    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
 }
 
 # In-memory sale overrides (from realtime simulator)
@@ -211,6 +211,14 @@ def get_sales_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) ->
     """
     Retourne l'historique des ventes depuis inventory.sales_history.
     Compatible TimesFM/Prophet : colonnes date, quantity_sold, revenue, is_promo.
+
+    FIX: le SELECT filtrait par sku/store_id (WHERE) mais ne les renvoyait pas
+    en colonnes. extract_series_from_sales() (appele par fetch_node) cherche
+    une colonne sku/product_id/article_id comme TOUTE PREMIERE etape et,
+    a defaut, retourne immediatement [0.0]*7 -- silencieusement, sans erreur.
+    Consequence live avant ce fix : le moteur TS "primaire" tournait sur une
+    serie de 7 zeros pour CHAQUE SKU, en permanence. Ajoute sku/store_id en
+    colonnes constantes (valeurs deja connues, un seul sku/store par appel).
     """
     sku = int(sku)
     conn = _get_conn()
@@ -228,10 +236,12 @@ def get_sales_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) ->
             df = pd.DataFrame(cur.fetchall(), columns=cols)
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"])
+        df["sku"] = sku
+        df["store_id"] = store_id
         return df
     except Exception as e:
         logger.warning("Sales history error for %s@%s: %s", sku, store_id, e)
-        return pd.DataFrame(columns=["date", "quantity_sold", "revenue", "is_promo"])
+        return pd.DataFrame(columns=["date", "quantity_sold", "revenue", "is_promo", "sku", "store_id"])
     finally:
         _release_conn(conn)
 
@@ -244,6 +254,9 @@ def get_stock_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) ->
     """
     Retourne l'historique stock depuis inventory.stock_history.
     Compatible series temporelles : colonnes date, stock_level, is_stockout.
+
+    FIX: meme bug que get_sales_history — sku/store_id filtrent le WHERE mais
+    n'etaient pas renvoyes en colonnes. Ajoutes en constantes.
     """
     sku = int(sku)
     conn = _get_conn()
@@ -260,10 +273,12 @@ def get_stock_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) ->
             df = pd.DataFrame(cur.fetchall(), columns=cols)
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"])
+        df["sku"] = sku
+        df["store_id"] = store_id
         return df
     except Exception as e:
         logger.warning("Stock history error for %s@%s: %s", sku, store_id, e)
-        return pd.DataFrame(columns=["date", "stock_level", "is_stockout"])
+        return pd.DataFrame(columns=["date", "stock_level", "is_stockout", "sku", "store_id"])
     finally:
         _release_conn(conn)
 
@@ -272,30 +287,32 @@ def get_stock_history(sku, store_id: str = DEFAULT_STORE_ID, days: int = 365) ->
 # 5. FORECAST DATA — Donnees pour prediction (sales + stock combinees)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_forecast_data(sku, store_id: str = DEFAULT_STORE_ID, days: int = 180) -> pd.DataFrame:
+def get_forecast_data(sku, store_id: str = DEFAULT_STORE_ID, days: int = 30) -> pd.DataFrame:
     """
-    Combine sales_history et stock_history pour le forecasting.
-    Retourne un DataFrame journalier avec quantity_sold, stock_level, is_promo.
+    Lit le forecast persiste depuis inventory.demand_forecast.
+
+    AVANT (v1): joignait sales_history + stock_history et renommait
+    quantity_sold -> predicted_demand — c'etait des ACTUELS relabelles, pas une
+    vraie prevision. Corrige ici pour lire la table demand_forecast, alimentee
+    par le pipeline demand-sensing (run_baseline_batch.py / run_sensing_job.py).
+    Voir implementation guide Section 2 / Step 3.
+
+    Note: `days` etait un parametre "fenetre passee" avant (defaut 180). Ici
+    c'est une fenetre future (defaut 30, aligne avec l'usage forecast) —
+    verifier les appelants qui passaient un `days` explicite pour une fenetre
+    passee avant de deployer.
     """
     sku = int(sku)
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT
-                    COALESCE(s.record_date, sh.record_date) AS date,
-                    COALESCE(s.quantity_sold, 0) AS quantity_sold,
-                    COALESCE(s.revenue, 0) AS revenue,
-                    COALESCE(sh.stock_level, 0) AS stock_level,
-                    COALESCE(s.is_promo, false) AS is_promo,
-                    s.event_name, s.season
-                FROM inventory.sales_history s
-                FULL OUTER JOIN inventory.stock_history sh
-                    ON s.sku = sh.sku AND s.store_id = sh.store_id AND s.record_date = sh.record_date
-                WHERE COALESCE(s.sku, sh.sku) = %s
-                  AND COALESCE(s.store_id, sh.store_id) = %s
-                  AND COALESCE(s.record_date, sh.record_date) >= CURRENT_DATE - INTERVAL '%s days'
-                ORDER BY date
+                SELECT forecast_date AS date,
+                       COALESCE(corrected_demand, baseline_demand) AS predicted_demand,
+                       baseline_demand, corrected_demand, correction_method
+                FROM inventory.demand_forecast
+                WHERE sku = %s AND store_id = %s AND forecast_date >= CURRENT_DATE
+                ORDER BY forecast_date LIMIT %s
             """, (sku, store_id, days))
             cols = [desc[0] for desc in cur.description]
             df = pd.DataFrame(cur.fetchall(), columns=cols)
@@ -304,7 +321,7 @@ def get_forecast_data(sku, store_id: str = DEFAULT_STORE_ID, days: int = 180) ->
         return df
     except Exception as e:
         logger.warning("Forecast data error for %s@%s: %s", sku, store_id, e)
-        return pd.DataFrame(columns=["date", "quantity_sold", "stock_level", "is_promo"])
+        return pd.DataFrame(columns=["date", "predicted_demand", "baseline_demand", "corrected_demand", "correction_method"])
     finally:
         _release_conn(conn)
 
@@ -546,4 +563,4 @@ def get_forecast(sku, store_id: str = DEFAULT_STORE_ID) -> pd.DataFrame:
         })
     if "predicted_demand" not in df.columns:
         df["predicted_demand"] = 1.0
-    return df
+    return df 

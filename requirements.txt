@@ -108,6 +108,7 @@ slowapi==0.1.9
 
 # ── Forecasting (optional statistical models) ─────────────────
 statsforecast==1.7.6
+lightgbm==4.5.0
 
 # ── Testing ───────────────────────────────────────────────────
 pytest==8.3.4

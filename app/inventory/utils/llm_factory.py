@@ -154,7 +154,7 @@ def get_llm(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # GROQ — inference ultra-rapide
+    # GROQ — inference ultra-rapide avec rotation des clés et fallback Ollama
     # ══════════════════════════════════════════════════════════════════════════
     elif provider == "groq":
         try:
@@ -162,13 +162,48 @@ def get_llm(
         except ImportError:
             raise ImportError("langchain-groq requis: pip install langchain-groq")
 
-        resolved_key = api_key or settings.groq_api_key
-        if not resolved_key:
+        # Collect all available Groq API keys (rotation support)
+        groq_keys = []
+        if api_key:
+            groq_keys.append(api_key)
+        if settings.groq_api_key_1:
+            groq_keys.append(settings.groq_api_key_1)
+        if settings.groq_api_key_2:
+            groq_keys.append(settings.groq_api_key_2)
+        if settings.groq_api_key_3:
+            groq_keys.append(settings.groq_api_key_3)
+        if settings.groq_api_key_4:
+            groq_keys.append(settings.groq_api_key_4)
+
+        if not groq_keys:
             raise ValueError("GROQ_API_KEY manquante dans .env")
 
-        return ChatGroq(
-            api_key=resolved_key,
-            model_name=model or settings.groq_model,
+        # Try each Groq key in rotation, fallback to Ollama if all fail
+        last_error = None
+        for key in groq_keys:
+            try:
+                logger.info("[LLMFactory] Trying Groq with key: %s...", key[:10] + "...")
+                return ChatGroq(
+                    api_key=key,
+                    model_name=model or settings.groq_model,
+                    temperature=temperature,
+                    **kwargs,
+                )
+            except Exception as e:
+                last_error = e
+                logger.warning("[LLMFactory] Groq key failed: %s. Trying next key...", str(e))
+                continue
+
+        # All Groq keys failed, fallback to Ollama
+        logger.warning("[LLMFactory] All Groq keys failed, falling back to Ollama")
+        try:
+            from langchain_ollama import ChatOllama
+        except ImportError:
+            raise ImportError("langchain-ollama requis: pip install langchain-ollama")
+
+        return ChatOllama(
+            model=model or settings.ollama_model,
+            base_url=settings.ollama_base_url,
             temperature=temperature,
             **kwargs,
         )
