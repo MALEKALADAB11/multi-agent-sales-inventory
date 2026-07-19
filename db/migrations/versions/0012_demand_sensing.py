@@ -3,13 +3,13 @@
 Backward-compatible: existing demand_24h/confidence_low/confidence_high/
 model_version columns on inventory.demand_forecast are untouched.
 
-Revision ID: 0009
-Revises: 0008
+Revision ID: 0012
+Revises: 0011
 """
 from alembic import op
 
-revision = "0009"
-down_revision = "0008"
+revision = "0012"
+down_revision = "0011"
 branch_labels = None
 depends_on = None
 
