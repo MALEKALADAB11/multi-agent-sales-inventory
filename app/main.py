@@ -166,6 +166,13 @@ except ImportError as e:
     logger.warning(f"⚠️ coach_chat_rag non trouvé: {e}")
 
 try:
+    from app.api.product_requests import router as product_requests_router
+    app.include_router(product_requests_router)
+    logger.info("✅ Product requests router chargé (demandes conseillers)")
+except ImportError as e:
+    logger.warning(f"⚠️ product_requests_router non trouvé: {e}")
+
+try:
     from app.api.hitl import router as hitl_router
     app.include_router(hitl_router)
     logger.info("✅ HITL router chargé")
