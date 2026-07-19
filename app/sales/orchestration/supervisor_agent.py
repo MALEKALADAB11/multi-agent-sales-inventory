@@ -70,6 +70,10 @@ _SALES_BRANCH_KEYS = (
     "cause_racine", "message_manager", "real_time_alerts",
     "rag_used", "nb_rag_scripts", "critique_score", "critique_passed",
     "context_heatmap", "context_signals",
+    # Signaux horaires réels de l'Analyste v4 (ledger attendu/réel + prévision
+    # h+1..h+3) — consommés par le payload dashboard (hourly_performance).
+    "ts_analysis", "hourly_gaps", "next_hours_forecast",
+    "trend_signal", "feasibility",
 )
 
 

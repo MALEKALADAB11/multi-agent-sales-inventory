@@ -1,74 +1,43 @@
 {
-  "total": 2,
+  "total": 1,
   "events": [
-    {
-      "title": "HONOR",
-      "type": "promotion",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-14T12:50:46.600148"
-    },
     {
       "title": "[Go Back]",
       "type": "tarif",
-      "category": "internet",
+      "category": "mobile",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-14T12:50:58.272251"
+      "date": "2026-07-19T02:28:24.868021"
     }
   ],
   "active": [
     {
-      "title": "HONOR",
-      "type": "promotion",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-14T12:50:46.600148"
-    },
-    {
       "title": "[Go Back]",
       "type": "tarif",
-      "category": "internet",
+      "category": "mobile",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-14T12:50:58.272251"
+      "date": "2026-07-19T02:28:24.868021"
     }
   ],
-  "promotions": [
-    {
-      "title": "HONOR",
-      "type": "promotion",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-14T12:50:46.600148"
-    }
-  ],
+  "promotions": [],
   "new_offers": [],
   "tarifs": [
     {
       "title": "[Go Back]",
       "type": "tarif",
-      "category": "internet",
+      "category": "mobile",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-14T12:50:58.272251"
+      "date": "2026-07-19T02:28:24.868021"
     }
   ],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-14T12:51:02.347257"
+  "fetched_at": "2026-07-19T02:28:24.956092"
 }

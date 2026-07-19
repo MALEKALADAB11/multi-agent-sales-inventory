@@ -1469,13 +1469,15 @@ class SyncInventoryRepo:
             return 0
         try:
             with conn.cursor() as cur:
+                # sku est INTEGER en base (migration 0006) mais le pipeline
+                # manipule des SKUs str — comparaison en text des deux côtés.
                 cur.execute("""
                     UPDATE inventory.alerts
                     SET status = 'resolved', resolved_at = NOW()
                     WHERE store_id = %s
                       AND status = 'pending'
-                      AND NOT (sku = ANY(%s))
-                """, (store_id, list(current_skus)))
+                      AND NOT (sku::text = ANY(%s))
+                """, (store_id, [str(s) for s in current_skus]))
                 conn.commit()
                 return cur.rowcount
         except Exception as exc:

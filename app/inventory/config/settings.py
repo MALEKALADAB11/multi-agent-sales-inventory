@@ -77,7 +77,16 @@ class Settings:
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 
     groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
-    groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    # Rotation multi-clés : GROQ_API_KEYS=clef1,clef2,... (la 1re clé sert de
+    # primaire, les suivantes prennent le relais sur 429/quota/clé invalide).
+    # GROQ_API_KEY reste supporté et est fusionné en tête de liste.
+    groq_api_keys: list = list(dict.fromkeys(
+        k.strip()
+        for k in ([os.getenv("GROQ_API_KEY") or ""] + (os.getenv("GROQ_API_KEYS") or "").split(","))
+        if k.strip()
+    ))
+    groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    groq_model_fallback: str = os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile")
     groq_base_url: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

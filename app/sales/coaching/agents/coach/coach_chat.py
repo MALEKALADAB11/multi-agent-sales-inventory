@@ -58,6 +58,22 @@ def _rate_limit(limit_str: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 OLLAMA_URL       = config.OLLAMA_BASE_URL
+
+# ── Groq (rotation multi-clés — primaire si configuré) ──────────────────────
+# GROQ_API_KEYS=clef1,clef2,... : quand une clé est épuisée (429/quota) ou
+# invalide, la suivante prend le relais. GROQ_API_KEY (singulier) reste
+# supporté et est fusionné en tête de liste.
+GROQ_URL  = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_KEYS = list(dict.fromkeys(
+    k.strip()
+    for k in ([os.getenv("GROQ_API_KEY") or ""] + (os.getenv("GROQ_API_KEYS") or "").split(","))
+    if k.strip()
+))
+_GROQ_MODEL_ROTATION = [
+    os.getenv("GROQ_MODEL",          "openai/gpt-oss-120b"),
+    os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile"),
+]
+
 OPENROUTER_KEY   = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-nano-30b-a3b:free")
 OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
@@ -1292,6 +1308,69 @@ async def _call_openrouter(
     return "", (time.time() - t0) * 1000
 
 
+# ── Groq (rotation clés × modèles — quotas Groq indépendants par modèle) ─────
+async def _call_groq(
+    system: str,
+    user_msg: str,
+    max_tokens: int,
+    temperature: float,
+    history: list,
+) -> tuple[str, float]:
+    t0 = time.time()
+    if not GROQ_KEYS:
+        return "", 0.0
+    import httpx
+    messages = [{"role": "system", "content": system}]
+    if history:
+        messages.extend(history[-8:])
+    messages.append({"role": "user", "content": user_msg})
+    for ki, key in enumerate(GROQ_KEYS, start=1):
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type":  "application/json; charset=utf-8",
+        }
+        for model in _GROQ_MODEL_ROTATION:
+            try:
+                body = json.dumps({
+                    "model": model, "max_tokens": max_tokens,
+                    "temperature": temperature, "messages": messages,
+                }, ensure_ascii=False).encode("utf-8")
+                async with httpx.AsyncClient(timeout=28.0) as client:
+                    resp = await client.post(GROQ_URL, headers=headers, content=body)
+                if resp.status_code in (401, 403):
+                    # Clé invalide/révoquée : inutile d'insister avec d'autres modèles
+                    logger.warning("[COACH GROQ] clé #%d → %s — clé suivante", ki, resp.status_code)
+                    break
+                if resp.status_code == 429:
+                    # Quotas Groq séparés par modèle → modèle suivant, puis clé suivante
+                    logger.warning("[COACH GROQ] clé #%d %s → 429 rate limit", ki, model)
+                    continue
+                if resp.status_code >= 500:
+                    logger.warning("[COACH GROQ] clé #%d %s → %s server error", ki, model, resp.status_code)
+                    continue
+                data = resp.json()
+                if resp.status_code >= 400:
+                    err = data.get("error")
+                    msg = err.get("message") if isinstance(err, dict) else data.get("message", "?")
+                    logger.warning("[COACH GROQ] clé #%d %s → %s: %.60s", ki, model, resp.status_code, str(msg))
+                    continue
+                raw = data["choices"][0]["message"]["content"].strip()
+                for pfx in ["Reponse:", "Coach:", "CoachIA:", "Réponse :", "RÉPONSE :",
+                            "Here is", "Based on", "Voici ma", "D'accord,"]:
+                    if raw.lower().startswith(pfx.lower()):
+                        raw = raw[len(pfx):].strip()
+                if raw.startswith("{"):
+                    m = re.search(r'"(?:reply|response|conseil|text|message)"\s*:\s*"([^"]+)"', raw)
+                    raw = m.group(1).strip() if m else ""
+                ms = (time.time() - t0) * 1000
+                logger.info("[COACH GROQ] %dc | %.0fms | clé #%d %s", len(raw), ms, ki, model)
+                return raw, ms
+            except Exception as e:
+                logger.warning("[COACH GROQ] clé #%d %s exception: %.60s", ki, model, str(e))
+                continue
+    return "", (time.time() - t0) * 1000
+
+
 # ── Mistral (API directe La Plateforme — quota indépendant d'OpenRouter) ─────
 MISTRAL_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
@@ -1647,20 +1726,27 @@ async def coach_chat(request: Request, body: dict):
     else:
         max_tokens, temp = 350, 0.22
 
-    # ── Tentative 1 : OpenRouter / nano-30b (modèle primaire du coach) ──────
-    reply, llm_ms = await _call_openrouter(system_prompt, user_message, max_tokens, temp, day_history)
-    model_used = OPENROUTER_MODEL if _is_valid_reply(reply) else ""
+    # ── Tentative 1 : Groq (rotation multi-clés — primaire si configuré) ────
+    reply, llm_ms = await _call_groq(system_prompt, user_message, max_tokens, temp, day_history)
+    model_used = "groq" if _is_valid_reply(reply) else ""
 
-    # ── Tentative 2 : Mistral direct (quota indépendant d'OpenRouter) ───────
+    # ── Tentative 2 : OpenRouter / nano-30b ─────────────────────────────────
+    if not _is_valid_reply(reply):
+        if GROQ_KEYS:
+            logger.warning("[COACH] Groq failed (%.0fms) — retry OpenRouter", llm_ms)
+        reply, llm_ms = await _call_openrouter(system_prompt, user_message, max_tokens, temp, day_history)
+        model_used = OPENROUTER_MODEL if _is_valid_reply(reply) else ""
+
+    # ── Tentative 3 : Mistral direct (quota indépendant d'OpenRouter) ───────
     if not _is_valid_reply(reply):
         if OPENROUTER_KEY:
             logger.warning("[COACH] OpenRouter failed (%.0fms) — retry Mistral", llm_ms)
         reply, llm_ms = await _call_mistral(system_prompt, user_message, max_tokens, temp, day_history)
         model_used = "mistral" if _is_valid_reply(reply) else ""
 
-    # ── Tentative 3 : OpenRouter stripped ───────────────────────────────────
+    # ── Tentative 4 : OpenRouter stripped ───────────────────────────────────
     if not _is_valid_reply(reply):
-        logger.warning("[COACH] Attempt 2 failed (%.0fms) — retry stripped", llm_ms)
+        logger.warning("[COACH] Attempt 3 failed (%.0fms) — retry stripped", llm_ms)
         await asyncio.sleep(0.6 + random.uniform(0, 0.8))
 
         min_user = (
@@ -1672,8 +1758,8 @@ async def coach_chat(request: Request, body: dict):
         if _is_valid_reply(reply):
             model_used = f"{OPENROUTER_MODEL}+stripped"
         else:
-            # ── Tentative 4 : Ollama local ───────────────────────────────────
-            logger.warning("[COACH] Attempt 3 failed — trying Ollama")
+            # ── Tentative 5 : Ollama local ───────────────────────────────────
+            logger.warning("[COACH] Attempt 4 failed — trying Ollama")
             reply = await _call_ollama_fallback(system_prompt, min_user, min(max_tokens, 220))
             model_used = "ollama" if _is_valid_reply(reply) else ""
 
@@ -2140,9 +2226,17 @@ async def coach_chat_stream(request: Request, body: dict):
             messages.extend(day_history[-8:])
         messages.append({"role": "user", "content": user_message})
 
-        # Providers streaming par ordre de priorité : OpenRouter (nano-30b puis
-        # sa rotation de secours), puis Mistral dont le quota est indépendant.
+        # Providers streaming par ordre de priorité : Groq (rotation clés ×
+        # modèles), puis OpenRouter (nano-30b + rotation de secours), puis
+        # Mistral dont le quota est indépendant.
         providers: list[tuple[str, str, dict]] = []
+        for _gkey in GROQ_KEYS:
+            _g_headers = {
+                "Authorization": f"Bearer {_gkey}",
+                "Content-Type":  "application/json; charset=utf-8",
+            }
+            for _m in _GROQ_MODEL_ROTATION:
+                providers.append((_m, GROQ_URL, _g_headers))
         if OPENROUTER_KEY:
             _or_headers = {
                 "Authorization": f"Bearer {OPENROUTER_KEY}",

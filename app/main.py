@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 from app.api.auth import router as auth_router
-from app.sales.data.postgres_provider import get_data_provider
+from app.sales.data.postgres_provider import get_data_provider, PATTERN_HORAIRE
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -739,6 +739,12 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         "daily_target": dt_val, "forecast_eod": feo, "attainment": att,
         "coverage": cov, "mape": prediction.get("mape", 14.3),
         "timesfm_prediction": prediction, "feedback_history": [],
+        # Signaux horaires réels de l'Analyste v4 (ledger + prévision h+1..h+3)
+        "ts_analysis":         supervisor_result.get("ts_analysis") or {},
+        "hourly_gaps":         supervisor_result.get("hourly_gaps") or [],
+        "next_hours_forecast": supervisor_result.get("next_hours_forecast") or [],
+        "trend_signal":        supervisor_result.get("trend_signal", ""),
+        "feasibility":         supervisor_result.get("feasibility", ""),
         "metrics": {"cycle_id": cycle_id, "store_id": store_id},
     }
 
@@ -815,7 +821,10 @@ def _build_payload(analysis: dict) -> dict:
     cr     = analysis.get("current_revenue") or 0
     dt_val = analysis.get("daily_target") or 1007
     feo    = analysis.get("forecast_eod") or 0
-    att    = analysis.get("attainment") or 0
+    # Invariant du payload : attainment TOUJOURS calculé sur le même couple
+    # (ca_today, ca_target) que les cartes CA/gap — jamais une valeur venue
+    # d'une autre base de revenu (sinon "atteint 185%" à côté d'un gap -24%).
+    att    = round((cr / dt_val) * 100, 1) if dt_val > 0 else 0
 
     strategie         = analysis.get("strategie") or ""
     strategie_actions = analysis.get("strategie_actions") or []
@@ -938,32 +947,70 @@ def _build_payload(analysis: dict) -> dict:
         if a["attainment"] < 80
     ]
 
-    tph         = round(dt_val / 11)
+    # Objectif horaire réel : profil de trafic du magasin (PATTERN_HORAIRE),
+    # pas un dt_val/11 uniforme qui donnait une ligne "Objectif" plate.
+    def _tph(h: int) -> int:
+        return round(dt_val * PATTERN_HORAIRE.get(h, 5) / 100)
+
     hourly_rate = cr / hours_elapsed
+
+    # CA réel par heure. pos_history (postgres_provider) expose "hour" (int)
+    # et "revenue" — l'ancien code lisait "transaction_time", clé inexistante,
+    # d'où un graphe horaire vide (CA matin 0, meilleure heure "—").
     hd: dict[int, float] = {}
     for tx in pos_history:
-        t = tx.get("transaction_time")
-        if t and hasattr(t, "hour"):
-            hd[t.hour] = hd.get(t.hour,0.0) + tx.get("revenue",0.0)
+        h_tx = tx.get("hour")
+        if h_tx is None:
+            t = tx.get("transaction_time")
+            h_tx = t.hour if t is not None and hasattr(t, "hour") else None
+        if h_tx is not None:
+            hd[int(h_tx)] = hd.get(int(h_tx), 0.0) + float(tx.get("revenue", 0.0) or 0.0)
+    # Repli : hourly_ca de fetch_pos_data (batch + RT) si l'historique est vide
+    if not hd:
+        hd = {int(k): float(v or 0) for k, v in (pos_data.get("hourly_ca") or {}).items()}
+
+    # Attendu/prévision horaires RÉELS de l'Analyste v4 : ledger (heures passées,
+    # attendu Holt-Winters × profil horaire) + next_hours (h+1..h+3). Remplace
+    # l'ancien bruit random.uniform — la courbe prévision affichée est celle
+    # que l'agent a réellement calculée.
+    ts_expected: dict[int, float] = {}
+    ts_risk:     dict[int, bool]  = {}
+    for e in (analysis.get("hourly_gaps") or []):
+        try:
+            ts_expected[int(e["hour"])] = float(e.get("expected", 0) or 0)
+            ts_risk[int(e["hour"])]     = e.get("status") in ("WATCH", "ALERT")
+        except (KeyError, TypeError, ValueError):
+            continue
+    for e in (analysis.get("next_hours_forecast") or []):
+        try:
+            ts_expected[int(e["hour"])] = float(e.get("expected_ca", 0) or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    def _hour_label(h: int) -> str:
+        return "12PM" if h == 12 else f"{h}AM" if h < 12 else f"{h-12}PM"
 
     hourly_performance = []
     for h in range(9, min(hour+1, 21)):
-        rev   = max(0, hd.get(h,0.0))
-        label = "12PM" if h==12 else f"{h}AM" if h<12 else f"{h-12}PM"
+        rev      = max(0.0, hd.get(h, 0.0))
+        expected = ts_expected.get(h)
+        forecast = expected if expected is not None else (rev if rev > 0 else max(0.0, hourly_rate))
         hourly_performance.append({
-            "hour":label,"revenue":round(rev),"actual":round(rev),"target":tph,
-            "forecast":round(rev) if rev>0 else round(max(0,hourly_rate)*random.uniform(0.85,1.10)),
-            "risk":rev>0 and rev<tph*0.85,
+            "hour": _hour_label(h), "revenue": round(rev), "actual": round(rev),
+            "target": _tph(h), "forecast": round(forecast),
+            "risk": ts_risk.get(h, rev > 0 and rev < _tph(h) * 0.85),
         })
     for h in range(hour+1, 21):
-        label = "12PM" if h==12 else f"{h}AM" if h<12 else f"{h-12}PM"
-        mult  = random.uniform(1.10,1.30) if h in [12,13,17,18] else random.uniform(0.60,0.80) if h in [9,10,19,20] else random.uniform(0.90,1.10)
-        hourly_performance.append({"hour":label,"revenue":0,"actual":0,"target":tph,"forecast":round(tph*mult),"risk":False})
+        expected = ts_expected.get(h)
+        hourly_performance.append({
+            "hour": _hour_label(h), "revenue": 0, "actual": 0, "target": _tph(h),
+            "forecast": round(expected if expected is not None else _tph(h)), "risk": False,
+        })
 
     risk_hours = [
-        {"hour":h["hour"],"target_pct":round((h["revenue"]/tph)*100),"units_behind":round((h["revenue"]-tph)/150)}
+        {"hour":h["hour"],"target_pct":round((h["revenue"]/h["target"])*100),"units_behind":round((h["revenue"]-h["target"])/150)}
         for h in hourly_performance
-        if tph>0 and h["revenue"]>0 and (h["revenue"]/tph)*100<85
+        if h["target"]>0 and h["revenue"]>0 and (h["revenue"]/h["target"])*100<85
     ]
 
     by_cat: dict[str,float] = {}

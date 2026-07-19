@@ -152,7 +152,18 @@ async def fetch_pos_data(store_id: str) -> dict:
 
         hourly_ca = {int(r["heure"]): float(r["ca_heure"] or 0) for r in hourly_rows}
         daily_target = await _get_daily_target(conn, sid, last_date)
-        current_revenue = float(row["current_revenue"] or 0)
+        # Base de revenu unique : transactions batch + temps réel (même somme
+        # que le moteur TS de l'analyste). La vue vw_ca_par_boutique ignore
+        # transactions_rt → CA/attainment/gap incohérents pendant la simulation RT.
+        # Si la journée courante est semée sur 24h (batch synthétique), le CA
+        # "aujourd'hui" ne compte que les heures écoulées — sinon la carte CA
+        # affiche à 11h des ventes de 19h et le forecast EOD explose.
+        if last_date == date.today():
+            now_hour = datetime.now().hour
+            ca_from_tx = round(sum(v for h, v in hourly_ca.items() if h <= now_hour), 2)
+        else:
+            ca_from_tx = round(sum(hourly_ca.values()), 2)
+        current_revenue = ca_from_tx if ca_from_tx > 0 else float(row["current_revenue"] or 0)
 
         logger.info(f"[PG] POS {sid} | DATE={last_date} | CA={current_revenue:.0f} TND | TX={row['nb_transactions']}")
 
@@ -275,9 +286,22 @@ async def fetch_timesfm_prediction(store_id: str) -> dict:
         if not last_date:
             return _fallback_forecast(sid)
 
-        ca_ref = float(await conn.fetchval(
-            "SELECT ca_total FROM sales.vw_ca_par_boutique WHERE store_id=$1 AND date_only=$2",
-            sid, last_date) or 0)
+        if last_date == date.today():
+            # Journée courante : seules les heures écoulées comptent (le batch
+            # synthétique sème des ventes sur 24h → ca_ref/pct_done explosait).
+            ca_ref = float(await conn.fetchval("""
+                SELECT COALESCE(SUM(lig_ttc), 0) FROM (
+                    SELECT heure, lig_ttc FROM sales.transactions
+                    WHERE store_id = $1 AND date_only = $2
+                    UNION ALL
+                    SELECT heure, lig_ttc FROM sales.transactions_rt
+                    WHERE store_id = $1 AND date_only = $2
+                ) t WHERE heure <= $3
+            """, sid, last_date, datetime.now().hour) or 0)
+        else:
+            ca_ref = float(await conn.fetchval(
+                "SELECT ca_total FROM sales.vw_ca_par_boutique WHERE store_id=$1 AND date_only=$2",
+                sid, last_date) or 0)
 
         # Historique meme jour de semaine
         hist_rows = await conn.fetch("""

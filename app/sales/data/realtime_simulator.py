@@ -22,6 +22,7 @@ from typing import Callable, Optional
 
 import asyncpg
 from app.core.config import DEFAULT_STORE_ID
+from app.sales.data.postgres_provider import PATTERN_HORAIRE, DEFAULT_TARGET
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class RealtimeSimulator:
         self._skus:     list[dict] = []
         self._tx_count  = 0
         self._skus_from_api = False  # True once phase-2 inventory API kicks in
+        self._daily_target: float = DEFAULT_TARGET  # objectif CA du jour (sales.objectifs)
 
     # ── PostgreSQL loader ─────────────────────────────────────────────────────
 
@@ -147,9 +149,18 @@ class RealtimeSimulator:
                     for r in sku_rows
                 ] if sku_rows else []
 
+                target = await conn.fetchval("""
+                    SELECT objectif_ca FROM sales.objectifs
+                    WHERE store_id = $1 AND agent_id IS NULL AND date_objectif = $2
+                """, self.store_id, datetime.now().date())
+                if target:
+                    self._daily_target = float(target)
+
                 logger.info(
-                    "[SIM PG] Loaded %d advisors and %d SKUs from PostgreSQL for %s",
+                    "[SIM PG] Loaded %d advisors and %d SKUs from PostgreSQL for %s "
+                    "(objectif jour = %.0f DT)",
                     len(self._advisors), len(self._skus), self.store_id,
+                    self._daily_target,
                 )
 
             finally:
@@ -270,9 +281,51 @@ class RealtimeSimulator:
             if not self._running:
                 break
             try:
-                await self._generate_transaction()
+                if await self._budget_allows_sale():
+                    await self._generate_transaction()
             except Exception as e:
                 logger.debug("[SIM] TX error: %s", e)
+
+    # ── Budget pacing ─────────────────────────────────────────────────────────
+
+    def _expected_ca_now(self) -> float:
+        """
+        CA cumulé attendu à cet instant : objectif journalier × pattern horaire
+        réel du magasin, avec interpolation linéaire dans l'heure courante.
+        """
+        now = datetime.now()
+        pct = sum(PATTERN_HORAIRE.get(h, 0) for h in range(0, now.hour))
+        pct += PATTERN_HORAIRE.get(now.hour, 0) * (now.minute / 60)
+        return self._daily_target * pct / 100
+
+    async def _budget_allows_sale(self) -> bool:
+        """
+        Régule le rythme : une vente n'est émise que si le CA du jour
+        (batch + temps réel) est en retard sur la courbe d'objectif.
+        Sans cette porte, le simulateur écrasait l'objectif journalier
+        (~1 000 DT) en moins d'une heure → attainment à 690 %.
+        """
+        try:
+            pool = await _get_sim_pool()
+            async with pool.acquire() as conn:
+                # Heures écoulées uniquement : le batch synthétique sème des
+                # ventes sur 24h, même règle que fetch_pos_data.
+                ca_today = await conn.fetchval("""
+                    SELECT COALESCE(SUM(lig_ttc), 0) FROM (
+                        SELECT heure, lig_ttc FROM sales.transactions
+                        WHERE store_id = $1 AND date_only = $2
+                        UNION ALL
+                        SELECT heure, lig_ttc FROM sales.transactions_rt
+                        WHERE store_id = $1 AND date_only = $2
+                    ) t WHERE heure <= $3
+                """, self.store_id, datetime.now().date(), datetime.now().hour)
+        except Exception as e:
+            logger.debug("[SIM] budget check failed (%s) — sale skipped", e)
+            return False
+
+        gap = self._expected_ca_now() - float(ca_today or 0)
+        # Petite tolérance stochastique pour ne pas coller exactement à la courbe
+        return gap > 0 and random.random() < min(1.0, gap / 30)
 
     async def _generate_transaction(self):
         """Generate and persist one simulated transaction."""
@@ -280,7 +333,13 @@ class RealtimeSimulator:
             return
 
         advisor = random.choice(self._advisors)
-        sku     = random.choice(self._skus)
+
+        # Ticket cohérent avec l'échelle du magasin : on privilégie les SKUs
+        # dont le prix reste dans le budget restant de l'heure (les terminaux
+        # à 900 DT ne partent pas toutes les 15 minutes dans une boutique
+        # qui fait ~1 000 DT/jour).
+        affordable = [s for s in self._skus if s["price"] <= max(60.0, self._daily_target * 0.05)]
+        sku = random.choice(affordable if affordable else self._skus)
 
         # Vary price ±20% around the mean
         price = round(sku["price"] * random.uniform(0.8, 1.2), 2)

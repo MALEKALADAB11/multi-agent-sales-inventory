@@ -61,6 +61,11 @@ class RetailState(TypedDict, total=False):
     analyst_summary:   str          # LLM-generated summary
     underperforming_categories: List[str]
     intraday_trend:    str          # "accelerating" | "stable" | "decelerating"
+    ts_analysis:       Dict[str, Any]           # sortie complète analyze_store() (Analyste v4)
+    hourly_gaps:       List[Dict[str, Any]]     # ledger horaire [{hour, expected, actual, status}]
+    next_hours_forecast: List[Dict[str, Any]]   # [{hour, expected_ca, share_pct}] h+1..h+3
+    trend_signal:      str          # ACCELERATING / DECELERATING / STABLE / UNKNOWN
+    feasibility:       str          # ACHIEVED / ACHIEVABLE / CHALLENGING / VERY_HARD / CLOSED
 
     # ── Strategy Branch outputs (StrategistAgent) ─────────────────────────
     strategie:         str          # strategic summary text
