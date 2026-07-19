@@ -1,0 +1,14 @@
+{
+  "suite": "rag_retrieval",
+  "top_k": 3,
+  "store_id": "I63",
+  "n_grounded": 11,
+  "n_offtopic": 3,
+  "hit_rate": 1.0,
+  "mrr": 0.955,
+  "token_recall": 1.0,
+  "purity": 1.0,
+  "abstention_rate": 1.0,
+  "failures": [],
+  "run_at": "2026-07-16T21:36:41"
+}
