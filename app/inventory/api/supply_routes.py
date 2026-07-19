@@ -169,7 +169,9 @@ async def get_purchase_order(request: Request, po_id: str) -> Dict[str, Any]:
     if not po:
         raise HTTPException(status_code=404, detail=f"Purchase order '{po_id}' not found.")
     await _require_store_access(request, po["store_id"])
-    return _decimal_safe(po)
+    # Même enrichissement que la vue liste/Kanban : la page détail affiche
+    # couverture stock, ETA et prédiction rupture × réception.
+    return _decimal_safe(SyncPurchaseOrderRepo._enrich_kanban_fields(po))
 
 
 @router.post("/purchase-orders")
