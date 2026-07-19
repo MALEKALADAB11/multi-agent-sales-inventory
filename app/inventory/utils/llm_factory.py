@@ -154,7 +154,7 @@ def get_llm(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # GROQ — inference ultra-rapide
+    # GROQ — inference ultra-rapide avec rotation des clés et fallback Ollama
     # ══════════════════════════════════════════════════════════════════════════
     elif provider == "groq":
         keys = [api_key] if api_key else list(settings.groq_api_keys)

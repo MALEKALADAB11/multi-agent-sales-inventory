@@ -48,7 +48,7 @@ class Config:
     DB_PORT:     int = int(os.getenv("DB_PORT", "5432"))
     DB_NAME:     str = os.getenv("DB_NAME",     "ooredoo_sales")
     DB_USER:     str = os.getenv("DB_USER",     "postgres")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "admin")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "root")
 
     # Schémas PostgreSQL
     SCHEMA_SALES:       str = os.getenv("DB_SCHEMA_SALES",      "sales")

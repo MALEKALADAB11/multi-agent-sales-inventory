@@ -10,8 +10,8 @@ from typing import Optional, Literal
 from dotenv import load_dotenv
 from app.core.config import DEFAULT_STORE_ID
 
-# Load .env from inventory-module root
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# Load .env from project root (not inventory module)
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 # ─────────────────────────────────────────────────────────────
 # Base paths
@@ -28,6 +28,19 @@ SALES_HISTORY_PATH = PROCESSED_DATA_DIR / "sales_history.csv"
 PRODUCT_MASTER_PATH = PROCESSED_DATA_DIR / "product_master.csv"
 PROMOTIONS_PATH = PROCESSED_DATA_DIR / "promotions.csv"
 FORECAST_OUTPUT_PATH = FORECAST_DIR / "timesFM_future_forecast.csv"
+
+# Demand sensing layer (baseline + LightGBM correction, see
+# app/inventory/forecasting/) — env-overridable, same style as the rest
+# of this file.
+SENSING_MODEL_PATH = os.getenv(
+    "SENSING_MODEL_PATH",
+    str(BASE_DIR / "app" / "inventory" / "forecasting" / "models" / "sensing_model_v1.ubj"),
+)
+BASELINE_DAYS_BACK = int(os.getenv("BASELINE_DAYS_BACK", "730"))
+# Must match run_sensing_job.py's SENSING_HORIZON_DAYS (currently 7, not 14):
+# beyond ~7 days out, recent_actual_avg / stockout_flag_7d have no real actuals
+# to look back on yet, so the correction features would be silently 0.0/False.
+SENSING_HORIZON_DAYS = int(os.getenv("SENSING_HORIZON_DAYS", "7"))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -77,12 +90,16 @@ class Settings:
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 
     groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
-    # Rotation multi-clés : GROQ_API_KEYS=clef1,clef2,... (la 1re clé sert de
-    # primaire, les suivantes prennent le relais sur 429/quota/clé invalide).
-    # GROQ_API_KEY reste supporté et est fusionné en tête de liste.
+    # Rotation multi-clés : GROQ_API_KEYS=clef1,clef2,... ou GROQ_API_KEY_1..N
+    # (la 1re clé sert de primaire, les suivantes prennent le relais sur
+    # 429/quota/clé invalide). GROQ_API_KEY reste supporté, fusionné en tête.
     groq_api_keys: list = list(dict.fromkeys(
         k.strip()
-        for k in ([os.getenv("GROQ_API_KEY") or ""] + (os.getenv("GROQ_API_KEYS") or "").split(","))
+        for k in (
+            [os.getenv("GROQ_API_KEY") or ""]
+            + (os.getenv("GROQ_API_KEYS") or "").split(",")
+            + [os.getenv(f"GROQ_API_KEY_{i}") or "" for i in range(1, 10)]
+        )
         if k.strip()
     ))
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
@@ -137,7 +154,7 @@ class Settings:
     db_port: int = int(os.getenv("DB_PORT", "5432"))
     db_name: str = os.getenv("DB_NAME", "ooredoo_sales")
     db_user: str = os.getenv("DB_USER", "postgres")
-    db_password: str = os.getenv("DB_PASSWORD", "admin")
+    db_password: str = os.getenv("DB_PASSWORD", "root")
 
     # App
     environment: str = os.getenv("ENVIRONMENT", "development")
@@ -150,7 +167,6 @@ class Settings:
 settings = Settings()
 
 # Backward compatibility
-GROQ_API_KEY = settings.groq_api_key
 LLM_MODEL = settings.llm_model or settings.groq_model
 LLM_TEMPERATURE = settings.llm_temperature
 LLM_BASE_URL = settings.llm_base_url or settings.groq_base_url

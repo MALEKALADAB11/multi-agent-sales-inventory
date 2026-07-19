@@ -103,7 +103,7 @@ DB_CFG = {
     "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
     "dbname":   os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
     "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
-    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
+    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
 }
 
 _STORE_MAP = {
@@ -506,6 +506,18 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                 r["stats"] = {k: int(row[k] or 0) for k in ["total","ruptures","critiques","ok_count"]}
 
             # Alertes critiques
+            # NOTE (demand-sensing integration): rp.demande_moy_jour used to be the
+            # velocity source here, but supply.reorder_params has no active
+            # population script anymore (dead table). The velocity signal now
+            # comes from inventory.demand_forecast, populated by the baseline
+            # (run_baseline_batch.py) + xgboost correction (run_sensing_job.py)
+            # pipeline. Same COALESCE(corrected_demand, baseline_demand, demand_24h)
+            # priority used everywhere else this table is read (see
+            # stock_tools.get_forecast_data / InventoryRepo.get_forecast_range).
+            # demand_forecast has one row per (sku, store, forecast_date), so a
+            # LATERAL join picks the nearest upcoming forecast per sku instead of
+            # fanning out rows. rp is kept only for eoq, which the sensing
+            # pipeline doesn't produce.
             cur.execute("""
                 SELECT sl.sku,
                        COALESCE(p.nom, sl.sku::text) AS nom,
@@ -513,11 +525,19 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                        CASE WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 0 THEN 'rupture'
                             WHEN COALESCE(sl.quantity_available, sl.quantity, 0) <= 5  THEN 'critical'
                             ELSE 'warning' END AS level,
-                       COALESCE(rp.demande_moy_jour, 0.5) AS vel,
+                       COALESCE(fc.demand, 0.5) AS vel,
                        COALESCE(rp.eoq, 0) AS eoq
                 FROM inventory.stock_levels sl
                 LEFT JOIN sales.produits p ON p.sku = sl.sku
                 LEFT JOIN supply.reorder_params rp ON rp.sku = sl.sku AND rp.store_id = sl.store_id
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(df.corrected_demand, df.baseline_demand, df.demand_24h) AS demand
+                    FROM inventory.demand_forecast df
+                    WHERE df.sku = sl.sku AND df.store_id = sl.store_id
+                      AND df.forecast_date >= CURRENT_DATE
+                    ORDER BY df.forecast_date ASC
+                    LIMIT 1
+                ) fc ON TRUE
                 WHERE sl.store_id=%s AND COALESCE(sl.quantity_available, sl.quantity, 0) <= 15
                 ORDER BY COALESCE(sl.quantity_available, sl.quantity, 0) ASC LIMIT 6
             """, (store_id,))
@@ -530,21 +550,31 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                     "level": row["level"], "jours": jours, "eoq": int(row["eoq"] or 0),
                 })
 
-            # Top vendeurs avec vélocité supply chain
+            # Top vendeurs avec vélocité demand-sensing (voir NOTE ci-dessus —
+            # même remplacement de rp.demande_moy_jour par inventory.demand_forecast).
+            # Fallback inchangé quand aucun forecast n'existe encore pour ce sku:
+            # moyenne des ventes réelles sur 7 jours.
             cur.execute("""
                 SELECT COALESCE(p.nom, t.sku::text) AS nom,
                        SUM(t.quantity) AS sold,
                        COALESCE(sl.quantity_available, sl.quantity, 0) AS stock,
-                       COALESCE(rp.demande_moy_jour, SUM(t.quantity)::NUMERIC/7) AS vel
+                       COALESCE(fc.demand, SUM(t.quantity)::NUMERIC/7) AS vel
                 FROM   sales.transactions t
                 LEFT JOIN sales.produits p ON p.sku=t.sku
                 LEFT JOIN inventory.stock_levels sl ON sl.sku=t.sku AND sl.store_id=t.store_id
-                LEFT JOIN supply.reorder_params rp ON rp.sku=t.sku AND rp.store_id=t.store_id
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(df.corrected_demand, df.baseline_demand, df.demand_24h) AS demand
+                    FROM inventory.demand_forecast df
+                    WHERE df.sku = t.sku AND df.store_id = t.store_id
+                      AND df.forecast_date >= CURRENT_DATE
+                    ORDER BY df.forecast_date ASC
+                    LIMIT 1
+                ) fc ON TRUE
                 WHERE  t.store_id=%s
                   AND  t.date_only>=(
                          SELECT MAX(date_only) FROM sales.transactions WHERE store_id=%s
                        ) - INTERVAL '7 days'
-                GROUP BY p.nom, t.sku, sl.quantity_available, sl.quantity, rp.demande_moy_jour
+                GROUP BY p.nom, t.sku, sl.quantity_available, sl.quantity, fc.demand
                 ORDER BY sold DESC LIMIT 5
             """, (store_id, store_id))
             for row in cur.fetchall():
@@ -2492,4 +2522,10 @@ async def coach_health():
         "llm_fallback": "ollama_local_chat_model",
         "llm_available": bool(OPENROUTER_KEY),
         "stratege_timeout_s": COACH_STRATEGE_TIMEOUT,
+        "prompt_tokens_approx": {
+            "system_persona": "~320",
+            "catalog":        "~80 (dynamique DB)",
+            "situation_block": "100-220 (intent-sélectif)",
+            "total_per_call":  "~500-620",
+        },
     })

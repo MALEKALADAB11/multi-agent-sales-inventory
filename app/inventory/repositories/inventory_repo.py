@@ -10,6 +10,7 @@ Usage from any agent or service:
     await repo.connect()
 """
 import os
+import json
 import logging
 from datetime import date, datetime
 from typing import Optional
@@ -341,26 +342,73 @@ class InventoryRepo:
     # ── Demand forecast ───────────────────────────────────────────────────────
 
     async def insert_forecast(self, forecast: dict) -> None:
+        """Upsert into inventory.demand_forecast.
+
+        Extended for the demand-sensing pipeline: baseline_demand/corrected_demand/
+        correction_method/correction_features are new (migration 0009). All fields
+        are optional via .get() so existing callers passing only the legacy
+        demand_24h/confidence_*/model_version keep working unchanged — a partial
+        upsert (e.g. only baseline_demand from run_baseline_batch.py, then only
+        corrected_demand from run_sensing_job.py later the same day) will not
+        clobber the columns it didn't set, via COALESCE against the existing row.
+        """
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO inventory.demand_forecast
                     (sku, store_id, forecast_date, demand_24h,
-                     confidence_low, confidence_high, model_version)
-                VALUES ($1,$2,$3,$4,$5,$6,$7)
+                     confidence_low, confidence_high, model_version,
+                     baseline_demand, corrected_demand, correction_method,
+                     correction_features, baseline_generated_at, corrected_generated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+                        CASE WHEN $8::numeric IS NOT NULL THEN now() END,
+                        CASE WHEN $9::numeric IS NOT NULL THEN now() END)
                 ON CONFLICT (sku, store_id, forecast_date) DO UPDATE SET
-                    demand_24h      = EXCLUDED.demand_24h,
-                    confidence_low  = EXCLUDED.confidence_low,
-                    confidence_high = EXCLUDED.confidence_high,
-                    model_version   = EXCLUDED.model_version
+                    demand_24h             = COALESCE(EXCLUDED.demand_24h, inventory.demand_forecast.demand_24h),
+                    confidence_low         = COALESCE(EXCLUDED.confidence_low, inventory.demand_forecast.confidence_low),
+                    confidence_high        = COALESCE(EXCLUDED.confidence_high, inventory.demand_forecast.confidence_high),
+                    model_version          = COALESCE(EXCLUDED.model_version, inventory.demand_forecast.model_version),
+                    baseline_demand        = COALESCE(EXCLUDED.baseline_demand, inventory.demand_forecast.baseline_demand),
+                    corrected_demand       = COALESCE(EXCLUDED.corrected_demand, inventory.demand_forecast.corrected_demand),
+                    correction_method      = COALESCE(EXCLUDED.correction_method, inventory.demand_forecast.correction_method),
+                    correction_features    = COALESCE(EXCLUDED.correction_features, inventory.demand_forecast.correction_features),
+                    baseline_generated_at  = COALESCE(EXCLUDED.baseline_generated_at, inventory.demand_forecast.baseline_generated_at),
+                    corrected_generated_at = COALESCE(EXCLUDED.corrected_generated_at, inventory.demand_forecast.corrected_generated_at)
             """,
                 forecast["sku"],
                 forecast["store_id"],
                 forecast["forecast_date"],
-                float(forecast["demand_24h"]),
+                float(forecast["demand_24h"]) if forecast.get("demand_24h") is not None else None,
                 forecast.get("confidence_low"),
                 forecast.get("confidence_high"),
-                forecast.get("model_version", "timesfm-v1"),
+                # preserve the original "timesfm-v1" default, but only for the
+                # legacy call shape (demand_24h set) — sensing-only calls that
+                # pass baseline_demand/corrected_demand shouldn't get mislabeled.
+                forecast.get("model_version") or ("timesfm-v1" if forecast.get("demand_24h") is not None else None),
+                float(forecast["baseline_demand"]) if forecast.get("baseline_demand") is not None else None,
+                float(forecast["corrected_demand"]) if forecast.get("corrected_demand") is not None else None,
+                forecast.get("correction_method"),
+                json.dumps(forecast["correction_features"]) if forecast.get("correction_features") else None,
             )
+
+    async def get_forecast_range(self, sku, store_id: str, days: int = 30) -> list[dict]:
+        """Forward-looking forecast rows for one SKU/store — for fetch_node's
+        persisted-forecast read path (implementation guide Section 6).
+
+        Deliberately a NEW method, not a change to get_forecasts_for_date() below:
+        that method takes a single forecast_date (+ optional store_id) and returns
+        ALL SKUs for that one date, joined to products, for a report/dashboard use
+        case — a different contract that something else may already depend on.
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT forecast_date,
+                       COALESCE(corrected_demand, baseline_demand, demand_24h) AS predicted_demand,
+                       baseline_demand, corrected_demand, correction_method
+                FROM inventory.demand_forecast
+                WHERE sku = $1 AND store_id = $2 AND forecast_date >= CURRENT_DATE
+                ORDER BY forecast_date LIMIT $3
+            """, sku, store_id, days)
+            return [dict(r) for r in rows]
 
     async def get_latest_forecast(
         self, sku: str, store_id: str

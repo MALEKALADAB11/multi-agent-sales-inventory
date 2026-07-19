@@ -53,7 +53,7 @@ DB_CONFIG = {
     "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
     "database": os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
     "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
-    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
+    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
 }
 
 # Store mapping — le frontend peut envoyer des aliases
@@ -80,6 +80,20 @@ def normalize_store_id(store_id: str) -> str:
 async def get_pg_conn() -> asyncpg.Connection:
     pool = await _get_pool()
     return await pool.acquire()
+
+
+async def release_pg_conn(conn: asyncpg.Connection) -> None:
+    """Rend la connexion au pool. NE JAMAIS appeler conn.close() sur une
+    connexion issue de pool.acquire() : cela détruit la connexion physique
+    au lieu de la restituer, forçant asyncpg à en recréer une à chaque appel
+    (storm de connexions sous charge -> resets/'connection closed in the
+    middle of operation' côté Postgres/Windows, surtout avec workers=8)."""
+    pool = await _get_pool()
+    try:
+        await pool.release(conn)
+    except Exception:
+        # Connexion déjà invalide - laisser le pool la recycler.
+        pass
 
 
 async def _get_business_date(conn, store_id: str):
@@ -190,7 +204,7 @@ async def fetch_pos_data(store_id: str) -> dict:
         logger.warning(f"[PG] fetch_pos_data error {sid}: {e}")
         return _fallback_pos(sid)
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 def _fallback_pos(sid: str) -> dict:
@@ -271,7 +285,7 @@ async def fetch_pos_history(store_id: str, limit: int = 200) -> list:
         logger.warning(f"[PG] fetch_pos_history error {sid}: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -376,7 +390,7 @@ async def fetch_timesfm_prediction(store_id: str) -> dict:
         logger.warning(f"[PG] fetch_timesfm_prediction error {sid}: {e}")
         return _fallback_forecast(sid)
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 def _fallback_forecast(sid: str) -> dict:
@@ -431,7 +445,7 @@ async def fetch_sellers(store_id: str) -> list:
         logger.warning(f"[PG] fetch_sellers error {sid}: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -467,7 +481,7 @@ async def fetch_stock_enriched(store_id: str, limit: int = 200) -> list:
         logger.warning(f"[PG] fetch_stock_enriched error {sid}: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -499,7 +513,7 @@ async def fetch_boutiques(active_only: bool = True) -> list:
         logger.warning(f"[PG] fetch_boutiques error: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -529,7 +543,7 @@ async def fetch_stock_history(store_id: str, sku: int = None, days: int = 90) ->
         logger.warning(f"[PG] fetch_stock_history error {sid}: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 async def fetch_sales_history(store_id: str, sku: int = None, days: int = 90) -> list:
@@ -557,7 +571,41 @@ async def fetch_sales_history(store_id: str, sku: int = None, days: int = 90) ->
         logger.warning(f"[PG] fetch_sales_history error {sid}: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
+
+
+async def fetch_product_mix(store_id: str) -> list:
+    """Mix produits (fallback) par catégorie, tous jours confondus, quand il
+    n'y a pas encore de transactions 'aujourd'hui'. Consommé par
+    app/api/stores.py::get_live_analysis comme fallback de product_mix."""
+    sid = normalize_store_id(store_id)
+    conn = await get_pg_conn()
+    try:
+        rows = await conn.fetch("""
+            SELECT COALESCE(p.categorie, 'Autre') AS categorie,
+                   SUM(t.lig_ttc) AS ca
+            FROM sales.transactions t
+            LEFT JOIN sales.produits p ON p.sku = t.sku
+            WHERE t.store_id = $1
+              AND t.date_only >= CURRENT_DATE - INTERVAL '30 days'
+              AND t.lig_ttc > 0
+            GROUP BY p.categorie
+            ORDER BY ca DESC
+        """, sid)
+        total = sum(float(r["ca"] or 0) for r in rows)
+        return [
+            {
+                "category": r["categorie"],
+                "ca":       round(float(r["ca"] or 0), 2),
+                "pct":      round(float(r["ca"] or 0) / total * 100, 1) if total else 0,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.warning(f"[PG] fetch_product_mix error {sid}: {e}")
+        return []
+    finally:
+        await release_pg_conn(conn)
 
 
 async def fetch_promotions(active_only: bool = True) -> list:
@@ -578,7 +626,7 @@ async def fetch_promotions(active_only: bool = True) -> list:
         logger.warning(f"[PG] fetch_promotions error: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -602,7 +650,7 @@ async def fetch_cycle_logs(store_id: str = None, limit: int = 50) -> list:
         logger.warning(f"[PG] fetch_cycle_logs error: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 async def fetch_coaching_interactions(store_id: str = None, limit: int = 50) -> list:
@@ -622,7 +670,7 @@ async def fetch_coaching_interactions(store_id: str = None, limit: int = 50) -> 
         logger.warning(f"[PG] fetch_coaching_interactions error: {e}")
         return []
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -638,7 +686,7 @@ async def get_latest_business_date(store_id: str) -> Optional[date]:
     except Exception:
         return None
     finally:
-        await conn.close()
+        await release_pg_conn(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -674,6 +722,9 @@ class PostgresProvider:
 
     async def fetch_promotions(self, active_only: bool = True) -> list:
         return await fetch_promotions(active_only)
+
+    async def fetch_product_mix(self, store_id: str) -> list:
+        return await fetch_product_mix(store_id)
 
     async def fetch_cycle_logs(self, store_id: str = None, limit: int = 50) -> list:
         return await fetch_cycle_logs(store_id, limit)

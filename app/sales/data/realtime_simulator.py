@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 DB_CONFIG = {
     "host": "localhost", "port": 5432,
     "database": "ooredoo_sales",
-    "user": "postgres", "password": "admin",
+    "user": "postgres", "password": "root",  # <-- change to your PostgreSQL password
 }
 
 _pg_pool: Optional[asyncpg.Pool] = None

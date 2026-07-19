@@ -11,7 +11,7 @@ _DB_CFG = {
     "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
     "dbname":   os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
     "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
-    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "admin")),
+    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
 }
 
 _SEASONAL_WEIGHTS = {

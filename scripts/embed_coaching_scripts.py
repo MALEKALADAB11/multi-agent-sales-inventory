@@ -118,7 +118,6 @@ def load_from_postgres() -> list[dict]:
                 SELECT id, categorie, situation, action, produit_cible,
                        argument_vente, impact_observe, heure_min, heure_max, source
                 FROM sales.coaching_scripts
-                WHERE actif
                 ORDER BY id
             """)
             for row in cur.fetchall():

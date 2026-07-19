@@ -96,7 +96,10 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"No product data found for SKU {sku}")
 
     # Sales history: PostgreSQL via pg_data_loader (3 ans, features temporelles incluses)
-    sales_df = get_sales_history(sku, store_id)
+    # days=730 (was default 365) — required so extract_series_from_sales below can
+    # actually see 2 years of history; annual-seasonality (MSTL, season_length=365)
+    # is a no-op if sales_df itself is capped at 365 days. See implementation guide 1.5.
+    sales_df = get_sales_history(sku, store_id, days=730)
 
     # Profil saisonnier 3 ans — facteurs par mois, événement, saison, jour de semaine
     seasonal_profile = {}
@@ -106,14 +109,31 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             logger.warning("Seasonal profile error for %s@%s: %s", sku, store_id, e)
 
-    # ── Forecast : TimeSeriesEngine (StatsForecast) en priorité ─────────────
-    # Si StatsForecast disponible, calcule la prévision depuis l'historique
-    # des ventes réelles (plus précis + intervalles de confiance).
-    # Fallback : PostgreSQL precomputed → baseline constante.
+    # ── Forecast : demand-sensing DB (corrected_demand) en priorité ─────────
+    # inventory.demand_forecast is populated offline by run_baseline_batch.py
+    # (baseline_demand, plain TS forecast) and run_sensing_job.py
+    # (corrected_demand, baseline + promo/event/weather correction — signal
+    # a live/local call here has no access to). When it exists for this
+    # pair it's strictly richer than what this function can compute itself,
+    # so it now wins. Fallback, in priority order: live TS engine
+    # (StatsForecast on 730d history) -> flat baseline-1.0 placeholder.
+    #
+    # NOTE: the DB pipeline currently only covers the top ~400-500 sku/store
+    # pairs by sales volume (TOP_N_PAIRS in backfill_baseline_forecasts.py /
+    # run_baseline_batch.py — a temporary cap for the initial rollout, see
+    # those files). Most pairs will fall through to the live TS path below
+    # until the full backfill/sensing runs are done.
+    import pandas as pd
+    forecast_df = get_forecast(sku, store_id)
+    has_sensing_forecast = (
+        "baseline_demand" in forecast_df.columns
+        and forecast_df["baseline_demand"].notna().any()
+    )
+
     ts_result: Dict[str, Any] = {}
-    if _TS_ENGINE_AVAILABLE and not sales_df.empty:
+    if not has_sensing_forecast and _TS_ENGINE_AVAILABLE and not sales_df.empty:
         try:
-            series = extract_series_from_sales(sales_df, sku, store_id, days_back=90)
+            series = extract_series_from_sales(sales_df, sku, store_id, days_back=730)
             if len(series) >= 7:
                 ts_result = ts_forecast(series, horizon=30)
                 logger.debug(
@@ -121,12 +141,27 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     sku, ts_result.get("engine"), ts_result.get("avg_daily_demand"),
                 )
         except Exception as exc:
-            logger.warning("[FETCH] TS engine failed (%s) — DB forecast fallback", exc)
+            logger.warning("[FETCH] TS engine failed (%s) — flat-baseline fallback", exc)
 
-    # Forecast DB : utilisé si TS engine non disponible ou échoué
-    import pandas as pd
-    if not ts_result:
-        forecast_df = get_forecast(sku, store_id)
+    if has_sensing_forecast:
+        forecast_source = "demand_sensing_db"
+        logger.debug(
+            "[FETCH] demand-sensing forecast OK — SKU=%s@%s (%d rows, "
+            "corrected=%d/%d)", sku, store_id, len(forecast_df),
+            int(forecast_df["corrected_demand"].notna().sum()) if "corrected_demand" in forecast_df else 0,
+            len(forecast_df),
+        )
+    elif ts_result:
+        forecast_source = "live_ts_engine"
+        # Construire un forecast_df compatible depuis le résultat TS
+        forecast_df = pd.DataFrame({
+            "date":             pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
+            "predicted_demand": ts_result["forecast_values"][:30],
+            "sku":              sku,
+            "store_id":         store_id,
+        })
+    else:
+        forecast_source = "fallback_flat"
         if forecast_df.empty:
             logger.warning("No forecast data for %s@%s, using fallback baseline", sku, store_id)
             forecast_df = pd.DataFrame({
@@ -135,14 +170,6 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "sku":              sku,
                 "store_id":         store_id,
             })
-    else:
-        # Construire un forecast_df compatible depuis le résultat TS
-        forecast_df = pd.DataFrame({
-            "date":             pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
-            "predicted_demand": ts_result["forecast_values"][:30],
-            "sku":              sku,
-            "store_id":         store_id,
-        })
 
     # Business objective: already resolved once by orchestrator and passed in state.
     # Only hit DB here for single-SKU calls (no preloaded batch context).
@@ -162,6 +189,7 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "sales_df":           sales_df,
             "forecast_df":        forecast_df,
             "ts_result":          ts_result,     # dict enrichi du TS engine (peut être {})
+            "forecast_source":    forecast_source,  # "demand_sensing_db" | "live_ts_engine" | "fallback_flat"
             "business_objective": business_objective,
             "seasonal_profile":   seasonal_profile,
         }
@@ -189,6 +217,7 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
     forecast_df        = fetch_data["forecast_df"]
     sales_df           = fetch_data["sales_df"]
     ts_result          = fetch_data.get("ts_result", {})
+    forecast_source    = fetch_data.get("forecast_source", "unknown")
     business_objective = fetch_data["business_objective"]
     seasonal_profile   = fetch_data.get("seasonal_profile", {})
 
@@ -264,6 +293,13 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
     else:
         demand_std = compute_demand_std(sales_df, avg_daily_demand)
 
+    if product.get("unit_cost") is None:
+        logger.warning(
+            "[COMPUTE] SKU=%s: unit_cost is NULL in inventory.products — "
+            "defaulting to 0 (cost-based metrics for this SKU will be unreliable "
+            "until the row is backfilled)", sku
+        )
+
     # Compute all metrics
     metrics = compute_inventory_metrics(
         # Stock
@@ -274,8 +310,8 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Product
         lead_time_avg      = float(product["lead_time_days"]),
         lead_time_std      = float(product.get("lead_time_std", 0) or 0),
-        moq                = float(product["moq"]),
-        unit_cost          = float(product["unit_cost"]),
+        moq                = float(product["moq"] or 0),
+        unit_cost          = float(product.get("unit_cost") or 0),
         holding_cost_pct   = float(product.get("holding_cost_pct", 0.25) or 0.25),
         order_cost         = float(product.get("order_cost", 50.0) or 50.0),
         lifecycle_stage    = str(product.get("lifecycle_stage", "mature") or "mature"),
@@ -297,6 +333,7 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "seasonality_score": ts_seasonality,
             "forecast_engine":   ts_result.get("engine", "unknown"),
         })
+    metrics.setdefault("forecast", {})["forecast_source"] = forecast_source
 
     return {
         "computed_metrics":    metrics,

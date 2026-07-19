@@ -46,7 +46,7 @@ DB = dict(
     port=int(os.getenv("POSTGRES_PORT", 5432)),
     dbname=os.getenv("POSTGRES_DB", "ooredoo_sales"),
     user=os.getenv("POSTGRES_USER", "postgres"),
-    password=os.getenv("POSTGRES_PASSWORD", "admin"),
+    password=os.getenv("POSTGRES_PASSWORD", "root"),
 )
 
 # ── Boutiques cibles (4 nouvelles — I63/M10 a déjà des données réelles) ───────
@@ -167,17 +167,19 @@ def seed_boutiques(conn, dry_run: bool = False):
     rows = []
     for store_id, store_name, ville, region, n_adv, _ in BOUTIQUES:
         lat, lon, adresse, _, date_ouv = BOUTIQUE_META.get(store_id, (0, 0, "", "OFR", "2010-01-01"))
-        rows.append((store_id, store_name, adresse, ville, region, True, n_adv, date_ouv))
+        rows.append((store_id, store_name, adresse, ville, region, True, n_adv, date_ouv, lat, lon))
 
     if not dry_run:
         with conn.cursor() as cur:
             execute_values(cur, """
                 INSERT INTO sales.boutiques
                     (store_id, store_name, address, ville, region,
-                     active, capacite_conseillers, date_ouverture)
+                     active, capacite_conseillers, date_ouverture,
+                     latitude, longitude)
                 VALUES %s
                 ON CONFLICT (store_id) DO UPDATE SET
-                    store_name=EXCLUDED.store_name, ville=EXCLUDED.ville, active=TRUE
+                    store_name=EXCLUDED.store_name, ville=EXCLUDED.ville, active=TRUE,
+                    latitude=EXCLUDED.latitude, longitude=EXCLUDED.longitude
             """, rows)
         conn.commit()
     log.info(f"  {len(rows)} boutiques insérées")
@@ -329,7 +331,7 @@ def generate_stock_history(conn, n_days: int = 90, dry_run: bool = False):
                         stock_after += int(rng.uniform(max(1, lo//2), hi))
 
                 days_stock = min(round(stock_after / max(demand, 0.1), 1), 90.0)
-                rows.append((int(sku), store_id, current, stock_after, int(sold), stockout, days_stock))
+                rows.append((int(sku), store_id, current, stock_after, stockout))
                 stock_state[key] = stock_after
         current += timedelta(days=1)
 
@@ -343,10 +345,8 @@ def generate_stock_history(conn, n_days: int = 90, dry_run: bool = False):
         for i in range(0, len(rows), 2000):
             execute_values(cur, """
                 INSERT INTO inventory.stock_history
-                    (sku, store_id, record_date, stock_level, quantity_sold, is_stockout, days_of_stock)
+                    (sku, store_id, record_date, stock_level, is_stockout)
                 VALUES %s
-                ON CONFLICT (sku, store_id, record_date) DO UPDATE SET
-                    stock_level=EXCLUDED.stock_level, quantity_sold=EXCLUDED.quantity_sold
             """, rows[i:i+2000])
             if i % 40000 == 0 and i > 0:
                 conn.commit(); log.info(f"  {i} / {len(rows)} stock history insérés")
@@ -371,20 +371,20 @@ def seed_stock_levels(conn, dry_run: bool = False):
         for sku, cat, price in prods:
             lo, hi = STOCK_INIT.get(cat, (10, 50))
             stock = 9999 if cat == "88" else int(rng.uniform(lo * 0.5, hi))
-            min_s = REORDER_PT.get(cat, 5)
             demand = DEMAND_DAILY.get(cat, 2.0)
             days = min(round(stock / max(demand, 0.1), 1), 60.0)
-            rows.append((int(sku), store_id, stock, 0, min_s, hi * 3, days))
+            rows.append((int(sku), store_id, stock, 0, days))
 
     if not dry_run and rows:
         with conn.cursor() as cur:
             execute_values(cur, """
                 INSERT INTO inventory.stock_levels
-                    (sku, store_id, stock_current, stock_in_transit,
-                     stock_min, stock_max, remaining_days_of_stock)
+                    (sku, store_id, quantity, quantity_reserved,
+                     remaining_days_of_stock)
                 VALUES %s
                 ON CONFLICT (sku, store_id) DO UPDATE SET
-                    stock_current=EXCLUDED.stock_current,
+                    quantity=EXCLUDED.quantity,
+                    quantity_reserved=EXCLUDED.quantity_reserved,
                     remaining_days_of_stock=EXCLUDED.remaining_days_of_stock,
                     last_updated=NOW()
             """, rows)

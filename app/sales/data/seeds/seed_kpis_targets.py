@@ -22,7 +22,7 @@ DB_PARAMS = {
     "port": 5432,
     "dbname": "ooredoo_sales",
     "user": "postgres",
-    "password": "admin",
+    "password": "root",
 }
 
 

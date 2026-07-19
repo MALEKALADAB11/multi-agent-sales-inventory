@@ -1,0 +1,11 @@
+supplier_id,name,country_origin,supplier_type,categories,brands,lead_time_avg_days,lead_time_std_days,reliability_rate,min_order_qty,order_multiple,currency,is_active
+SAMSUNG_LEVANT,Samsung Electronics Levant,UAE,CONSTRUCTEUR,TERMINAL;ACCESSOIRE,Samsung,14,3,0.93,20,10,USD,True
+APPLE_MEA,Apple Middle East Africa,UAE,CONSTRUCTEUR,TERMINAL;ACCESSOIRE,Apple,21,5,0.85,5,5,USD,True
+TRANSSION_AFRICA,Transsion Holdings Africa,UAE,CONSTRUCTEUR,TERMINAL,Tecno;Infinix;Itel,12,2,0.95,50,25,USD,True
+XIAOMI_MEA,Xiaomi Middle East Africa,UAE,CONSTRUCTEUR,TERMINAL;ACCESSOIRE,Xiaomi;Redmi;POCO,18,4,0.9,30,10,USD,True
+NOKIA_HMD,HMD Global Nokia,Finland,CONSTRUCTEUR,TERMINAL,Nokia,10,2,0.97,100,50,EUR,True
+MBTECH_TN,MB Tech Tunisie,Tunisia,DISTRIBUTEUR_NATIONAL,TERMINAL;ACCESSOIRE,Samsung;Apple;Xiaomi,5,1,0.96,10,5,TND,True
+ABC_TN,ABC Technology Tunisie,Tunisia,DISTRIBUTEUR_NATIONAL,TERMINAL;ACCESSOIRE,Nokia;Huawei;Infinix,4,1,0.94,10,5,TND,True
+GEMALTO_SIM,Thales Gemalto SIM Cards,France,SIM_MANUFACTURER,SIM,Ooredoo SIM,5,1,0.99,1000,1000,EUR,True
+OOREDOO_CENTRAL,Entrepot Central Ooredoo TN,Tunisia,OPERATEUR_INTERNE,TERMINAL;SIM;ACCESSOIRE;RECHARGE,ALL,2,1,0.99,1,1,TND,True
+ORAIMO_DIST,Oraimo Distributeur TN,Tunisia,DISTRIBUTEUR_NATIONAL,ACCESSOIRE,Oraimo,6,2,0.89,20,10,TND,True

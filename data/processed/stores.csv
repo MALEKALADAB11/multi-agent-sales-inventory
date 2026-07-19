@@ -1,0 +1,203 @@
+store_id,store_name,ville,store_type,is_active,responsable,email,region,channel,is_official
+I08,Boutique KSAR HLEL,SOUSSE,standard,True,,,Sahel,PHYSIQUE,False
+M21,Boutique CARREFOUR,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+I24,Boutique HAMMAM LIF,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I03,Boutique ENNASR,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+M19,Boutique AEROPORT MONASTIR,MONASTIR,standard,True,,,Sahel,PHYSIQUE,True
+M20,Boutique KASSERINE,KASSERINE,standard,True,,,Centre,PHYSIQUE,True
+M22,Boutique SILIANA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+I19,Boutique LE KEF,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I20,Boutique SOUSSE ERRIADH,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+C01,Boutique CHARGUIA,CHARGUIA 1,standard,True,Ben Ghorbel Ahmed,,Autre,B2B,False
+M01,Boutique ZEPHYR,LA MARSA,standard,True,Ben Amor Hichem,asma.lachaal@ooredoo.tn,Grand Tunis,PHYSIQUE,True
+M02,Boutique MEDINA PALACE,TUNIS,standard,True,Jami Zeinab,,Grand Tunis,PHYSIQUE,True
+M03,Boutique SFAX I,SFAX,standard,True,Chiha Moez,,Sud,PHYSIQUE,True
+M04,Boutique SOUSSE,SOUSSE,standard,True,Ben Ameur Lamia,,Sahel,PHYSIQUE,True
+G01,CENTRE CORPORATE,LA CHARGUIA,standard,True,,,Autre,PHYSIQUE,False
+R01,CENTRE RECOUVREMENT,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+M18,Boutique LAC,TUNIS,standard,True,,asma.lachaal@ooredoo.tn,Grand Tunis,PHYSIQUE,True
+S01,Boutique ZARZIS,ZARZIS,standard,True,,,Autre,PHYSIQUE,False
+M16,Boutique MAHDIA,MAHDIA,standard,True,,,Sahel,PHYSIQUE,True
+M17,Boutique MONASTIR,MONASTIR,standard,True,,,Sahel,PHYSIQUE,True
+I01,Boutique HAMMAMET,HAMMAMET,standard,True,,,Cap Bon,PHYSIQUE,False
+M05,Boutique BARDO,TUNIS,standard,True,ZYDOUNE,,Grand Tunis,PHYSIQUE,True
+M06,Boutique NABEUL,NABEUL,standard,True,,,Cap Bon,PHYSIQUE,True
+M07,Boutique BIZERTE,BIZERTE,standard,True,,,Nord,PHYSIQUE,True
+M08,Boutique ARIANA,ARIANA,standard,True,,,Grand Tunis,PHYSIQUE,True
+M09,Boutique EZZAHRA,EZZAHRA,standard,True,,,Autre,PHYSIQUE,True
+M10,Boutique AEROPORT,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+M13,Boutique GABES,GABES,standard,True,,,Sud,PHYSIQUE,True
+M14,Boutique SFAX II,SFAX,standard,True,,,Sud,PHYSIQUE,True
+M15,Boutique BEJA,BEJA,standard,True,,,Nord,PHYSIQUE,True
+M11,Boutique KAIROUAN,KAIROUAN,standard,True,,,Centre,PHYSIQUE,True
+M12,Boutique GAFSA,GAFSA,standard,True,,,Sud-Ouest,PHYSIQUE,True
+I07,Boutique LE KRAM,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I04,Boutique MSAKEN,SOUSSE,standard,True,,,Sahel,PHYSIQUE,False
+I10,Boutique SOUSSE KHEZAMA,SOUSSE,standard,True,,,Sahel,PHYSIQUE,False
+I09,Boutique KELIBIA,KELIBIA,standard,True,,,Autre,PHYSIQUE,False
+I11,Boutique MEDENINE,MEDENINE,standard,True,,,Sud,PHYSIQUE,False
+T01,SHOP MOBILE 1,MOBILE,standard,True,,,Autre,ONLINE,False
+I21,Boutique MANNOUBA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I23,Boutique TOZEUR,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I02,Boutique EL MOUROUJ,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I05,Boutique SFAX 5 AOUT,SFAX,standard,True,,,Sud,PHYSIQUE,False
+I06,Boutique ETTADHAMEN,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I12,Boutique KEBILI,KEBILI,standard,True,,,Sud-Ouest,PHYSIQUE,False
+I13,Boutique MENZAH 6,MENZAH 6,standard,True,,,Autre,PHYSIQUE,False
+I14,Boutique JENDOUBA,JENDOUBA,standard,True,,,Nord,PHYSIQUE,False
+I15,Boutique AL JAZIRA,AL JAZIRA,standard,True,,,Autre,PHYSIQUE,False
+I16,Boutique JERBA,JERBA,standard,True,,,Autre,PHYSIQUE,False
+I17,Boutique MEGRINE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I18,Boutique ZAHROUNI,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I22,Boutique LAFAYETTE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I25,Boutique MENZEL BOURGUIBA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+M23,Boutique HABIB BOURGUIBA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+I26,Boutique FR GABES,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I32,Boutique OUED ELLIL,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I33,Boutique SIDI BOUZID,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+M24,Boutique AEROPORT JERBA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+I31,Boutique CITE EL HABIB SFAX,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I39,Boutique FR NABEUL,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I40,Boutique EZZOUHOUR,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I41,Boutique GAMMARTH,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I42,Boutique FR SILIANA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I44,Boutique ENNASR 2,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I27,Boutique SIDI HASSINE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I28,Boutique TATAOUINE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I29,Boutique ZAGHOUAN,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I30,Boutique SAKIET EDDAYER,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I34,Boutique URBAIN NORD,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I36,Boutique FR LAC,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I37,Boutique EL GHAZELA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I38,Boutique GEANT,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I45,Boutique AOUINA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+M26,Boutique VAD,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+M25,Boutique AEROPORT ENFIDHA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+I43,Boutique FR KASSERINE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I46,Boutique GREMDA PALACE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I52,Boutique EL YASMINETTE-BEN AROUS,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I62,Boutique FR ARIANA Av TAIEB MHIRI,ARIANA,standard,True,,,Grand Tunis,PHYSIQUE,False
+I63,FR LAC2 TUNISIA MALL,LAC,standard,True,,,Autre,PHYSIQUE,False
+I64,FR JARDINS EL MENZAH2,JARDINS EL MENZAH2,standard,True,,,Autre,PHYSIQUE,False
+I65,FR SFAX CHIHIYA,SFAX,standard,True,,,Centre,PHYSIQUE,False
+TST,Boutique Test DSI,TUNIS,standard,True,,,Grand Tunis,ONLINE,False
+S02,FR GABES SUD,FR GABES SUD,standard,True,,,Sud,PHYSIQUE,False
+S05,FR KAIROUAN ROUTE OUESLATIA,FR KAIROUAN ROUTE OUESLATIA,standard,True,,,Centre,PHYSIQUE,False
+S07,FR MORNAG,FR MORNAG,standard,True,,,Autre,PHYSIQUE,False
+S08,FR PALMARIUM,FR PALMARIUM,standard,True,,,Autre,PHYSIQUE,False
+S09,FR BOUMHEL,FR BOUMHEL,standard,True,,,Autre,PHYSIQUE,False
+S10,FR MARETH,FR MARETH,standard,True,,,Autre,PHYSIQUE,False
+S11,FR DENDEN,FR DENDEN,standard,True,,,Autre,PHYSIQUE,False
+S22,FR BOUSALEM,FR BOUSALEM,standard,True,,,Autre,PHYSIQUE,False
+S23,FR CENTRAL PARK,FR CENTRAL PARK,standard,True,,,Autre,PHYSIQUE,False
+T05,Boutique VIRTUELLE OUTLET,TUNIS,standard,True,,,Grand Tunis,ONLINE,False
+S25,FR RIADH ANDALOUS,FR RIADH ANDALOUS,standard,True,,,Autre,PHYSIQUE,False
+S41,FR TEBOULBA,FR TEBOULBA,standard,True,,,Autre,PHYSIQUE,False
+S42,FR SFAX BAB BHAR,FR SFAX BAB BHAR,standard,True,,,Centre,PHYSIQUE,False
+S43,FR GABES BAB BHAR,FR GABES BAB BHAR,standard,True,,,Sud,PHYSIQUE,False
+S28,FR AZUR CITY,FR AZUR CITY,standard,True,,,Autre,PHYSIQUE,False
+S32,FR RAS JEBEL,FR RAS JEBEL,standard,True,,,Autre,PHYSIQUE,False
+S44,FR FR BARDO AV HABIB BOURGUIBA,FR FR BARDO AV HABIB BOURGUIBA,standard,True,,,Autre,PHYSIQUE,False
+S29,FR SOUKRA,FR SOUKRA,standard,True,,,Autre,PHYSIQUE,False
+T45,FR EL AOUINA LITE,FR EL AOUINA LITE,standard,True,,,Autre,ONLINE,False
+T79,FR ZARZOUNA LITE,FR ZARZOUNA LITE,standard,True,,,Autre,ONLINE,False
+T77,FR KORBA LITE,FR KORBA LITE,standard,True,,,Autre,ONLINE,False
+T88,FR EL JEM LITE,FR EL JEM LITE,standard,True,,,Autre,ONLINE,False
+S37,FR EL OMRANE SUPERIEUR,FR EL OMRANE SUPERIEUR,standard,True,,,Autre,PHYSIQUE,False
+S40,FR SIDI SALAH,FR SIDI SALAH,standard,True,,,Autre,PHYSIQUE,False
+S45,FR MAHDIA AV HABIB BOURGUIBA,FR MAHDIA AV HABIB BOURGUIBA,standard,True,,,Centre,PHYSIQUE,False
+S46,FR BEJA AV HABIB BOURGUIBA,FR BEJA AV HABIB BOURGUIBA,standard,True,,,Nord,PHYSIQUE,False
+S47,FR CARREFOUR LA MARSA,FR CARREFOUR LA MARSA,standard,True,,,Autre,PHYSIQUE,False
+S48,FR BIZERTE AV HABIB BOURGUIBA,FR BIZERTE AV HABIB BOURGUIBA,standard,True,,,Nord,PHYSIQUE,False
+S30,FR BIZERTE LA CORNICHE,FR BIZERTE LA CORNICHE,standard,True,,,Nord,PHYSIQUE,False
+S31,FR AVENUE KHEIREDDINE PACHA,FR AVENUE KHEIREDDINE PACHA,standard,True,,,Autre,PHYSIQUE,False
+S34,FR Ezzahra,FR EZZAHRA,standard,True,,,Autre,PHYSIQUE,False
+S36,FR SBIKHA,FR SBIKHA,standard,True,,,Autre,PHYSIQUE,False
+S49,FR DJEBENIANA,FR DJEBENIANA,standard,True,,,Autre,PHYSIQUE,False
+S50,FR SOUASSI,FR SOUASSI,standard,True,,,Autre,PHYSIQUE,False
+S51,FR KSAR GAFSA,FR KSAR GAFSA,standard,True,,,Sud,PHYSIQUE,False
+S52,FR MANNOUBA 2,FR MANNOUBA 2,standard,True,,,Autre,PHYSIQUE,False
+S53,FR LA GOULETTE,FR LA GOULETTE,standard,True,,,Autre,PHYSIQUE,False
+S33,FR Ariana Av Habib Bourguiba,FR ARIANA AV HABIB BOURGUIBA,standard,True,,,Grand Tunis,PHYSIQUE,False
+S39,FR SFAX MALL,FR SFAX MALL,standard,True,,,Centre,PHYSIQUE,False
+T08,Boutique SOGETRA,BOUTIQUE SOGETRA,standard,True,,,Autre,ONLINE,False
+I49,Boutique MONTPLAISIR,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+T02,Boutique VIRTUELLE,TUNIS,standard,True,,,Grand Tunis,ONLINE,False
+I55,Boutique FR DOUZ,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I56,Boutique FR ELMOUROUJ 6,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I97,FR KSOUR ESSEF,FR KSOUR ESSEF,standard,True,,,Autre,PHYSIQUE,False
+I98,FR CAB,FR CAB,standard,True,,,Autre,PHYSIQUE,False
+S18,FR METLAOUI,FR METLAOUI,standard,True,,,Autre,PHYSIQUE,False
+S21,FR MSAKEN-2,FR MSAKEN-2,standard,True,,,Autre,PHYSIQUE,False
+S19,ZARZIS EL MOUENSA,ZARZIS EL MOUENSA,standard,True,,,Autre,PHYSIQUE,False
+S20,FR SOLIMAN,FR SOLIMAN,standard,True,,,Autre,PHYSIQUE,False
+S26,FR MHAMDIA,FR MHAMDIA,standard,True,,,Autre,PHYSIQUE,False
+F00,FR AUTRUI,FR AUTRUI,standard,True,,,Autre,PHYSIQUE,False
+I48,Boutique CHARGUIA 2,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I53,Boutique SAKIET EZZIT,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+M27,Boutique SOUSSE BOUJAAFAR,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,True
+G02,CENTRE CORPORATE SFAX,SFAX,standard,True,,,Centre,PHYSIQUE,False
+I57,Boutique FR GROMBALIA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I58,Boutique FR HAMMAMET 2,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I59,Boutique FR RADES,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I60,Boutique FR MIDOUN,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I61,Boutique FR FOUCHANA,FOUCHANA,standard,True,,,Autre,PHYSIQUE,False
+I72,FR CITE EL KHADHRA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I73,FR BEN AROUS AV HABIB BOURGUIBA ,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I74,FR CARREFOUR GABES,GABES,standard,True,,,Sud,PHYSIQUE,False
+I75,FR BORJ LOUZIR,ARIANA,standard,True,,,Grand Tunis,PHYSIQUE,False
+I76,FR AIN ZAGHOUANE,MARSA,standard,True,,,Autre,PHYSIQUE,False
+I77,FR KORBA,NABEUL,standard,True,,,Nord,PHYSIQUE,False
+I86,FR DAR CHAABANE,DAR CHAABANE,standard,True,,,Autre,PHYSIQUE,False
+I87,FR BENI KHALLED ,BENI KHALLED,standard,True,,,Autre,PHYSIQUE,False
+I88,FR EL JEM ,FR EL JEM,standard,True,,,Autre,PHYSIQUE,False
+I89,FR EL MANAR1,FR EL MANAR1,standard,True,,,Autre,PHYSIQUE,False
+I90,FR EL MANAR2 ,FR EL MANAR2,standard,True,,,Autre,PHYSIQUE,False
+I91,FR GAFSA CITE ENNOUR,FR GAFSA CITE ENNOUR,standard,True,,,Sud,PHYSIQUE,False
+I92,FR NABEUL Av HABIB BOURGUIBA,FR NABEUL AV HABIB BOURGUIBA,standard,True,,,Nord,PHYSIQUE,False
+I93,FR BEN GUERDANE,FR BEN GUERDANE,standard,True,,,Autre,PHYSIQUE,False
+I94,FR Box Djerba,FR BOX DJERBA,standard,True,,,Autre,PHYSIQUE,False
+I96,FR DOUAR HICHER,FR DOUAR HICHER,standard,True,,,Autre,PHYSIQUE,False
+I99,FR EL FAHS,FR EL FAHS,standard,True,,,Autre,PHYSIQUE,False
+S03,FR EL BIRKA,FR EL BIRKA,standard,True,,,Autre,PHYSIQUE,False
+S12,FR ENNASR2,FR ENNASR2,standard,True,,,Autre,PHYSIQUE,False
+S16,FR KASSERINE CITE ENNOUR,FR KASSERINE CITE ENNOUR,standard,True,,,Centre,PHYSIQUE,False
+S04,FR TABARKA,FR TABARKA,standard,True,,,Autre,PHYSIQUE,False
+S17,FR AVENUE HEDI CHAKER,FR AVENUE HEDI CHAKER,standard,True,,,Autre,PHYSIQUE,False
+S06,FR IBN KHALDOUN,FR IBN KHALDOUN,standard,True,,,Autre,PHYSIQUE,False
+S24,FR SALAMBO,FR SALAMBO,standard,True,,,Autre,PHYSIQUE,False
+T04,Boutique VIRTUELLE SWAP,TUNIS,standard,True,,,Grand Tunis,ONLINE,False
+T06,Boutique Eshop,BOUTIQUE ESHOP,standard,True,,,Autre,ONLINE,False
+S27,FR BOURGO MALL,FR BOURGO MALL,standard,True,,,Autre,PHYSIQUE,False
+I47,Boutique MNARET HAMMAMET,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I50,Boutique JAMMEL,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I51,Boutique CITE ERRIADH LA MARSA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I54,Boutique RUE DE LA GARE,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+T03,Boutique VIRTUELLE VID,TUNIS,standard,True,,,Grand Tunis,ONLINE,False
+I66,FR MONASTIR Av 18 JANVIER,MONASTIR,standard,True,,,Centre,PHYSIQUE,False
+I67,FR SOUSSE SENGHOR,SOUSSE,standard,True,,,Centre,PHYSIQUE,False
+I68,FR SOUSSE SAHLOUL,SOUSSE,standard,True,,,Centre,PHYSIQUE,False
+I69,FR OUARDIA,OUARDIA,standard,True,,,Autre,PHYSIQUE,False
+I70,FR SOUSSE KANTAOUI,KANTAOUI,standard,True,,,Autre,PHYSIQUE,False
+I71,FR SFAX ROUTE MAHDIA,SFAX,standard,True,,,Centre,PHYSIQUE,False
+I78,FR BAB SIDI ABDESSALEM,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I79,FR ZARZOUNA,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I80,FR SFAX ROUTE EL AIN,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I81,FR SFAX MENZEL CHAKER,SFAX,standard,True,,,Centre,PHYSIQUE,False
+I82,FR MOKNINE,MOKNINE,standard,True,,,Autre,PHYSIQUE,False
+I83,FR MENZEL TEMIME,NABEUL,standard,True,,,Nord,PHYSIQUE,False
+I84,FR MENZEH6-2,TUNIS,standard,True,,,Grand Tunis,PHYSIQUE,False
+I85,FR MATEUR,MATEUR,standard,True,,,Autre,PHYSIQUE,False
+I95,FR Rue Algérie,FR RUE ALGÉRIE,standard,True,,,Autre,PHYSIQUE,False
+S13,FR BOUHAJLA,FR BOUHAJLA,standard,True,,,Autre,PHYSIQUE,False
+S14,FR MAHDIA AV 2 MARS,FR MAHDIA AV 2 MARS,standard,True,,,Centre,PHYSIQUE,False
+S15,FR MEDENINE AV 2 MAI,FR MEDENINE AV 2 MAI,standard,True,,,Sud,PHYSIQUE,False
+DMK,Boutique DMK,BOUTIQUE DMK,standard,True,,,Autre,PHYSIQUE,False
+OAC,Boutique OACA,BOUTIQUE OACA,standard,True,,,Autre,PHYSIQUE,False
+T07,Boutique Virtuelle CPM,BOUTIQUE VIRTUELLE CPM,standard,True,,,Autre,ONLINE,False
+T10,FR MARETH LITE,FR MARETH,standard,True,,,Autre,ONLINE,False
+S38,FR EL HAMMA,FR EL HAMMA,standard,True,,,Autre,PHYSIQUE,False
+S35,FR SAHLINE,FR SAHLINE,standard,True,,,Autre,PHYSIQUE,False
+S54,Store_S54,UNKNOWN,standard,True,,,Autre,PHYSIQUE,False
+S55,Store_S55,UNKNOWN,standard,True,,,Autre,PHYSIQUE,False
+S56,Store_S56,UNKNOWN,standard,True,,,Autre,PHYSIQUE,False
