@@ -293,6 +293,13 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
     else:
         demand_std = compute_demand_std(sales_df, avg_daily_demand)
 
+    if product.get("unit_cost") is None:
+        logger.warning(
+            "[COMPUTE] SKU=%s: unit_cost is NULL in inventory.products — "
+            "defaulting to 0 (cost-based metrics for this SKU will be unreliable "
+            "until the row is backfilled)", sku
+        )
+
     # Compute all metrics
     metrics = compute_inventory_metrics(
         # Stock
@@ -303,8 +310,8 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Product
         lead_time_avg      = float(product["lead_time_days"]),
         lead_time_std      = float(product.get("lead_time_std", 0) or 0),
-        moq                = float(product["moq"]),
-        unit_cost          = float(product["unit_cost"]),
+        moq                = float(product["moq"] or 0),
+        unit_cost          = float(product.get("unit_cost") or 0),
         holding_cost_pct   = float(product.get("holding_cost_pct", 0.25) or 0.25),
         order_cost         = float(product.get("order_cost", 50.0) or 50.0),
         lifecycle_stage    = str(product.get("lifecycle_stage", "mature") or "mature"),
