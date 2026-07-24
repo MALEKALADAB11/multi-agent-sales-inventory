@@ -1,0 +1,1885 @@
+{
+  "config": {
+    "n_folds": 6,
+    "fold_days": 28,
+    "valid_days": 28,
+    "horizons": [
+      1
+    ]
+  },
+  "panel": {
+    "rows": 97927,
+    "stores": 151,
+    "start": "2024-10-01",
+    "end": "2026-07-30"
+  },
+  "test_window": {
+    "start": "2026-02-12",
+    "end": "2026-07-30",
+    "rows": 24681
+  },
+  "overall": {
+    "seasonal_naive": {
+      "n": 24681,
+      "wape": 60.73,
+      "mae": 304.63,
+      "rmse": 620.46,
+      "bias": 2.12,
+      "mase": 1.0
+    },
+    "mean_7": {
+      "n": 24681,
+      "wape": 46.49,
+      "mae": 233.22,
+      "rmse": 389.12,
+      "bias": 2.76,
+      "mase": 0.766
+    },
+    "mean_28": {
+      "n": 24681,
+      "wape": 43.55,
+      "mae": 218.47,
+      "rmse": 352.75,
+      "bias": 0.47,
+      "mase": 0.717
+    },
+    "holt_winters_seasonal7": {
+      "n": 24681,
+      "wape": 46.3,
+      "mae": 232.27,
+      "rmse": 393.91,
+      "bias": 3.12,
+      "mase": 0.762
+    },
+    "global_xgb": {
+      "n": 24681,
+      "wape": 33.38,
+      "mae": 167.46,
+      "rmse": 290.22,
+      "bias": -0.04,
+      "mase": 0.55
+    }
+  },
+  "best_model": "global_xgb",
+  "folds": [
+    {
+      "fold": 1,
+      "train_end": "2026-02-11",
+      "test_start": "2026-02-12",
+      "test_end": "2026-03-11",
+      "train_rows": 66367,
+      "test_rows": 4164,
+      "best_iteration": 1999,
+      "models": {
+        "seasonal_naive": {
+          "n": 4164,
+          "wape": 57.94,
+          "mae": 244.65,
+          "rmse": 475.43,
+          "bias": -1.51,
+          "mase": 1.0
+        },
+        "mean_7": {
+          "n": 4164,
+          "wape": 43.87,
+          "mae": 185.25,
+          "rmse": 328.47,
+          "bias": 0.88,
+          "mase": 0.757
+        },
+        "mean_28": {
+          "n": 4164,
+          "wape": 39.7,
+          "mae": 167.62,
+          "rmse": 295.78,
+          "bias": -9.09,
+          "mase": 0.685
+        },
+        "holt_winters_seasonal7": {
+          "n": 4164,
+          "wape": 42.86,
+          "mae": 180.96,
+          "rmse": 325.69,
+          "bias": -1.44,
+          "mase": 0.74
+        },
+        "global_xgb": {
+          "n": 4164,
+          "wape": 22.14,
+          "mae": 93.49,
+          "rmse": 172.45,
+          "bias": -7.26,
+          "mase": 0.382
+        }
+      }
+    },
+    {
+      "fold": 2,
+      "train_end": "2026-03-11",
+      "test_start": "2026-03-12",
+      "test_end": "2026-04-09",
+      "train_rows": 70384,
+      "test_rows": 4155,
+      "best_iteration": 1999,
+      "models": {
+        "seasonal_naive": {
+          "n": 4155,
+          "wape": 55.18,
+          "mae": 250.65,
+          "rmse": 501.5,
+          "bias": -1.15,
+          "mase": 1.0
+        },
+        "mean_7": {
+          "n": 4155,
+          "wape": 42.97,
+          "mae": 195.18,
+          "rmse": 333.32,
+          "bias": 0.48,
+          "mase": 0.779
+        },
+        "mean_28": {
+          "n": 4155,
+          "wape": 39.7,
+          "mae": 180.33,
+          "rmse": 288.49,
+          "bias": 1.68,
+          "mase": 0.719
+        },
+        "holt_winters_seasonal7": {
+          "n": 4155,
+          "wape": 42.65,
+          "mae": 193.74,
+          "rmse": 343.67,
+          "bias": 1.8,
+          "mase": 0.773
+        },
+        "global_xgb": {
+          "n": 4155,
+          "wape": 22.16,
+          "mae": 100.66,
+          "rmse": 183.79,
+          "bias": 0.95,
+          "mase": 0.402
+        }
+      }
+    },
+    {
+      "fold": 3,
+      "train_end": "2026-04-09",
+      "test_start": "2026-04-10",
+      "test_end": "2026-05-07",
+      "train_rows": 74699,
+      "test_rows": 4102,
+      "best_iteration": 1509,
+      "models": {
+        "seasonal_naive": {
+          "n": 4102,
+          "wape": 61.1,
+          "mae": 301.25,
+          "rmse": 578.93,
+          "bias": 4.4,
+          "mase": 1.0
+        },
+        "mean_7": {
+          "n": 4102,
+          "wape": 47.2,
+          "mae": 232.74,
+          "rmse": 367.93,
+          "bias": 4.8,
+          "mase": 0.773
+        },
+        "mean_28": {
+          "n": 4102,
+          "wape": 44.81,
+          "mae": 220.95,
+          "rmse": 347.2,
+          "bias": 1.21,
+          "mase": 0.733
+        },
+        "holt_winters_seasonal7": {
+          "n": 4102,
+          "wape": 47.65,
+          "mae": 234.91,
+          "rmse": 387.93,
+          "bias": 5.12,
+          "mase": 0.78
+        },
+        "global_xgb": {
+          "n": 4102,
+          "wape": 38.74,
+          "mae": 191.03,
+          "rmse": 292.96,
+          "bias": 2.87,
+          "mase": 0.634
+        }
+      }
+    },
+    {
+      "fold": 4,
+      "train_end": "2026-05-07",
+      "test_start": "2026-05-08",
+      "test_end": "2026-06-04",
+      "train_rows": 78703,
+      "test_rows": 3982,
+      "best_iteration": 1038,
+      "models": {
+        "seasonal_naive": {
+          "n": 3982,
+          "wape": 61.56,
+          "mae": 324.11,
+          "rmse": 622.28,
+          "bias": 3.05,
+          "mase": 1.0
+        },
+        "mean_7": {
+          "n": 3982,
+          "wape": 48.01,
+          "mae": 252.8,
+          "rmse": 404.86,
+          "bias": 1.02,
+          "mase": 0.78
+        },
+        "mean_28": {
+          "n": 3982,
+          "wape": 44.96,
+          "mae": 236.7,
+          "rmse": 366.24,
+          "bias": 0.71,
+          "mase": 0.73
+        },
+        "holt_winters_seasonal7": {
+          "n": 3982,
+          "wape": 48.33,
+          "mae": 254.48,
+          "rmse": 410.06,
+          "bias": 1.8,
+          "mase": 0.785
+        },
+        "global_xgb": {
+          "n": 3982,
+          "wape": 37.94,
+          "mae": 199.75,
+          "rmse": 322.41,
+          "bias": -1.38,
+          "mase": 0.616
+        }
+      }
+    },
+    {
+      "fold": 5,
+      "train_end": "2026-06-04",
+      "test_start": "2026-06-05",
+      "test_end": "2026-07-02",
+      "train_rows": 82805,
+      "test_rows": 4132,
+      "best_iteration": 1427,
+      "models": {
+        "seasonal_naive": {
+          "n": 4132,
+          "wape": 62.92,
+          "mae": 365.51,
+          "rmse": 761.17,
+          "bias": 0.73,
+          "mase": 1.0
+        },
+        "mean_7": {
+          "n": 4132,
+          "wape": 47.6,
+          "mae": 276.53,
+          "rmse": 472.56,
+          "bias": 4.04,
+          "mase": 0.757
+        },
+        "mean_28": {
+          "n": 4132,
+          "wape": 43.3,
+          "mae": 251.54,
+          "rmse": 411.27,
+          "bias": -2.0,
+          "mase": 0.688
+        },
+        "holt_winters_seasonal7": {
+          "n": 4132,
+          "wape": 46.6,
+          "mae": 270.75,
+          "rmse": 474.55,
+          "bias": 4.12,
+          "mase": 0.741
+        },
+        "global_xgb": {
+          "n": 4132,
+          "wape": 34.97,
+          "mae": 203.18,
+          "rmse": 336.3,
+          "bias": -3.62,
+          "mase": 0.556
+        }
+      }
+    },
+    {
+      "fold": 6,
+      "train_end": "2026-07-02",
+      "test_start": "2026-07-03",
+      "test_end": "2026-07-30",
+      "train_rows": 86787,
+      "test_rows": 4146,
+      "best_iteration": 1755,
+      "models": {
+        "seasonal_naive": {
+          "n": 4146,
+          "wape": 64.17,
+          "mae": 342.94,
+          "rmse": 729.18,
+          "bias": 6.33,
+          "mase": 1.0
+        },
+        "mean_7": {
+          "n": 4146,
+          "wape": 48.28,
+          "mae": 258.04,
+          "rmse": 409.57,
+          "bias": 4.61,
+          "mase": 0.752
+        },
+        "mean_28": {
+          "n": 4146,
+          "wape": 47.68,
+          "mae": 254.82,
+          "rmse": 390.92,
+          "bias": 8.77,
+          "mase": 0.743
+        },
+        "holt_winters_seasonal7": {
+          "n": 4146,
+          "wape": 48.67,
+          "mae": 260.12,
+          "rmse": 404.9,
+          "bias": 6.2,
+          "mase": 0.759
+        },
+        "global_xgb": {
+          "n": 4146,
+          "wape": 40.93,
+          "mae": 218.76,
+          "rmse": 374.44,
+          "bias": 7.33,
+          "mase": 0.638
+        }
+      }
+    }
+  ],
+  "per_store": [
+    {
+      "store_id": "I01",
+      "n": 167,
+      "ca_moyen": 659.4,
+      "seasonal_naive": 41.65,
+      "mean_7": 32.4,
+      "mean_28": 31.56,
+      "holt_winters_seasonal7": 32.39,
+      "global_xgb": 25.15
+    },
+    {
+      "store_id": "I02",
+      "n": 167,
+      "ca_moyen": 463.1,
+      "seasonal_naive": 48.25,
+      "mean_7": 37.0,
+      "mean_28": 34.5,
+      "holt_winters_seasonal7": 35.33,
+      "global_xgb": 31.57
+    },
+    {
+      "store_id": "I03",
+      "n": 164,
+      "ca_moyen": 250.0,
+      "seasonal_naive": 97.7,
+      "mean_7": 70.94,
+      "mean_28": 67.54,
+      "holt_winters_seasonal7": 70.3,
+      "global_xgb": 50.73
+    },
+    {
+      "store_id": "I04",
+      "n": 167,
+      "ca_moyen": 675.3,
+      "seasonal_naive": 40.5,
+      "mean_7": 30.3,
+      "mean_28": 28.78,
+      "holt_winters_seasonal7": 29.84,
+      "global_xgb": 24.05
+    },
+    {
+      "store_id": "I05",
+      "n": 164,
+      "ca_moyen": 523.2,
+      "seasonal_naive": 96.54,
+      "mean_7": 72.43,
+      "mean_28": 66.76,
+      "holt_winters_seasonal7": 73.27,
+      "global_xgb": 43.42
+    },
+    {
+      "store_id": "I06",
+      "n": 167,
+      "ca_moyen": 400.9,
+      "seasonal_naive": 49.89,
+      "mean_7": 41.03,
+      "mean_28": 40.47,
+      "holt_winters_seasonal7": 43.05,
+      "global_xgb": 35.74
+    },
+    {
+      "store_id": "I07",
+      "n": 165,
+      "ca_moyen": 514.2,
+      "seasonal_naive": 83.95,
+      "mean_7": 66.52,
+      "mean_28": 60.66,
+      "holt_winters_seasonal7": 66.16,
+      "global_xgb": 49.24
+    },
+    {
+      "store_id": "I08",
+      "n": 166,
+      "ca_moyen": 659.1,
+      "seasonal_naive": 90.28,
+      "mean_7": 65.88,
+      "mean_28": 63.35,
+      "holt_winters_seasonal7": 66.18,
+      "global_xgb": 51.27
+    },
+    {
+      "store_id": "I09",
+      "n": 167,
+      "ca_moyen": 725.4,
+      "seasonal_naive": 58.04,
+      "mean_7": 43.2,
+      "mean_28": 39.42,
+      "holt_winters_seasonal7": 42.71,
+      "global_xgb": 32.42
+    },
+    {
+      "store_id": "I10",
+      "n": 167,
+      "ca_moyen": 383.2,
+      "seasonal_naive": 73.42,
+      "mean_7": 52.32,
+      "mean_28": 49.72,
+      "holt_winters_seasonal7": 52.61,
+      "global_xgb": 38.56
+    },
+    {
+      "store_id": "I11",
+      "n": 167,
+      "ca_moyen": 519.5,
+      "seasonal_naive": 55.23,
+      "mean_7": 38.21,
+      "mean_28": 35.24,
+      "holt_winters_seasonal7": 36.56,
+      "global_xgb": 25.38
+    },
+    {
+      "store_id": "I12",
+      "n": 165,
+      "ca_moyen": 193.7,
+      "seasonal_naive": 80.95,
+      "mean_7": 57.43,
+      "mean_28": 53.1,
+      "holt_winters_seasonal7": 57.03,
+      "global_xgb": 41.84
+    },
+    {
+      "store_id": "I13",
+      "n": 157,
+      "ca_moyen": 278.0,
+      "seasonal_naive": 109.51,
+      "mean_7": 94.16,
+      "mean_28": 86.39,
+      "holt_winters_seasonal7": 92.79,
+      "global_xgb": 52.99
+    },
+    {
+      "store_id": "I14",
+      "n": 155,
+      "ca_moyen": 1809.4,
+      "seasonal_naive": 45.37,
+      "mean_7": 32.19,
+      "mean_28": 50.18,
+      "holt_winters_seasonal7": 33.22,
+      "global_xgb": 52.85
+    },
+    {
+      "store_id": "I15",
+      "n": 167,
+      "ca_moyen": 340.0,
+      "seasonal_naive": 55.04,
+      "mean_7": 41.71,
+      "mean_28": 38.82,
+      "holt_winters_seasonal7": 40.81,
+      "global_xgb": 32.91
+    },
+    {
+      "store_id": "I16",
+      "n": 167,
+      "ca_moyen": 648.5,
+      "seasonal_naive": 65.57,
+      "mean_7": 49.06,
+      "mean_28": 45.92,
+      "holt_winters_seasonal7": 49.88,
+      "global_xgb": 36.98
+    },
+    {
+      "store_id": "I17",
+      "n": 166,
+      "ca_moyen": 386.1,
+      "seasonal_naive": 68.79,
+      "mean_7": 51.79,
+      "mean_28": 50.52,
+      "holt_winters_seasonal7": 52.74,
+      "global_xgb": 42.04
+    },
+    {
+      "store_id": "I18",
+      "n": 167,
+      "ca_moyen": 446.5,
+      "seasonal_naive": 50.9,
+      "mean_7": 38.13,
+      "mean_28": 37.58,
+      "holt_winters_seasonal7": 38.69,
+      "global_xgb": 32.05
+    },
+    {
+      "store_id": "I19",
+      "n": 167,
+      "ca_moyen": 330.4,
+      "seasonal_naive": 71.85,
+      "mean_7": 55.41,
+      "mean_28": 49.78,
+      "holt_winters_seasonal7": 56.9,
+      "global_xgb": 41.63
+    },
+    {
+      "store_id": "I20",
+      "n": 150,
+      "ca_moyen": 618.3,
+      "seasonal_naive": 173.86,
+      "mean_7": 129.49,
+      "mean_28": 107.2,
+      "holt_winters_seasonal7": 128.91,
+      "global_xgb": 35.12
+    },
+    {
+      "store_id": "I21",
+      "n": 166,
+      "ca_moyen": 247.2,
+      "seasonal_naive": 98.41,
+      "mean_7": 74.72,
+      "mean_28": 68.56,
+      "holt_winters_seasonal7": 74.01,
+      "global_xgb": 56.37
+    },
+    {
+      "store_id": "I22",
+      "n": 167,
+      "ca_moyen": 298.9,
+      "seasonal_naive": 94.0,
+      "mean_7": 73.1,
+      "mean_28": 70.08,
+      "holt_winters_seasonal7": 72.7,
+      "global_xgb": 59.54
+    },
+    {
+      "store_id": "I23",
+      "n": 166,
+      "ca_moyen": 164.8,
+      "seasonal_naive": 76.02,
+      "mean_7": 62.39,
+      "mean_28": 59.04,
+      "holt_winters_seasonal7": 63.71,
+      "global_xgb": 45.49
+    },
+    {
+      "store_id": "I24",
+      "n": 167,
+      "ca_moyen": 410.4,
+      "seasonal_naive": 60.45,
+      "mean_7": 45.08,
+      "mean_28": 40.68,
+      "holt_winters_seasonal7": 43.68,
+      "global_xgb": 31.98
+    },
+    {
+      "store_id": "I25",
+      "n": 167,
+      "ca_moyen": 455.7,
+      "seasonal_naive": 43.87,
+      "mean_7": 34.32,
+      "mean_28": 32.87,
+      "holt_winters_seasonal7": 34.1,
+      "global_xgb": 28.14
+    },
+    {
+      "store_id": "I26",
+      "n": 167,
+      "ca_moyen": 482.4,
+      "seasonal_naive": 51.8,
+      "mean_7": 38.58,
+      "mean_28": 36.25,
+      "holt_winters_seasonal7": 38.5,
+      "global_xgb": 28.11
+    },
+    {
+      "store_id": "I27",
+      "n": 167,
+      "ca_moyen": 769.9,
+      "seasonal_naive": 46.42,
+      "mean_7": 33.25,
+      "mean_28": 30.66,
+      "holt_winters_seasonal7": 31.02,
+      "global_xgb": 24.23
+    },
+    {
+      "store_id": "I28",
+      "n": 167,
+      "ca_moyen": 480.9,
+      "seasonal_naive": 47.39,
+      "mean_7": 35.18,
+      "mean_28": 32.69,
+      "holt_winters_seasonal7": 34.97,
+      "global_xgb": 29.32
+    },
+    {
+      "store_id": "I29",
+      "n": 167,
+      "ca_moyen": 252.4,
+      "seasonal_naive": 77.04,
+      "mean_7": 56.71,
+      "mean_28": 51.18,
+      "holt_winters_seasonal7": 57.51,
+      "global_xgb": 44.2
+    },
+    {
+      "store_id": "I30",
+      "n": 167,
+      "ca_moyen": 756.6,
+      "seasonal_naive": 64.74,
+      "mean_7": 46.68,
+      "mean_28": 42.77,
+      "holt_winters_seasonal7": 47.12,
+      "global_xgb": 33.69
+    },
+    {
+      "store_id": "I31",
+      "n": 167,
+      "ca_moyen": 375.6,
+      "seasonal_naive": 61.29,
+      "mean_7": 48.6,
+      "mean_28": 45.73,
+      "holt_winters_seasonal7": 48.4,
+      "global_xgb": 34.57
+    },
+    {
+      "store_id": "I32",
+      "n": 166,
+      "ca_moyen": 370.9,
+      "seasonal_naive": 53.7,
+      "mean_7": 36.71,
+      "mean_28": 35.98,
+      "holt_winters_seasonal7": 37.33,
+      "global_xgb": 31.84
+    },
+    {
+      "store_id": "I33",
+      "n": 167,
+      "ca_moyen": 794.9,
+      "seasonal_naive": 36.8,
+      "mean_7": 26.11,
+      "mean_28": 25.33,
+      "holt_winters_seasonal7": 25.65,
+      "global_xgb": 20.87
+    },
+    {
+      "store_id": "I34",
+      "n": 165,
+      "ca_moyen": 307.2,
+      "seasonal_naive": 103.34,
+      "mean_7": 76.14,
+      "mean_28": 70.91,
+      "holt_winters_seasonal7": 74.25,
+      "global_xgb": 58.68
+    },
+    {
+      "store_id": "I36",
+      "n": 142,
+      "ca_moyen": 104.7,
+      "seasonal_naive": 91.89,
+      "mean_7": 64.22,
+      "mean_28": 65.27,
+      "holt_winters_seasonal7": 69.0,
+      "global_xgb": 57.0
+    },
+    {
+      "store_id": "I37",
+      "n": 167,
+      "ca_moyen": 510.7,
+      "seasonal_naive": 49.23,
+      "mean_7": 37.97,
+      "mean_28": 35.66,
+      "holt_winters_seasonal7": 37.21,
+      "global_xgb": 32.13
+    },
+    {
+      "store_id": "I38",
+      "n": 167,
+      "ca_moyen": 1030.1,
+      "seasonal_naive": 39.97,
+      "mean_7": 29.35,
+      "mean_28": 27.58,
+      "holt_winters_seasonal7": 28.78,
+      "global_xgb": 22.53
+    },
+    {
+      "store_id": "I39",
+      "n": 167,
+      "ca_moyen": 525.6,
+      "seasonal_naive": 45.27,
+      "mean_7": 37.91,
+      "mean_28": 35.11,
+      "holt_winters_seasonal7": 38.51,
+      "global_xgb": 29.05
+    },
+    {
+      "store_id": "I40",
+      "n": 167,
+      "ca_moyen": 279.2,
+      "seasonal_naive": 52.94,
+      "mean_7": 47.3,
+      "mean_28": 45.43,
+      "holt_winters_seasonal7": 47.51,
+      "global_xgb": 35.03
+    },
+    {
+      "store_id": "I42",
+      "n": 167,
+      "ca_moyen": 230.0,
+      "seasonal_naive": 80.04,
+      "mean_7": 62.1,
+      "mean_28": 58.28,
+      "holt_winters_seasonal7": 61.85,
+      "global_xgb": 50.74
+    },
+    {
+      "store_id": "I43",
+      "n": 167,
+      "ca_moyen": 296.8,
+      "seasonal_naive": 57.0,
+      "mean_7": 45.49,
+      "mean_28": 40.09,
+      "holt_winters_seasonal7": 42.41,
+      "global_xgb": 34.0
+    },
+    {
+      "store_id": "I45",
+      "n": 167,
+      "ca_moyen": 628.0,
+      "seasonal_naive": 57.98,
+      "mean_7": 46.68,
+      "mean_28": 41.75,
+      "holt_winters_seasonal7": 44.7,
+      "global_xgb": 32.7
+    },
+    {
+      "store_id": "I46",
+      "n": 167,
+      "ca_moyen": 662.9,
+      "seasonal_naive": 54.43,
+      "mean_7": 43.19,
+      "mean_28": 38.02,
+      "holt_winters_seasonal7": 41.49,
+      "global_xgb": 32.05
+    },
+    {
+      "store_id": "I47",
+      "n": 167,
+      "ca_moyen": 981.7,
+      "seasonal_naive": 50.22,
+      "mean_7": 41.72,
+      "mean_28": 38.16,
+      "holt_winters_seasonal7": 42.19,
+      "global_xgb": 31.4
+    },
+    {
+      "store_id": "I48",
+      "n": 46,
+      "ca_moyen": 10.3,
+      "seasonal_naive": 160.66,
+      "mean_7": 111.71,
+      "mean_28": 101.36,
+      "holt_winters_seasonal7": 116.3,
+      "global_xgb": 53.05
+    },
+    {
+      "store_id": "I50",
+      "n": 167,
+      "ca_moyen": 557.3,
+      "seasonal_naive": 48.92,
+      "mean_7": 40.39,
+      "mean_28": 36.88,
+      "holt_winters_seasonal7": 39.13,
+      "global_xgb": 29.94
+    },
+    {
+      "store_id": "I51",
+      "n": 167,
+      "ca_moyen": 651.3,
+      "seasonal_naive": 48.18,
+      "mean_7": 32.68,
+      "mean_28": 29.92,
+      "holt_winters_seasonal7": 31.08,
+      "global_xgb": 25.55
+    },
+    {
+      "store_id": "I52",
+      "n": 164,
+      "ca_moyen": 670.1,
+      "seasonal_naive": 86.15,
+      "mean_7": 69.11,
+      "mean_28": 62.22,
+      "holt_winters_seasonal7": 68.9,
+      "global_xgb": 43.97
+    },
+    {
+      "store_id": "I53",
+      "n": 167,
+      "ca_moyen": 330.4,
+      "seasonal_naive": 73.11,
+      "mean_7": 53.83,
+      "mean_28": 50.68,
+      "holt_winters_seasonal7": 52.9,
+      "global_xgb": 44.08
+    },
+    {
+      "store_id": "I55",
+      "n": 167,
+      "ca_moyen": 363.2,
+      "seasonal_naive": 52.35,
+      "mean_7": 39.87,
+      "mean_28": 38.49,
+      "holt_winters_seasonal7": 40.64,
+      "global_xgb": 32.16
+    },
+    {
+      "store_id": "I56",
+      "n": 167,
+      "ca_moyen": 644.2,
+      "seasonal_naive": 47.56,
+      "mean_7": 33.88,
+      "mean_28": 32.66,
+      "holt_winters_seasonal7": 34.58,
+      "global_xgb": 25.49
+    },
+    {
+      "store_id": "I57",
+      "n": 167,
+      "ca_moyen": 963.9,
+      "seasonal_naive": 35.84,
+      "mean_7": 25.2,
+      "mean_28": 24.36,
+      "holt_winters_seasonal7": 25.18,
+      "global_xgb": 20.92
+    },
+    {
+      "store_id": "I58",
+      "n": 164,
+      "ca_moyen": 313.2,
+      "seasonal_naive": 96.86,
+      "mean_7": 73.87,
+      "mean_28": 61.25,
+      "holt_winters_seasonal7": 75.78,
+      "global_xgb": 45.12
+    },
+    {
+      "store_id": "I59",
+      "n": 167,
+      "ca_moyen": 346.3,
+      "seasonal_naive": 69.42,
+      "mean_7": 52.51,
+      "mean_28": 50.07,
+      "holt_winters_seasonal7": 51.8,
+      "global_xgb": 43.7
+    },
+    {
+      "store_id": "I60",
+      "n": 167,
+      "ca_moyen": 710.6,
+      "seasonal_naive": 37.67,
+      "mean_7": 28.06,
+      "mean_28": 27.79,
+      "holt_winters_seasonal7": 28.09,
+      "global_xgb": 24.98
+    },
+    {
+      "store_id": "I61",
+      "n": 167,
+      "ca_moyen": 642.7,
+      "seasonal_naive": 45.54,
+      "mean_7": 35.42,
+      "mean_28": 31.0,
+      "holt_winters_seasonal7": 32.82,
+      "global_xgb": 25.4
+    },
+    {
+      "store_id": "I62",
+      "n": 126,
+      "ca_moyen": 91.0,
+      "seasonal_naive": 126.83,
+      "mean_7": 94.53,
+      "mean_28": 85.01,
+      "holt_winters_seasonal7": 92.08,
+      "global_xgb": 66.03
+    },
+    {
+      "store_id": "I63",
+      "n": 167,
+      "ca_moyen": 855.5,
+      "seasonal_naive": 45.98,
+      "mean_7": 33.73,
+      "mean_28": 31.95,
+      "holt_winters_seasonal7": 33.56,
+      "global_xgb": 25.18
+    },
+    {
+      "store_id": "I64",
+      "n": 164,
+      "ca_moyen": 611.7,
+      "seasonal_naive": 114.15,
+      "mean_7": 86.47,
+      "mean_28": 75.44,
+      "holt_winters_seasonal7": 83.65,
+      "global_xgb": 55.57
+    },
+    {
+      "store_id": "I65",
+      "n": 167,
+      "ca_moyen": 494.2,
+      "seasonal_naive": 86.1,
+      "mean_7": 68.52,
+      "mean_28": 64.83,
+      "holt_winters_seasonal7": 71.23,
+      "global_xgb": 47.04
+    },
+    {
+      "store_id": "I66",
+      "n": 167,
+      "ca_moyen": 715.3,
+      "seasonal_naive": 48.92,
+      "mean_7": 36.47,
+      "mean_28": 34.99,
+      "holt_winters_seasonal7": 36.53,
+      "global_xgb": 28.84
+    },
+    {
+      "store_id": "I67",
+      "n": 167,
+      "ca_moyen": 406.8,
+      "seasonal_naive": 72.91,
+      "mean_7": 49.84,
+      "mean_28": 45.48,
+      "holt_winters_seasonal7": 49.29,
+      "global_xgb": 38.47
+    },
+    {
+      "store_id": "I68",
+      "n": 167,
+      "ca_moyen": 631.6,
+      "seasonal_naive": 60.99,
+      "mean_7": 48.9,
+      "mean_28": 45.74,
+      "holt_winters_seasonal7": 47.65,
+      "global_xgb": 38.0
+    },
+    {
+      "store_id": "I69",
+      "n": 167,
+      "ca_moyen": 307.8,
+      "seasonal_naive": 82.69,
+      "mean_7": 68.14,
+      "mean_28": 62.64,
+      "holt_winters_seasonal7": 64.83,
+      "global_xgb": 49.87
+    },
+    {
+      "store_id": "I70",
+      "n": 167,
+      "ca_moyen": 480.5,
+      "seasonal_naive": 65.53,
+      "mean_7": 49.22,
+      "mean_28": 45.87,
+      "holt_winters_seasonal7": 47.94,
+      "global_xgb": 38.64
+    },
+    {
+      "store_id": "I71",
+      "n": 167,
+      "ca_moyen": 245.1,
+      "seasonal_naive": 73.21,
+      "mean_7": 53.18,
+      "mean_28": 48.07,
+      "holt_winters_seasonal7": 51.26,
+      "global_xgb": 42.03
+    },
+    {
+      "store_id": "I73",
+      "n": 167,
+      "ca_moyen": 307.8,
+      "seasonal_naive": 62.28,
+      "mean_7": 48.68,
+      "mean_28": 45.59,
+      "holt_winters_seasonal7": 47.65,
+      "global_xgb": 36.67
+    },
+    {
+      "store_id": "I74",
+      "n": 167,
+      "ca_moyen": 260.5,
+      "seasonal_naive": 75.89,
+      "mean_7": 59.78,
+      "mean_28": 55.45,
+      "holt_winters_seasonal7": 60.19,
+      "global_xgb": 45.7
+    },
+    {
+      "store_id": "I75",
+      "n": 159,
+      "ca_moyen": 208.8,
+      "seasonal_naive": 98.67,
+      "mean_7": 80.66,
+      "mean_28": 75.77,
+      "holt_winters_seasonal7": 81.3,
+      "global_xgb": 59.04
+    },
+    {
+      "store_id": "I77",
+      "n": 167,
+      "ca_moyen": 488.6,
+      "seasonal_naive": 52.15,
+      "mean_7": 43.36,
+      "mean_28": 40.56,
+      "holt_winters_seasonal7": 44.81,
+      "global_xgb": 31.38
+    },
+    {
+      "store_id": "I78",
+      "n": 166,
+      "ca_moyen": 89.2,
+      "seasonal_naive": 92.71,
+      "mean_7": 65.88,
+      "mean_28": 62.61,
+      "holt_winters_seasonal7": 64.99,
+      "global_xgb": 52.21
+    },
+    {
+      "store_id": "I79",
+      "n": 166,
+      "ca_moyen": 439.0,
+      "seasonal_naive": 73.8,
+      "mean_7": 62.83,
+      "mean_28": 52.95,
+      "holt_winters_seasonal7": 60.97,
+      "global_xgb": 42.02
+    },
+    {
+      "store_id": "I80",
+      "n": 164,
+      "ca_moyen": 548.2,
+      "seasonal_naive": 83.82,
+      "mean_7": 66.97,
+      "mean_28": 64.19,
+      "holt_winters_seasonal7": 70.78,
+      "global_xgb": 51.7
+    },
+    {
+      "store_id": "I81",
+      "n": 167,
+      "ca_moyen": 482.3,
+      "seasonal_naive": 67.27,
+      "mean_7": 47.54,
+      "mean_28": 45.56,
+      "holt_winters_seasonal7": 47.19,
+      "global_xgb": 36.62
+    },
+    {
+      "store_id": "I82",
+      "n": 167,
+      "ca_moyen": 416.2,
+      "seasonal_naive": 53.55,
+      "mean_7": 40.51,
+      "mean_28": 37.24,
+      "holt_winters_seasonal7": 39.62,
+      "global_xgb": 31.85
+    },
+    {
+      "store_id": "I83",
+      "n": 167,
+      "ca_moyen": 286.1,
+      "seasonal_naive": 71.75,
+      "mean_7": 53.73,
+      "mean_28": 47.12,
+      "holt_winters_seasonal7": 50.58,
+      "global_xgb": 37.13
+    },
+    {
+      "store_id": "I84",
+      "n": 157,
+      "ca_moyen": 164.1,
+      "seasonal_naive": 91.59,
+      "mean_7": 76.95,
+      "mean_28": 72.05,
+      "holt_winters_seasonal7": 76.46,
+      "global_xgb": 63.67
+    },
+    {
+      "store_id": "I85",
+      "n": 167,
+      "ca_moyen": 838.3,
+      "seasonal_naive": 51.48,
+      "mean_7": 37.94,
+      "mean_28": 33.51,
+      "holt_winters_seasonal7": 36.9,
+      "global_xgb": 25.72
+    },
+    {
+      "store_id": "I86",
+      "n": 167,
+      "ca_moyen": 1600.9,
+      "seasonal_naive": 41.04,
+      "mean_7": 29.25,
+      "mean_28": 26.06,
+      "holt_winters_seasonal7": 28.87,
+      "global_xgb": 21.94
+    },
+    {
+      "store_id": "I87",
+      "n": 167,
+      "ca_moyen": 821.7,
+      "seasonal_naive": 43.04,
+      "mean_7": 28.96,
+      "mean_28": 26.73,
+      "holt_winters_seasonal7": 27.72,
+      "global_xgb": 23.39
+    },
+    {
+      "store_id": "I88",
+      "n": 165,
+      "ca_moyen": 761.3,
+      "seasonal_naive": 84.32,
+      "mean_7": 69.01,
+      "mean_28": 60.66,
+      "holt_winters_seasonal7": 65.91,
+      "global_xgb": 44.63
+    },
+    {
+      "store_id": "I89",
+      "n": 166,
+      "ca_moyen": 128.6,
+      "seasonal_naive": 88.82,
+      "mean_7": 69.87,
+      "mean_28": 65.36,
+      "holt_winters_seasonal7": 70.47,
+      "global_xgb": 56.94
+    },
+    {
+      "store_id": "I90",
+      "n": 163,
+      "ca_moyen": 166.6,
+      "seasonal_naive": 75.11,
+      "mean_7": 56.78,
+      "mean_28": 55.95,
+      "holt_winters_seasonal7": 58.15,
+      "global_xgb": 48.36
+    },
+    {
+      "store_id": "I91",
+      "n": 167,
+      "ca_moyen": 374.2,
+      "seasonal_naive": 58.94,
+      "mean_7": 43.11,
+      "mean_28": 40.34,
+      "holt_winters_seasonal7": 42.1,
+      "global_xgb": 36.28
+    },
+    {
+      "store_id": "I92",
+      "n": 165,
+      "ca_moyen": 222.4,
+      "seasonal_naive": 93.87,
+      "mean_7": 72.03,
+      "mean_28": 68.11,
+      "holt_winters_seasonal7": 73.19,
+      "global_xgb": 55.71
+    },
+    {
+      "store_id": "I93",
+      "n": 167,
+      "ca_moyen": 1172.8,
+      "seasonal_naive": 36.55,
+      "mean_7": 27.26,
+      "mean_28": 25.95,
+      "holt_winters_seasonal7": 27.49,
+      "global_xgb": 20.32
+    },
+    {
+      "store_id": "I94",
+      "n": 167,
+      "ca_moyen": 471.6,
+      "seasonal_naive": 44.24,
+      "mean_7": 33.83,
+      "mean_28": 32.52,
+      "holt_winters_seasonal7": 34.09,
+      "global_xgb": 24.68
+    },
+    {
+      "store_id": "I95",
+      "n": 167,
+      "ca_moyen": 594.7,
+      "seasonal_naive": 45.42,
+      "mean_7": 30.71,
+      "mean_28": 31.08,
+      "holt_winters_seasonal7": 30.97,
+      "global_xgb": 25.58
+    },
+    {
+      "store_id": "I97",
+      "n": 167,
+      "ca_moyen": 429.8,
+      "seasonal_naive": 53.61,
+      "mean_7": 36.0,
+      "mean_28": 33.88,
+      "holt_winters_seasonal7": 35.11,
+      "global_xgb": 29.64
+    },
+    {
+      "store_id": "I98",
+      "n": 167,
+      "ca_moyen": 165.6,
+      "seasonal_naive": 67.23,
+      "mean_7": 51.02,
+      "mean_28": 48.32,
+      "holt_winters_seasonal7": 50.41,
+      "global_xgb": 41.35
+    },
+    {
+      "store_id": "I99",
+      "n": 157,
+      "ca_moyen": 423.6,
+      "seasonal_naive": 146.11,
+      "mean_7": 115.54,
+      "mean_28": 103.52,
+      "holt_winters_seasonal7": 109.27,
+      "global_xgb": 50.81
+    },
+    {
+      "store_id": "M01",
+      "n": 167,
+      "ca_moyen": 1285.1,
+      "seasonal_naive": 63.24,
+      "mean_7": 44.3,
+      "mean_28": 41.58,
+      "holt_winters_seasonal7": 43.97,
+      "global_xgb": 30.48
+    },
+    {
+      "store_id": "M03",
+      "n": 167,
+      "ca_moyen": 547.7,
+      "seasonal_naive": 52.39,
+      "mean_7": 37.89,
+      "mean_28": 35.18,
+      "holt_winters_seasonal7": 36.84,
+      "global_xgb": 29.99
+    },
+    {
+      "store_id": "M04",
+      "n": 167,
+      "ca_moyen": 581.6,
+      "seasonal_naive": 44.01,
+      "mean_7": 35.29,
+      "mean_28": 33.7,
+      "holt_winters_seasonal7": 34.65,
+      "global_xgb": 28.77
+    },
+    {
+      "store_id": "M06",
+      "n": 142,
+      "ca_moyen": 359.1,
+      "seasonal_naive": 420.92,
+      "mean_7": 431.95,
+      "mean_28": 414.27,
+      "holt_winters_seasonal7": 480.8,
+      "global_xgb": 40.22
+    },
+    {
+      "store_id": "M10",
+      "n": 167,
+      "ca_moyen": 3473.9,
+      "seasonal_naive": 19.45,
+      "mean_7": 13.97,
+      "mean_28": 13.89,
+      "holt_winters_seasonal7": 13.56,
+      "global_xgb": 11.89
+    },
+    {
+      "store_id": "M11",
+      "n": 167,
+      "ca_moyen": 1023.4,
+      "seasonal_naive": 42.32,
+      "mean_7": 30.93,
+      "mean_28": 28.94,
+      "holt_winters_seasonal7": 30.6,
+      "global_xgb": 22.5
+    },
+    {
+      "store_id": "M12",
+      "n": 167,
+      "ca_moyen": 380.4,
+      "seasonal_naive": 68.42,
+      "mean_7": 54.78,
+      "mean_28": 49.56,
+      "holt_winters_seasonal7": 53.74,
+      "global_xgb": 42.63
+    },
+    {
+      "store_id": "M14",
+      "n": 167,
+      "ca_moyen": 282.4,
+      "seasonal_naive": 56.65,
+      "mean_7": 43.21,
+      "mean_28": 40.58,
+      "holt_winters_seasonal7": 42.57,
+      "global_xgb": 33.35
+    },
+    {
+      "store_id": "M17",
+      "n": 167,
+      "ca_moyen": 490.9,
+      "seasonal_naive": 68.42,
+      "mean_7": 53.35,
+      "mean_28": 50.64,
+      "holt_winters_seasonal7": 55.25,
+      "global_xgb": 40.56
+    },
+    {
+      "store_id": "M23",
+      "n": 167,
+      "ca_moyen": 813.8,
+      "seasonal_naive": 50.34,
+      "mean_7": 38.88,
+      "mean_28": 35.69,
+      "holt_winters_seasonal7": 38.77,
+      "global_xgb": 28.25
+    },
+    {
+      "store_id": "S01",
+      "n": 167,
+      "ca_moyen": 301.6,
+      "seasonal_naive": 60.81,
+      "mean_7": 44.76,
+      "mean_28": 42.32,
+      "holt_winters_seasonal7": 46.77,
+      "global_xgb": 37.25
+    },
+    {
+      "store_id": "S02",
+      "n": 159,
+      "ca_moyen": 128.6,
+      "seasonal_naive": 388.44,
+      "mean_7": 351.38,
+      "mean_28": 312.08,
+      "holt_winters_seasonal7": 350.15,
+      "global_xgb": 46.58
+    },
+    {
+      "store_id": "S03",
+      "n": 165,
+      "ca_moyen": 110.5,
+      "seasonal_naive": 77.53,
+      "mean_7": 61.38,
+      "mean_28": 57.93,
+      "holt_winters_seasonal7": 62.63,
+      "global_xgb": 47.7
+    },
+    {
+      "store_id": "S05",
+      "n": 167,
+      "ca_moyen": 865.3,
+      "seasonal_naive": 36.68,
+      "mean_7": 28.69,
+      "mean_28": 26.94,
+      "holt_winters_seasonal7": 28.7,
+      "global_xgb": 22.68
+    },
+    {
+      "store_id": "S06",
+      "n": 166,
+      "ca_moyen": 229.5,
+      "seasonal_naive": 74.42,
+      "mean_7": 55.42,
+      "mean_28": 54.27,
+      "holt_winters_seasonal7": 56.46,
+      "global_xgb": 45.94
+    },
+    {
+      "store_id": "S07",
+      "n": 167,
+      "ca_moyen": 960.5,
+      "seasonal_naive": 48.25,
+      "mean_7": 36.64,
+      "mean_28": 34.1,
+      "holt_winters_seasonal7": 36.3,
+      "global_xgb": 28.2
+    },
+    {
+      "store_id": "S09",
+      "n": 167,
+      "ca_moyen": 337.8,
+      "seasonal_naive": 65.03,
+      "mean_7": 50.48,
+      "mean_28": 46.22,
+      "holt_winters_seasonal7": 51.15,
+      "global_xgb": 38.22
+    },
+    {
+      "store_id": "S10",
+      "n": 167,
+      "ca_moyen": 284.8,
+      "seasonal_naive": 57.96,
+      "mean_7": 44.15,
+      "mean_28": 41.7,
+      "holt_winters_seasonal7": 43.75,
+      "global_xgb": 33.69
+    },
+    {
+      "store_id": "S11",
+      "n": 164,
+      "ca_moyen": 210.6,
+      "seasonal_naive": 76.77,
+      "mean_7": 60.43,
+      "mean_28": 58.6,
+      "holt_winters_seasonal7": 61.07,
+      "global_xgb": 50.0
+    },
+    {
+      "store_id": "S12",
+      "n": 167,
+      "ca_moyen": 285.8,
+      "seasonal_naive": 76.86,
+      "mean_7": 60.64,
+      "mean_28": 54.44,
+      "holt_winters_seasonal7": 58.86,
+      "global_xgb": 44.57
+    },
+    {
+      "store_id": "S13",
+      "n": 167,
+      "ca_moyen": 1254.6,
+      "seasonal_naive": 31.73,
+      "mean_7": 22.16,
+      "mean_28": 22.17,
+      "holt_winters_seasonal7": 23.34,
+      "global_xgb": 18.49
+    },
+    {
+      "store_id": "S14",
+      "n": 167,
+      "ca_moyen": 314.4,
+      "seasonal_naive": 71.93,
+      "mean_7": 53.32,
+      "mean_28": 49.32,
+      "holt_winters_seasonal7": 52.67,
+      "global_xgb": 40.1
+    },
+    {
+      "store_id": "S15",
+      "n": 159,
+      "ca_moyen": 147.0,
+      "seasonal_naive": 71.85,
+      "mean_7": 56.93,
+      "mean_28": 55.42,
+      "holt_winters_seasonal7": 56.61,
+      "global_xgb": 46.48
+    },
+    {
+      "store_id": "S16",
+      "n": 157,
+      "ca_moyen": 109.9,
+      "seasonal_naive": 90.22,
+      "mean_7": 69.32,
+      "mean_28": 63.95,
+      "holt_winters_seasonal7": 66.85,
+      "global_xgb": 54.75
+    },
+    {
+      "store_id": "S17",
+      "n": 162,
+      "ca_moyen": 141.3,
+      "seasonal_naive": 94.23,
+      "mean_7": 69.76,
+      "mean_28": 61.42,
+      "holt_winters_seasonal7": 73.15,
+      "global_xgb": 48.22
+    },
+    {
+      "store_id": "S18",
+      "n": 166,
+      "ca_moyen": 292.9,
+      "seasonal_naive": 69.66,
+      "mean_7": 56.0,
+      "mean_28": 47.64,
+      "holt_winters_seasonal7": 53.1,
+      "global_xgb": 39.61
+    },
+    {
+      "store_id": "S19",
+      "n": 167,
+      "ca_moyen": 394.9,
+      "seasonal_naive": 41.14,
+      "mean_7": 33.0,
+      "mean_28": 30.26,
+      "holt_winters_seasonal7": 32.21,
+      "global_xgb": 27.33
+    },
+    {
+      "store_id": "S20",
+      "n": 167,
+      "ca_moyen": 549.6,
+      "seasonal_naive": 35.42,
+      "mean_7": 28.25,
+      "mean_28": 27.27,
+      "holt_winters_seasonal7": 28.63,
+      "global_xgb": 25.46
+    },
+    {
+      "store_id": "S21",
+      "n": 167,
+      "ca_moyen": 704.8,
+      "seasonal_naive": 49.38,
+      "mean_7": 38.31,
+      "mean_28": 38.27,
+      "holt_winters_seasonal7": 39.34,
+      "global_xgb": 30.08
+    },
+    {
+      "store_id": "S22",
+      "n": 167,
+      "ca_moyen": 340.8,
+      "seasonal_naive": 69.48,
+      "mean_7": 56.17,
+      "mean_28": 52.95,
+      "holt_winters_seasonal7": 56.06,
+      "global_xgb": 45.47
+    },
+    {
+      "store_id": "S23",
+      "n": 165,
+      "ca_moyen": 118.7,
+      "seasonal_naive": 93.69,
+      "mean_7": 71.51,
+      "mean_28": 65.26,
+      "holt_winters_seasonal7": 68.29,
+      "global_xgb": 56.43
+    },
+    {
+      "store_id": "S24",
+      "n": 167,
+      "ca_moyen": 263.9,
+      "seasonal_naive": 75.04,
+      "mean_7": 50.66,
+      "mean_28": 46.85,
+      "holt_winters_seasonal7": 48.43,
+      "global_xgb": 41.36
+    },
+    {
+      "store_id": "S25",
+      "n": 163,
+      "ca_moyen": 163.3,
+      "seasonal_naive": 89.79,
+      "mean_7": 72.35,
+      "mean_28": 66.07,
+      "holt_winters_seasonal7": 67.89,
+      "global_xgb": 53.34
+    },
+    {
+      "store_id": "S26",
+      "n": 167,
+      "ca_moyen": 508.1,
+      "seasonal_naive": 70.0,
+      "mean_7": 54.84,
+      "mean_28": 49.58,
+      "holt_winters_seasonal7": 52.98,
+      "global_xgb": 42.39
+    },
+    {
+      "store_id": "S27",
+      "n": 167,
+      "ca_moyen": 759.2,
+      "seasonal_naive": 62.76,
+      "mean_7": 45.23,
+      "mean_28": 39.94,
+      "holt_winters_seasonal7": 45.43,
+      "global_xgb": 30.38
+    },
+    {
+      "store_id": "S28",
+      "n": 167,
+      "ca_moyen": 434.3,
+      "seasonal_naive": 72.11,
+      "mean_7": 51.74,
+      "mean_28": 47.84,
+      "holt_winters_seasonal7": 50.58,
+      "global_xgb": 38.08
+    },
+    {
+      "store_id": "S29",
+      "n": 151,
+      "ca_moyen": 287.9,
+      "seasonal_naive": 98.71,
+      "mean_7": 66.76,
+      "mean_28": 62.8,
+      "holt_winters_seasonal7": 64.89,
+      "global_xgb": 52.91
+    },
+    {
+      "store_id": "S30",
+      "n": 167,
+      "ca_moyen": 325.0,
+      "seasonal_naive": 77.88,
+      "mean_7": 61.99,
+      "mean_28": 54.78,
+      "holt_winters_seasonal7": 59.97,
+      "global_xgb": 46.37
+    },
+    {
+      "store_id": "S31",
+      "n": 108,
+      "ca_moyen": 57.5,
+      "seasonal_naive": 98.19,
+      "mean_7": 67.21,
+      "mean_28": 65.51,
+      "holt_winters_seasonal7": 68.4,
+      "global_xgb": 58.75
+    },
+    {
+      "store_id": "S32",
+      "n": 167,
+      "ca_moyen": 360.8,
+      "seasonal_naive": 70.87,
+      "mean_7": 50.1,
+      "mean_28": 49.65,
+      "holt_winters_seasonal7": 50.46,
+      "global_xgb": 38.85
+    },
+    {
+      "store_id": "S33",
+      "n": 167,
+      "ca_moyen": 368.3,
+      "seasonal_naive": 65.86,
+      "mean_7": 52.93,
+      "mean_28": 49.92,
+      "holt_winters_seasonal7": 52.86,
+      "global_xgb": 42.13
+    },
+    {
+      "store_id": "S34",
+      "n": 167,
+      "ca_moyen": 437.0,
+      "seasonal_naive": 66.11,
+      "mean_7": 52.28,
+      "mean_28": 46.88,
+      "holt_winters_seasonal7": 50.63,
+      "global_xgb": 38.03
+    },
+    {
+      "store_id": "S35",
+      "n": 167,
+      "ca_moyen": 348.5,
+      "seasonal_naive": 68.96,
+      "mean_7": 51.56,
+      "mean_28": 47.73,
+      "holt_winters_seasonal7": 51.44,
+      "global_xgb": 38.4
+    },
+    {
+      "store_id": "S36",
+      "n": 167,
+      "ca_moyen": 340.3,
+      "seasonal_naive": 55.41,
+      "mean_7": 45.98,
+      "mean_28": 43.07,
+      "holt_winters_seasonal7": 43.93,
+      "global_xgb": 36.52
+    },
+    {
+      "store_id": "S37",
+      "n": 160,
+      "ca_moyen": 140.6,
+      "seasonal_naive": 92.44,
+      "mean_7": 69.27,
+      "mean_28": 67.34,
+      "holt_winters_seasonal7": 70.05,
+      "global_xgb": 57.78
+    },
+    {
+      "store_id": "S38",
+      "n": 167,
+      "ca_moyen": 405.1,
+      "seasonal_naive": 61.92,
+      "mean_7": 48.66,
+      "mean_28": 44.98,
+      "holt_winters_seasonal7": 48.69,
+      "global_xgb": 36.14
+    },
+    {
+      "store_id": "S40",
+      "n": 91,
+      "ca_moyen": 56.7,
+      "seasonal_naive": 120.71,
+      "mean_7": 64.42,
+      "mean_28": 60.75,
+      "holt_winters_seasonal7": 65.65,
+      "global_xgb": 51.46
+    },
+    {
+      "store_id": "S41",
+      "n": 167,
+      "ca_moyen": 587.9,
+      "seasonal_naive": 56.49,
+      "mean_7": 47.32,
+      "mean_28": 43.65,
+      "holt_winters_seasonal7": 44.89,
+      "global_xgb": 34.0
+    },
+    {
+      "store_id": "S42",
+      "n": 160,
+      "ca_moyen": 554.6,
+      "seasonal_naive": 112.54,
+      "mean_7": 81.38,
+      "mean_28": 69.95,
+      "holt_winters_seasonal7": 81.11,
+      "global_xgb": 42.41
+    },
+    {
+      "store_id": "S43",
+      "n": 167,
+      "ca_moyen": 293.5,
+      "seasonal_naive": 65.88,
+      "mean_7": 51.45,
+      "mean_28": 47.52,
+      "holt_winters_seasonal7": 50.91,
+      "global_xgb": 41.61
+    },
+    {
+      "store_id": "S44",
+      "n": 166,
+      "ca_moyen": 802.5,
+      "seasonal_naive": 79.79,
+      "mean_7": 59.61,
+      "mean_28": 54.09,
+      "holt_winters_seasonal7": 60.13,
+      "global_xgb": 41.11
+    },
+    {
+      "store_id": "S45",
+      "n": 167,
+      "ca_moyen": 349.1,
+      "seasonal_naive": 60.17,
+      "mean_7": 46.88,
+      "mean_28": 45.25,
+      "holt_winters_seasonal7": 46.27,
+      "global_xgb": 37.71
+    },
+    {
+      "store_id": "S46",
+      "n": 167,
+      "ca_moyen": 511.2,
+      "seasonal_naive": 61.36,
+      "mean_7": 44.52,
+      "mean_28": 41.01,
+      "holt_winters_seasonal7": 43.44,
+      "global_xgb": 31.19
+    },
+    {
+      "store_id": "S47",
+      "n": 167,
+      "ca_moyen": 1642.4,
+      "seasonal_naive": 34.78,
+      "mean_7": 27.34,
+      "mean_28": 24.42,
+      "holt_winters_seasonal7": 26.22,
+      "global_xgb": 22.73
+    },
+    {
+      "store_id": "S48",
+      "n": 167,
+      "ca_moyen": 731.5,
+      "seasonal_naive": 45.19,
+      "mean_7": 32.37,
+      "mean_28": 29.88,
+      "holt_winters_seasonal7": 31.13,
+      "global_xgb": 25.94
+    },
+    {
+      "store_id": "S49",
+      "n": 167,
+      "ca_moyen": 461.9,
+      "seasonal_naive": 42.59,
+      "mean_7": 31.17,
+      "mean_28": 29.78,
+      "holt_winters_seasonal7": 30.6,
+      "global_xgb": 26.83
+    },
+    {
+      "store_id": "S50",
+      "n": 167,
+      "ca_moyen": 320.0,
+      "seasonal_naive": 55.28,
+      "mean_7": 40.33,
+      "mean_28": 38.37,
+      "holt_winters_seasonal7": 40.52,
+      "global_xgb": 31.64
+    },
+    {
+      "store_id": "S51",
+      "n": 166,
+      "ca_moyen": 158.4,
+      "seasonal_naive": 83.43,
+      "mean_7": 61.07,
+      "mean_28": 56.43,
+      "holt_winters_seasonal7": 60.14,
+      "global_xgb": 46.98
+    },
+    {
+      "store_id": "S52",
+      "n": 161,
+      "ca_moyen": 461.1,
+      "seasonal_naive": 118.39,
+      "mean_7": 88.94,
+      "mean_28": 83.43,
+      "holt_winters_seasonal7": 92.23,
+      "global_xgb": 54.35
+    },
+    {
+      "store_id": "S53",
+      "n": 167,
+      "ca_moyen": 147.9,
+      "seasonal_naive": 81.72,
+      "mean_7": 64.58,
+      "mean_28": 59.25,
+      "holt_winters_seasonal7": 61.38,
+      "global_xgb": 50.22
+    }
+  ],
+  "runtime_s": 906.3
+}

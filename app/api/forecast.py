@@ -35,76 +35,73 @@ def _get_svc(store_id: str) -> JsonDataService:
 
 @router.get("/eod/{store_id}")
 async def get_eod_forecast(store_id: str):
-    """Forecast EOD depuis PostgreSQL + TimesFM/Prophet."""
-    from app.sales.data.postgres_provider import get_data_provider
+    """
+    Prévision fin de journée — servie par le MÊME moteur que l'agent Analyste
+    et le flux WebSocket (`ts_engine.analyze_store`), garde-fou d'invariants
+    compris. Plus aucune valeur (MAPE, modèle) codée en dur : tout vient de
+    l'analyse réelle.
+    """
+    from app.sales.coaching.agents.analyst.ts_engine import analyze_store
 
-    cd       = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
-    provider = get_data_provider()
-
-    # CA réel depuis PostgreSQL
-    svc      = _get_svc(store_id)
-    metrics  = svc.get_store_metrics()
-    ca       = float(metrics.get("ca_today", 0))
-    target   = float(metrics.get("ca_target", 1007))
-
-    # Forecast via ratio historique réel
-    forecast = await provider.fetch_timesfm_prediction(cd)
-    eod      = float(forecast.get("forecast_end_of_day", 0))
-    ci       = forecast.get("confidence_interval", {})
-    gap      = round(((target - ca) / target * 100), 1) if target else 0
-
-    # Utiliser Prophet si EOD = 0
-    if eod == 0 or ca == 0:
-        prophet_forecast = await _timefm.forecast_eod(
-            store_id      = cd,
-            ca_realized   = ca,
-            sales_history = {},
-            hour_current  = datetime.now().hour
-        )
-        eod    = prophet_forecast.get("eod", 0)
-        ci     = {
-            "low":  prophet_forecast.get("ci_low", 0),
-            "high": prophet_forecast.get("ci_high", 0),
-        }
-        source = "prophet"
-        mape   = prophet_forecast.get("mape", 0)
-    else:
-        source = forecast.get("source", "csv_ratio")
-        mape   = 12.8
+    cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
+    a  = await analyze_store(cd)
+    if a.get("error"):
+        return {"store_id": cd, "error": a["error"], "source": "ts_engine"}
 
     return {
         "store_id":    cd,
-        "ca_realized": round(ca, 2),
-        "ca_target":   round(target, 2),
-        "gap_pct":     gap,
-        "eod":         round(eod, 2),
-        "ci_low":      round(float(ci.get("low", 0)), 2),
-        "ci_high":     round(float(ci.get("high", 0)), 2),
-        "mape":        mape,
-        "model":       f"TimesFM-{source}",
-        "source":      "postgresql",
+        "ca_realized": a["current_ca"],
+        "ca_target":   a["daily_target"],
+        "gap_pct":     a["gap_pct"],
+        "eod":         a["eod_forecast"],
+        "ci_low":      a["eod_ci_low"],
+        "ci_high":     a["eod_ci_high"],
+        "mape":        a["mape_backtest"],
+        "model":       a["model_engine"],
+        "feasibility": a["feasibility"],
+        "urgency":     a["urgency_level"],
+        "source":      "ts_engine",
         "updated_at":  datetime.utcnow().isoformat(),
     }
 
 
 @router.get("/hourly/{store_id}")
 async def get_hourly_forecast(store_id: str, hours: int = 8):
-    """Forecast horaire depuis PostgreSQL."""
-    svc    = _get_svc(store_id)
-    hourly = svc.get_hourly_ca()
+    """
+    Prévision horaire — trajectoire de `analyze_store`, garantie cohérente avec
+    l'EOD : CA réalisé + Σ prévisions horaires = prévision de fin de journée.
+    Chaque heure passée porte son réalisé, chaque heure à venir sa prévision.
+    """
+    from app.sales.coaching.agents.analyst.ts_engine import analyze_store
+
+    cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
+    a  = await analyze_store(cd)
+    if a.get("error"):
+        return {"store_id": cd, "hours": [], "error": a["error"], "source": "ts_engine"}
+
+    # Heures écoulées (réalisé, depuis le ledger) puis heures à venir (prévues).
+    rows = []
+    for e in a.get("hourly_ledger", []):
+        rows.append({
+            "hour": e["hour"], "actual": e["actual"], "forecast": e["expected"],
+            "status": e["status"], "ci_low": None, "ci_high": None,
+        })
+    for x in a.get("next_hours", []):
+        band = x.get("std_ca", 0) or 0
+        rows.append({
+            "hour": x["hour"], "actual": None, "forecast": x["expected_ca"],
+            "cumulative": x["cumulative_ca"],
+            "ci_low": round(max(0.0, x["expected_ca"] - band), 2),
+            "ci_high": round(x["expected_ca"] + band, 2),
+        })
+
     return {
-        "hours": [
-            {
-                "hour":     h["hour"],
-                "actual":   h.get("actual"),
-                "forecast": h["target"],
-                "ci_low":   round((h["target"] or 0) * 0.88, 2),
-                "ci_high":  round((h["target"] or 0) * 1.12, 2),
-            }
-            for h in hourly
-        ],
-        "source": "postgresql",
-        "model":  "ratio-historique",
+        "store_id":        cd,
+        "hours":           rows,
+        "target_hit_hour": a.get("target_hit_hour"),
+        "eod_forecast":    a["eod_forecast"],
+        "source":          "ts_engine",
+        "model":           a["model_engine"],
     }
 
 

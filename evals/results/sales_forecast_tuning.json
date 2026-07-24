@@ -1,0 +1,43 @@
+{
+  "variants": {
+    "mae_brut": {
+      "wape": 36.81,
+      "mae": 201.57,
+      "bias": -8.76,
+      "mase": 0.585,
+      "rmse": 342.86
+    },
+    "mae_calibre": {
+      "wape": 37.87,
+      "mae": 207.34,
+      "bias": 0.7,
+      "mase": 0.602,
+      "rmse": 345.39
+    },
+    "quantile_055": {
+      "wape": 37.16,
+      "mae": 203.47,
+      "bias": -3.29,
+      "mase": 0.591,
+      "rmse": 339.13
+    },
+    "quantile_060": {
+      "wape": 38.94,
+      "mae": 213.2,
+      "bias": 0.89,
+      "mase": 0.619,
+      "rmse": 351.97
+    }
+  },
+  "baseline": {
+    "n": 12260,
+    "wape": 47.83,
+    "mae": 261.87,
+    "rmse": 431.22,
+    "bias": 4.08,
+    "mase": 0.76
+  },
+  "winner": "quantile_055",
+  "folds": 3,
+  "fold_days": 28
+}
