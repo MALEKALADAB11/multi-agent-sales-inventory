@@ -21,6 +21,24 @@ def _find_env() -> Path:
 
 load_dotenv(_find_env(), override=False)
 
+# Sur TCP, asyncpg bascule en sslmode=prefer quand aucun ssl n'est passe : il ouvre
+# la socket, envoie SSLRequest et attend la reponse du serveur. Si la connexion est
+# coupee ou annulee avant cette reponse, le futur interne de TLSUpgradeProto recoit
+# une ConnectionError que plus personne n'attend -> asyncio logge
+# "Future exception was never retrieved". Postgres local ne negocie pas de TLS.
+# setdefault : une vraie variable d'env (prod) reste prioritaire.
+os.environ.setdefault("PGSSLMODE", "disable")
+
+
+def _prefer_ipv4(url: str) -> str:
+    """
+    Sur Windows, `localhost` résout en ::1 avant 127.0.0.1. Ollama et Milvus
+    n'écoutent qu'en IPv4 : la connexion IPv6 échoue d'abord, ce qui ajoute
+    ~2,1 s à CHAQUE requête (mesuré 2227 ms via localhost contre 87 ms via
+    127.0.0.1). Forcer l'IPv4 littérale supprime cette latence.
+    """
+    return url.replace("//localhost:", "//127.0.0.1:")
+
 
 class Config:
     """Configuration unique partagée entre tous les modules."""
@@ -54,7 +72,7 @@ class Config:
         )
 
     # ── Ollama LLM ─────────────────────────────────────────────
-    OLLAMA_BASE_URL:    str = os.getenv("OLLAMA_BASE_URL",       "http://localhost:11434")
+    OLLAMA_BASE_URL:    str = _prefer_ipv4(os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
     OLLAMA_MODEL_ANALYST:  str = os.getenv("OLLAMA_MODEL_ANALYST",  "llama3.2:latest")
     OLLAMA_MODEL_STRATEGE: str = os.getenv("OLLAMA_MODEL_STRATEGE", "llama3.2:latest")
     OLLAMA_MODEL_COACH:    str = os.getenv("OLLAMA_MODEL_COACH",    "qwen2.5:0.5b")
@@ -66,7 +84,7 @@ class Config:
         return cls.OLLAMA_MODEL_ANALYST
 
     # ── Milvus RAG ─────────────────────────────────────────────
-    MILVUS_URI:        str = os.getenv("MILVUS_URI",        "http://localhost:19530")
+    MILVUS_URI:        str = _prefer_ipv4(os.getenv("MILVUS_URI", "http://localhost:19530"))
     MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION", "coaching_scripts")
     MILVUS_DIM:        int = int(os.getenv("MILVUS_DIM",    "768"))
 
@@ -80,6 +98,14 @@ class Config:
 
     CYCLE_INTERVAL_MINUTES:        int = int(os.getenv("CYCLE_INTERVAL_MINUTES",        "15"))
     REALTIME_TX_INTERVAL_SECONDS:  int = int(os.getenv("REALTIME_TX_INTERVAL_SECONDS",  "15"))
+
+    # ── Horaires boutique ──────────────────────────────────────
+    # Source unique de vérité : quand la boutique est fermée, plus aucune vente
+    # n'est simulée et le dashboard affiche « Boutique fermée ». Le magasin est
+    # ouvert sur [OPEN_HOUR, CLOSE_HOUR) — l'heure de fermeture n'est pas incluse
+    # (fermée à 20h00 pile).
+    STORE_OPEN_HOUR:  int = int(os.getenv("STORE_OPEN_HOUR",  "8"))
+    STORE_CLOSE_HOUR: int = int(os.getenv("STORE_CLOSE_HOUR", "20"))
 
     # ── MLflow / Langfuse ──────────────────────────────────────
     MLFLOW_TRACKING_URI: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
@@ -104,3 +130,15 @@ config = Config()
 # Boutique par défaut — SEULE source autorisée ; ne jamais hardcoder 'I63'
 # ailleurs dans le code (voir .env : DEFAULT_STORE_ID).
 DEFAULT_STORE_ID: str = config.DEFAULT_STORE_ID
+
+
+def is_store_open(now=None) -> bool:
+    """Vrai si la boutique est ouverte à `now` (heure locale) — source unique.
+
+    Ouverte sur [STORE_OPEN_HOUR, STORE_CLOSE_HOUR). À la fermeture, le
+    simulateur cesse d'émettre et le dashboard bascule en « Boutique fermée » :
+    aucune vente ne continue hors horaires.
+    """
+    from datetime import datetime
+    h = (now or datetime.now()).hour
+    return Config.STORE_OPEN_HOUR <= h < Config.STORE_CLOSE_HOUR

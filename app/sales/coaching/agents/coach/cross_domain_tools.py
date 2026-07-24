@@ -20,7 +20,28 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
+from app.core.db import acquire
+
 logger = logging.getLogger(__name__)
+
+
+def _run_sync(coro):
+    """Exécute une coroutine depuis un contexte sync.
+
+    asyncio.run ferme proprement la boucle (tâches annulées, générateurs
+    async fermés) — contrairement à get_event_loop().run_until_complete qui
+    laisse des futures internes asyncpg non récupérées à la sortie du process
+    (« Future exception was never retrieved » / WinError 10054). Si une boucle
+    tourne déjà dans ce thread (appel depuis le serveur), on bascule sur un
+    thread dédié car on ne peut pas bloquer la boucle courante.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
 
 
 # ── Outil 1 — get_sales_context ─────────────────────────────────────────────
@@ -31,13 +52,7 @@ async def get_sales_context(store_id: str, advisor_id: str = "") -> Dict[str, An
     Dynamique : lit les transactions réelles du jour.
     """
     try:
-        import asyncpg
-        conn = await asyncpg.connect(
-            host="localhost", port=5432,
-            database="ooredoo_sales", user="postgres", password="root",
-            timeout=3,
-        )
-        try:
+        async with acquire(connect_timeout=3) as conn:
             # CA actuel dynamique depuis transactions_rt (données du jour en temps réel)
             row = await conn.fetchrow("""
                 SELECT
@@ -94,8 +109,6 @@ async def get_sales_context(store_id: str, advisor_id: str = "") -> Dict[str, An
                 "nb_tx":      nb_tx,
                 "advisor_id": advisor_id,
             }
-        finally:
-            await conn.close()
     except Exception as e:
         logger.warning("[CoachTools] get_sales_context: %s", e)
         return {
@@ -228,15 +241,8 @@ def get_demand_forecast_batch(skus: List[str], store_id: str, days: int = 7) -> 
     if not skus:
         return {}
     try:
-        import asyncpg
-
         async def _fetch():
-            conn = await asyncpg.connect(
-                host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="root",
-                timeout=3,
-            )
-            try:
+            async with acquire(connect_timeout=3) as conn:
                 sku_ints = [int(s) for s in skus if str(s).strip()]
                 if not sku_ints:
                     return {}
@@ -254,10 +260,8 @@ def get_demand_forecast_batch(skus: List[str], store_id: str, days: int = 7) -> 
                     str(r["sku"]): float(r["avg_demand"])
                     for r in rows if r["avg_demand"] is not None
                 }
-            finally:
-                await conn.close()
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] get_demand_forecast_batch: %s", e)
         return {}
@@ -336,16 +340,10 @@ def retrieve_advisor_history(advisor_id: str, store_id: str) -> Dict[str, Any]:
     Dynamique — issu des interactions précédentes.
     """
     try:
-        import asyncpg
         import asyncio
 
         async def _fetch():
-            conn = await asyncpg.connect(
-                host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="root",
-                timeout=3,
-            )
-            try:
+            async with acquire(connect_timeout=3) as conn:
                 row = await conn.fetchrow("""
                     SELECT strong_categories, weak_categories,
                            avg_response_acceptance,
@@ -364,10 +362,8 @@ def retrieve_advisor_history(advisor_id: str, store_id: str) -> Dict[str, Any]:
                         "followed":    int(row["total_recos_followed"]       or 0),
                     }
                 return {"advisor_id": advisor_id, "strong": {}, "weak": {}, "acceptance": 0.5}
-            finally:
-                await conn.close()
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] retrieve_advisor_history: %s", e)
         return {"advisor_id": advisor_id, "strong": {}, "weak": {}, "acceptance": 0.5}
@@ -389,15 +385,10 @@ def rag_search_scripts(query: str, store_id: str, hour: int = 14) -> List[Dict[s
 def check_promotions(sku: str, store_id: str) -> Dict[str, Any]:
     """Vérifie si une promotion active existe sur ce SKU — dynamique depuis DB."""
     try:
-        import asyncpg, asyncio
+        import asyncio
 
         async def _fetch():
-            conn = await asyncpg.connect(
-                host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="root",
-                timeout=3,
-            )
-            try:
+            async with acquire(connect_timeout=3) as conn:
                 row = await conn.fetchrow("""
                     SELECT titre, remise_pct, date_fin
                     FROM market.promotions
@@ -413,10 +404,8 @@ def check_promotions(sku: str, store_id: str) -> Dict[str, Any]:
                         "expires":    str(row["date_fin"]),
                     }
                 return {"has_promo": False}
-            finally:
-                await conn.close()
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] check_promotions: %s", e)
         return {"has_promo": False}
@@ -623,15 +612,10 @@ def rank_products(
 def get_realtime_kpis(store_id: str) -> Dict[str, Any]:
     """KPIs temps réel : TX conversion, panier moyen heure courante — dynamique."""
     try:
-        import asyncpg, asyncio, datetime as _dt
+        import asyncio, datetime as _dt
 
         async def _fetch():
-            conn = await asyncpg.connect(
-                host="localhost", port=5432,
-                database="ooredoo_sales", user="postgres", password="root",
-                timeout=3,
-            )
-            try:
+            async with acquire(connect_timeout=3) as conn:
                 hour = _dt.datetime.now().hour
                 row  = await conn.fetchrow("""
                     SELECT
@@ -651,10 +635,8 @@ def get_realtime_kpis(store_id: str) -> Dict[str, Any]:
                     "panier_moy":float(row["panier_moy"] or 0),
                     "ca_heure":  float(row["ca_heure"] or 0),
                 }
-            finally:
-                await conn.close()
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] get_realtime_kpis: %s", e)
         return {"store_id": store_id, "nb_tx": 0, "panier_moy": 0, "ca_heure": 0}

@@ -45,7 +45,13 @@ def _expected_head() -> str | None:
     try:
         from alembic.config import Config
         from alembic.script import ScriptDirectory
-        cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+        # alembic.ini vit à la racine du repo : app/core/ -> app/ -> racine
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cfg = Config(os.path.join(repo_root, "alembic.ini"))
+        # script_location est relatif au cwd dans le .ini : on l'ancre sur le repo
+        cfg.set_main_option(
+            "script_location", os.path.join(repo_root, "db", "migrations")
+        )
         return ScriptDirectory.from_config(cfg).get_current_head()
     except Exception as e:
         logger.warning("[SCHEMA] Impossible de lire le head Alembic : %s", e)

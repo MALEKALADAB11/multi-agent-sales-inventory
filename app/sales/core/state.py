@@ -103,6 +103,12 @@ class SalesAgentState(TypedDict, total=False):
     forecast_ci: Optional[dict]               # {eod_ci_low, eod_ci_high} à 80%
     react_source: Optional[str]               # "openrouter/..."|"ollama/..."|"fallback_static"
 
+    # Analyste TS v4 — moteur déterministe (ts_engine)
+    ts_analysis: Optional[dict]               # sortie complète analyze_store()
+    hourly_gaps: List[dict]                   # heures en retard [{hour, expected, actual, deviation_pct, z_score, status}]
+    next_hours_forecast: List[dict]           # [{hour, expected_ca, share_pct}] h+1..h+3
+    feasibility: Optional[str]                # "ACHIEVED"|"ACHIEVABLE"|"CHALLENGING"|"VERY_HARD"|"CLOSED"
+
 
 AgentState = SalesAgentState
 
@@ -216,4 +222,10 @@ def initial_state(
         overall_z_score=None,
         forecast_ci=None,
         react_source=None,
+
+        # Analyste TS v4
+        ts_analysis=None,
+        hourly_gaps=[],
+        next_hours_forecast=[],
+        feasibility=None,
     )

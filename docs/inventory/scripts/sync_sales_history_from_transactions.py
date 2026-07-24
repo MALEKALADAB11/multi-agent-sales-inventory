@@ -101,19 +101,25 @@ async def main(days: int):
             """, list(dates), list(store_ids))
             print(f"  cleared existing sync-window rows ({deleted})", flush=True)
 
-            # store_name/region/product_name/category/season/etc. are left
-            # NULL on synced rows -- run_sensing_job.py's feature pipeline
-            # (sensing_features.py) only ever reads sku, store_id,
-            # record_date, quantity_sold off sales_history; everything
-            # else it needs (category, promo, events) comes from separate
-            # tables passed in alongside it. If some other consumer of
-            # sales_history later needs those descriptive columns filled
-            # in too, extend this INSERT with joins to inventory.products /
-            # sales.boutiques at that point.
+            # Colonnes de calendrier dérivées de record_date (day_of_week 0=dimanche,
+            # convention EXTRACT(DOW) du reste de la table). Elles ÉTAIENT laissées
+            # NULL : get_seasonal_demand_profile() faisait alors int(NULL) sur le
+            # mois et retombait sur un profil saisonnier vide pour tous les SKU.
+            # Un consommateur en aval les lit donc bel et bien.
+            #
+            # Restent NULL, faute de source ici : store_name/region/product_name/
+            # category (joins descriptifs) et season/event_* (calendrier métier
+            # RAMADAN/SOLDES/… non déductible d'une date).
             await conn.executemany("""
                 INSERT INTO inventory.sales_history
-                    (sku, store_id, record_date, quantity_sold, revenue, unit_price)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                    (sku, store_id, record_date, quantity_sold, revenue, unit_price,
+                     day_of_week, week_of_year, month_num, year_num, is_weekend)
+                VALUES ($1, $2, $3, $4, $5, $6,
+                        EXTRACT(DOW  FROM $3::date)::smallint,
+                        EXTRACT(WEEK FROM $3::date)::smallint,
+                        EXTRACT(MONTH FROM $3::date)::smallint,
+                        EXTRACT(YEAR FROM $3::date)::smallint,
+                        EXTRACT(DOW  FROM $3::date)::int IN (0, 6))
             """, insert_rows)
 
     await repo.close()

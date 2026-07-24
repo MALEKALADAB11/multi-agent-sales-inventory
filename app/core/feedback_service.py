@@ -41,7 +41,7 @@ def _conn():
 def record_feedback(
     *,
     store_id: str,
-    source: str,                 # 'incitation' | 'hitl' | 'po'
+    source: str,                 # 'incitation' | 'hitl' | 'po' | 'reco'
     decision: str,               # 'followed' | 'ignored' | 'approved' | 'rejected'
     ref_id: Optional[str] = None,
     sku: Optional[int] = None,

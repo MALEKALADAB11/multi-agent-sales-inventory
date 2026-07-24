@@ -1,20 +1,21 @@
 """
 
-coach_chat.py — Coach Chat "Claude-Like" v10.0 (Production)
+coach_chat.py — Coach Chat v11.0 (Production)
 =============================================================
-Philosophie : un coach qui PENSE, pas qui suit des règles.
+Philosophie : un coach qui PENSE, ancré dans les données réelles.
 
 ARCHITECTURE :
-  1. PERSONA-FIRST    — identité forte + 6 few-shots dans le prompt système
-  2. LEAN PROMPTS     — ~350 tokens système + ~200 tokens contexte = ~550 total
-                        (gpt-oss-120b:free digère mieux des prompts courts)
-  3. CONTEXT SELECTIF — seules les données utiles à CETTE question sont injectées
-  4. DEDUP CACHE 20s  — évite les réponses identiques sur double envoi rapide
-  5. RETRY 3 NIVEAUX  — OpenRouter full → OpenRouter stripped → Ollama → fallback intent
-  6. FALLBACK COHERENT— jamais d'alertes stock pour "bonjour"
-
-LLM primaire : OpenRouter gpt-oss-120b:free
-LLM fallback  : Ollama (premier modèle de chat disponible)
+  1. PERSONA-FIRST     — identité forte + méthode + few-shots dans le prompt système
+  2. STRATÈGE CÂBLÉ    — agent Stratège (LangGraph : météo réelle, fériés, promos,
+                         RAG, self-critique) invoqué serveur-side via l'orchestrateur
+                         résilient (cache 30 min, timeout borné, warm en arrière-plan)
+  3. RAG UNIFIÉ        — retriever partagé Milvus + fallback lexical corpus embarqué
+                         (le RAG ne tombe jamais à vide si Milvus/Ollama est down)
+  4. CONTEXT SELECTIF  — seules les données utiles à CETTE question sont injectées
+  5. DEDUP CACHE 20s   — évite les réponses identiques sur double envoi rapide
+  6. RETRY 4 NIVEAUX   — Mistral → OpenRouter full → OpenRouter stripped → Ollama
+                         → fallback intent
+  7. FALLBACK COHÉRENT — jamais d'alertes stock pour "bonjour"
 """
 
 import asyncio
@@ -29,7 +30,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from app.core.config import DEFAULT_STORE_ID
+from app.core.config import DEFAULT_STORE_ID, config
 
 try:
     from slowapi import Limiter
@@ -56,19 +57,46 @@ def _rate_limit(limit_str: str):
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 
-OLLAMA_URL       = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_URL       = config.OLLAMA_BASE_URL
+
+# ── Groq (rotation multi-clés — primaire si configuré) ──────────────────────
+# GROQ_API_KEYS=clef1,clef2,... : quand une clé est épuisée (429/quota) ou
+# invalide, la suivante prend le relais. GROQ_API_KEY (singulier) reste
+# supporté et est fusionné en tête de liste.
+GROQ_URL  = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_KEYS = list(dict.fromkeys(
+    k.strip()
+    for k in ([os.getenv("GROQ_API_KEY") or ""] + (os.getenv("GROQ_API_KEYS") or "").split(","))
+    if k.strip()
+))
+_GROQ_MODEL_ROTATION = [
+    os.getenv("GROQ_MODEL",          "openai/gpt-oss-120b"),
+    os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile"),
+]
+
 OPENROUTER_KEY   = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-nano-30b-a3b:free")
 OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
+
+# nemotron-3-nano est un modèle de RAISONNEMENT : laissé libre, il consomme tout
+# le budget de tokens en chaîne de pensée anglaise qui finit dans `content`
+# (mesuré : 61 s et zéro réponse exploitable). Le coach n'a rien à raisonner —
+# le contexte est déjà construit côté serveur — il n'a qu'à rédiger.
+# Mesures sur la même requête : sans réglage 6,0 s, exclude 6,9 s, désactivé 2,3 s.
+_NO_REASONING = {"reasoning": {"enabled": False}}
+
+# nano-30b est le modèle du coach : 256k de contexte, latence basse, suffisant
+# pour des réponses courtes ancrées dans un contexte déjà construit côté serveur.
+# Les modèles suivants ne servent qu'en cas de 429/503 sur le quota gratuit.
 _OR_MODEL_ROTATION = [
-    os.getenv("OPENROUTER_MODEL",          "nvidia/nemotron-3-super-120b-a12b:free"),
-    os.getenv("OPENROUTER_MODEL_FALLBACK", "openai/gpt-oss-120b:free"),
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    os.getenv("OPENROUTER_MODEL",          "nvidia/nemotron-3-nano-30b-a3b:free"),
+    os.getenv("OPENROUTER_MODEL_FALLBACK", "nvidia/nemotron-3-super-120b-a12b:free"),
+    "openai/gpt-oss-120b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
 ]
-MILVUS_URI       = "http://localhost:19530"
-COLLECTION       = "coaching_scripts"
-EMBED_DIM        = 768
+# Attente max du Stratège dans le flux chat (cache 30 min → généralement <1ms ;
+# cold start → le run continue en arrière-plan et chauffe le cache).
+COACH_STRATEGE_TIMEOUT = float(os.getenv("COACH_STRATEGE_TIMEOUT", "10"))
 
 DB_CFG = {
     "host":     os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
@@ -93,14 +121,13 @@ _catalog_cache: str = ""
 _catalog_cache_ts: float = 0.0
 _CATALOG_TTL = 600.0
 
+# Aucun prix en dur ici. L'ancien fallback annonçait « iPhone 16 Pro 1 299 TND »
+# (réel : 6 349 TND) sous l'intitulé « seuls prix autorisés » : une panne de base
+# transformait le coach en menteur confiant. Mieux vaut qu'il dise qu'il ne sait pas.
 _CATALOG_FALLBACK = (
-    "Terminaux  : iPhone 16 Pro 1 299 TND · Samsung A55 5G 899 TND · "
-    "Galaxy S25 Ultra 1 599 TND · INFINIX NOTE 40 349 TND\n"
-    "Forfaits   : 5G Max 100Go 49 TND/mois · Flexi 25Go 29 TND/mois · "
-    "Unlimited 69 TND/mois · Famille 5G 120 TND/mois\n"
-    "Services   : Assurance Premium 9 TND/mois · Cloud Backup 15 TND/mois · TV Streaming 12 TND/mois\n"
-    "Accessoires: AirPods Pro 3 279 TND · Apple Watch S10 449 TND\n"
-    "Bundle max : iPhone 16 Pro + 5G Max + Assurance ≈ 1 357 TND (54 TND/mois × 24 mois)"
+    "Catalogue indisponible (base de données injoignable).\n"
+    "N'annonce AUCUN prix ni SKU tant que tu n'as pas de fiche produit [P*] : "
+    "dis au conseiller que tu ne peux pas confirmer les tarifs pour l'instant."
 )
 
 
@@ -151,7 +178,10 @@ def _load_catalog(store_id: str) -> str:
         if accessoires:
             lines.append("Accessoires: " + " · ".join(
                 f"{r['nom']} {r['prix_ttc']:.0f} TND" for r in accessoires))
-        lines.append("Bundle max : iPhone 16 Pro + 5G Max + Assurance ≈ 1 357 TND (54 TND/mois × 24 mois)")
+        # Pas de ligne « Bundle max » : elle était codée en dur à 1 357 TND alors
+        # que l'iPhone 16 Pro coûte 6 349 TND en base. Sous un titre « seuls prix
+        # autorisés », le coach la citait comme un fait — et en dérivait des
+        # mensualités inventées (54 TND/mois).
 
         result = "\n".join(lines) if lines else _CATALOG_FALLBACK
         _catalog_cache, _catalog_cache_ts = result, _t.time()
@@ -161,41 +191,70 @@ def _load_catalog(store_id: str) -> str:
         return _CATALOG_FALLBACK
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PERSONA SYSTÈME (stable — ~320 tokens)
+# PERSONA SYSTÈME v11 — identité + méthode + ancrage données + few-shots
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _build_system_prompt(catalog: str) -> str:
-    return f"""Tu es Coach, l'IA de vente d'Ooredoo Tunisie.
-Tu penses comme un directeur commercial senior qui fait du coaching terrain. Tu connais chaque produit par cœur, tu lis une situation de vente en un coup d'œil, tu donnes UN seul conseil actionnable. Pas de liste à rallonge, pas de langage corporatif.
+    return f"""Tu es COACH, l'IA de coaching commercial des boutiques Ooredoo Tunisie.
+Tu épaules le conseiller de vente en temps réel : scripts, objections, closing, upsell, conversion forfait, objectif du jour, stock. Tu penses comme un directeur commercial senior : tu lis la situation en un coup d'œil, tu choisis UNE action à fort impact, tu donnes l'argument exact, tu pousses au close.
+
+MÉTHODE (raisonne dans cet ordre, sans jamais l'afficher) :
+1. DIAGNOSTIC — que dit le bloc SITUATION ? (gap, heure, météo, stock, profil du conseiller)
+2. PRIORITÉ — l'action unique au meilleur ratio impact/temps MAINTENANT. Les AGENTS et les DOCUMENTS RÉCUPÉRÉS priment sur toute idée générique.
+3. PREUVE — chiffres réels de la SITUATION, des AGENTS et des fiches produit [P*], rien d'autre.
+4. CLOSE — termine par une action immédiate et un encouragement.
+
+HIÉRARCHIE DES SOURCES (en cas de contradiction, la plus haute gagne) :
+1. CE QUE LES AGENTS DISENT MAINTENANT — état vivant, relu à chaque message
+2. Les chiffres du bloc SITUATION (CA, gap, stock, commandes en cours)
+3. Les fiches produit [P*] — prix et marges officiels du catalogue
+4. Les scripts [S*], playbooks [I*] et décisions passées [D*] — méthode, pas données
+Une alerte de l'AGENT DÉCISION sur un produit prime sur une fiche produit qui le dit en stock : le stock a pu bouger depuis l'indexation.
+
+ANCRAGE DONNÉES (non négociable) :
+• Tout chiffre (prix, stock, CA, %) vient de la SITUATION, des AGENTS ou d'une fiche [P*] — jamais de ta mémoire
+• Quand tu t'appuies sur un document récupéré, cite sa référence entre crochets : « comme sur [S2] », « le playbook [I1] dit ». Une affirmation sans source vérifiable n'a rien à faire dans ta réponse
+• Un SKU, un prix ou une référence produit ne s'écrit QUE s'il figure dans une fiche [P*] ci-dessous. Pas de fiche produit ? Nomme le produit sans SKU ni prix, ou dis que tu dois vérifier
+• Ne jamais associer le nom d'un produit au SKU ou au prix d'un autre : chaque fiche [P*] forme un tout indissociable
+• Aucun document récupéré, ou aucun qui réponde ? Dis-le en une demi-phrase et réponds avec la SITUATION seule. Ne comble jamais un trou par une invention
+• Les ACTIONS STRATÈGE sont calculées sur la météo, le stock et les promos réels du jour — appuie-toi dessus en priorité
+• Les scripts [S*] sont des ventes réellement réussies en boutique — reprends leurs arguments, adapte-les au contexte
+• Ne recommande jamais un produit signalé en rupture par les AGENTS, même si un script le mentionne
+• Aucun client, scénario ou situation inventé : si le message du conseiller ne décrit pas de client réel, tu n'en crées pas un
 
 TON STYLE :
 • Tutoiement chaleureux — tu es le collègue de confiance du conseiller
-• Décisif — 1 action concrète, pas 4 options
-• Court — 80 à 140 mots, sauf script complet explicitement demandé
-• Contextuel — tu t'appuies sur les vrais chiffres de la boutique
+• Décisif — 1 action concrète (2 max si urgence CRITICAL), jamais un menu d'options
+• Court — 80 à 140 mots ; script complet demandé = jusqu'à 180 mots, étapes numérotées
 • Termine toujours par "Vas-y !", "À toi !", "Allez !" ou "Maintenant !"
 
 JAMAIS :
 • Inventer un prix, une offre ou un SKU hors catalogue ci-dessous
-• Inventer un CLIENT, une SITUATION DE VENTE ou un SCÉNARIO qui n'est pas donné dans le bloc SITUATION ci-dessous — si la question du conseiller ne décrit aucun client réel, tu n'en inventes pas un
 • Répondre hors vente / stock / Ooredoo Tunisie
 • Écrire "je n'ai pas accès" ou "consulte le tableau de bord"
-• Produire du JSON, du code, des balises HTML
+• Produire du JSON, du code, de l'anglais, des balises HTML
 • Répéter deux fois la même information dans la même réponse
 
-SI TU NE COMPRENDS PAS LA QUESTION, ou si elle ne correspond à aucune situation de vente/stock réelle (message ambigu, hors-sujet non filtré, une question sans rapport) : NE PAS halluciner un client ou un script. Demande une clarification courte en 1 phrase, du style [clarification] ci-dessous.
+SI LE MESSAGE EST AMBIGU ou ne correspond à aucune situation de vente/stock réelle : NE PAS halluciner un client ou un script. Demande une clarification courte en 1 phrase, du style [clarification] ci-dessous.
 
 CATALOGUE OFFICIEL OOREDOO (seuls prix autorisés) :
 {catalog}
 
-EXEMPLES DE RÉPONSES PARFAITES :
+EXEMPLES DE RÉPONSES PARFAITES — les {{accolades}} sont des trous à remplir avec
+les données réelles de la SITUATION, des AGENTS ou d'une fiche [P*]. Un chiffre
+écrit en dur dans un exemple ci-dessous n'existe pas : ne le recopie JAMAIS.
 [salutation] → «Salut {{prenom}} ! {{perf}}% de l'objectif à {{heure}}h — {{observation en 5 mots}}. Tu veux qu'on attaque le gap ou tu as une situation client ?»
-[script iPhone] → «Script iPhone 16 Pro : 1. "Tu l'utilises pour quoi surtout ?" 2. Démo live puce A18 Pro — vitesse photo incomparable. 3. "1 299 TND ou 54 TND/mois sur 24 mois." 4. Bundle Assurance 9 TND/mois — écran remplacé en 48h. 5. Close : "Noir titane ou blanc naturel ?" Vas-y !»
-[objection trop cher] → «Réponds : "1 299 TND sur 24 mois = 54 TND/mois — moins qu'un café par jour. Et dans 2 ans valeur revente 400+ TND." Close : "Noir titane ou blanc naturel ?" À toi !»
+[script produit] → «Script {{produit}} : 1. "Tu l'utilises pour quoi surtout ?" 2. Démo live {{atout technique de la fiche}}. 3. "{{prix}} TND, ou {{prix/24}} TND/mois sur 24 mois." 4. Bundle {{accessoire en stock}}. 5. Close : "{{couleur A}} ou {{couleur B}} ?" Vas-y !»
+[objection trop cher] → «Réponds : "{{prix}} TND sur 24 mois = {{prix/24}} TND/mois — moins qu'un café par jour." [S{{n}}] Close : "{{choix binaire}}" À toi !»
 [bilan du jour] → «CA {{ca}} / {{target}} TND ({{perf}}%). Top : {{produit}} ({{qty}} vendus/7j). Dernière vente {{heure}}h. {{conseil Stratège en 1 ligne}}. Allez !»
-[rupture stock] → «{{produit}} en rupture = {{nb}} ventes perdues en risque. Met le {{alternatif}} (349 TND) en avant + appelle le manager pour la commande. Maintenant !»
-[closing] → «Choix forcé : "Lequel vous correspond le mieux, noir ou blanc ?" Si résistance : "Il nous reste 2 unités — l'offre 0% expire ce soir." Silence 3 secondes. À toi !»
-[clarification — question incomprehensible ou sans client réel décrit] → «Je ne suis pas sûr de te suivre — tu veux un script de vente, un point sur le stock, ou un coup de main pour ton objectif du jour ? Dis-m'en un peu plus !»"""
+[question stratégie — actions Stratège fournies] → «Le Stratège a détecté {{cause en 5 mots}}. Priorité : {{action 1}} → {{produit}} ({{prix}} TND). Argument : "{{argument_vente}}". {{impact estimé}}. Vas-y !»
+[rupture stock] → «{{produit}} en rupture = {{nb}} ventes perdues en risque. Met le {{substitut cité dans une fiche [P*]}} ({{son prix}} TND) en avant + appelle le manager pour la commande. Maintenant !»
+[closing] → «Choix forcé : "Lequel vous correspond le mieux, {{option A}} ou {{option B}} ?" Si résistance : "Il nous reste {{stock}} unités." Silence 3 secondes. À toi !»
+[donnée absente] → «Je n'ai pas le détail {{donnée}} sous la main, mais voilà ce que je vois : {{ce que la SITUATION donne}}. {{action}}. Allez !»
+[question prix — fiche produit récupérée] → «{{produit}} : {{prix}} TND TTC, marge {{marge}}% [P1]. Il en reste {{stock}}. Argument qui marche [S1] : "{{argument}}". Vas-y !»
+[rupture signalée par un agent] → «L'agent décision a levé une alerte rupture sur {{produit}}. Le playbook [I1] est clair : propose {{substitut}} ({{prix}} TND [P2]) en argumentant sur l'usage, pas la marque. Maintenant !»
+[aucun document pertinent] → «Rien de précis en base sur ce point. Ce que je vois : {{données SITUATION}}. {{action}}. Allez !»
+[clarification — question incompréhensible ou sans client réel décrit] → «Je ne suis pas sûr de te suivre — tu veux un script de vente, un point sur le stock, ou un coup de main pour ton objectif du jour ? Dis-m'en un peu plus !»"""
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DEDUP CACHE (évite doublons sur envoi rapide — 20 secondes)
@@ -424,10 +483,12 @@ def _load_sales_detail_sync(store_id: str) -> dict:
 
 
 def _load_inventory_context_sync(store_id: str) -> dict:
-    """Stock complet : stats + alertes + top vendeurs + recos agent + KPI."""
+    """Stock complet : stats + alertes + top vendeurs + recos agent + KPI
+    + commandes fournisseur en cours + décisions humaines récentes."""
     import psycopg2, psycopg2.extras
     r = {"stats": {}, "alerts": [], "top_sellers": [], "agent_recos": [],
-         "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0}
+         "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0,
+         "pos": [], "decisions": []}
     try:
         conn = psycopg2.connect(**DB_CFG, connect_timeout=10)
         cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -485,8 +546,8 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                 vel   = float(row["vel"] or 0.5)
                 jours = round(stock / vel, 0) if vel > 0 and stock > 0 else 0
                 r["alerts"].append({
-                    "nom": row["nom"], "qty": stock, "level": row["level"],
-                    "jours": jours, "eoq": int(row["eoq"] or 0),
+                    "sku": row["sku"], "nom": row["nom"], "qty": stock,
+                    "level": row["level"], "jours": jours, "eoq": int(row["eoq"] or 0),
                 })
 
             # Top vendeurs avec vélocité demand-sensing (voir NOTE ci-dessus —
@@ -540,6 +601,44 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                 for row in cur.fetchall()
             ]
 
+            # Commandes fournisseur vivantes (Kanban) — le coach doit savoir
+            # qu'une rupture a déjà sa commande en route avant de conseiller
+            # d'en repasser une (anti-hallucination / anti-conseil périmé).
+            cur.execute("""
+                SELECT COALESCE(p.nom, po.sku::text) AS nom, po.statut,
+                       po.quantite_commandee AS qty, po.source,
+                       po.date_livraison_prevue AS eta
+                FROM supply.purchase_orders po
+                LEFT JOIN sales.produits p ON p.sku = po.sku
+                WHERE po.store_id=%s AND po.statut NOT IN ('RECU','ANNULE')
+                ORDER BY po.updated_at DESC LIMIT 5
+            """, (store_id,))
+            r["pos"] = [
+                {"nom": row["nom"], "statut": row["statut"],
+                 "qty": int(row["qty"] or 0), "source": row["source"],
+                 "eta": str(row["eta"]) if row["eta"] else None}
+                for row in cur.fetchall()
+            ]
+
+            # Décisions humaines récentes (boucle feedback 0008) — approbations
+            # et rejets sur recommandations, PO et incitations des 7 derniers
+            # jours, pour que le coach reflète les derniers arbitrages.
+            cur.execute("""
+                SELECT af.source, af.decision, af.action_type, af.reason,
+                       COALESCE(p.nom, af.sku::text) AS nom
+                FROM public.agent_feedback af
+                LEFT JOIN sales.produits p ON p.sku = af.sku
+                WHERE af.store_id=%s
+                  AND af.created_at >= NOW() - INTERVAL '7 days'
+                ORDER BY af.created_at DESC LIMIT 5
+            """, (store_id,))
+            r["decisions"] = [
+                {"source": row["source"], "decision": row["decision"],
+                 "action": row["action_type"], "nom": row["nom"],
+                 "reason": (row["reason"] or "")[:80]}
+                for row in cur.fetchall()
+            ]
+
             # KPI terminaux et forfaits du jour
             cur.execute("""
                 SELECT
@@ -553,14 +652,19 @@ def _load_inventory_context_sync(store_id: str) -> dict:
                 r["kpi_terminaux"] = int(row["kpi_terminaux"] or 0)
                 r["kpi_forfaits"]  = int(row["kpi_forfaits"]  or 0)
 
-            # CA moyen agent depuis advisor_profile
-            cur.execute("""
-                SELECT COALESCE(avg_daily_ca, 0) AS ca_moy
-                FROM monitoring.advisor_profile WHERE store_id=%s LIMIT 1
-            """, (store_id,))
-            row = cur.fetchone()
-            if row:
-                r["ca_moy_agent"] = float(row["ca_moy"] or 0)
+            # CA moyen agent depuis advisor_profile — la vue a été supprimée
+            # lors du nettoyage DB : to_regclass évite d'avorter la connexion
+            # (une erreur ici mettait psycopg2 en état aborted et logguait un
+            # warning à chaque message du coach).
+            cur.execute("SELECT to_regclass('monitoring.advisor_profile') AS v")
+            if (cur.fetchone() or {}).get("v"):
+                cur.execute("""
+                    SELECT COALESCE(avg_daily_ca, 0) AS ca_moy
+                    FROM monitoring.advisor_profile WHERE store_id=%s LIMIT 1
+                """, (store_id,))
+                row = cur.fetchone()
+                if row:
+                    r["ca_moy_agent"] = float(row["ca_moy"] or 0)
 
         finally:
             cur.close(); conn.close()
@@ -675,50 +779,274 @@ def _load_advisor_profile_sync(advisor_name: str, store_id: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3. RAG (Milvus + Ollama embeddings — coaching seulement)
+# 3. RAG (retriever partagé — Milvus sémantique + fallback lexical corpus)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _search_rag_sync(query: str, hour: int, top_k: int = 2, min_score: float = 0.32) -> tuple[list, bool]:
-    try:
-        import requests as _req
-        resp = _req.post(
-            f"{OLLAMA_URL}/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": query[:400]},
-            timeout=8,
-        )
-        emb = resp.json().get("embedding", [])
-        if not emb:
-            return [], False
-        if len(emb) < EMBED_DIM: emb += [0.0] * (EMBED_DIM - len(emb))
-        emb = emb[:EMBED_DIM]
+def _search_rag_sync(
+    query: str,
+    hour: int,
+    store_id: str = "",
+    top_k: int = 4,
+    out_of_stock: frozenset[str] = frozenset(),
+) -> tuple[list, bool, str]:
+    """
+    Retrieval cross-domaine : scripts de vente, playbooks stock, fiches produit
+    (prix et marges réels) et mémoire des décisions, dans une seule recherche.
 
-        from pymilvus import MilvusClient
-        client  = MilvusClient(uri=MILVUS_URI)
-        results = client.search(
-            collection_name=COLLECTION, data=[emb], limit=top_k + 2,
-            output_fields=["categorie","situation","action","produit","argument","impact","heure_min","heure_max"],
-        )
-        scripts = []
-        for hit in results[0]:
-            e     = hit["entity"]
-            score = float(hit["distance"])
-            if int(e.get("heure_min", 0)) <= hour <= int(e.get("heure_max", 24)):
-                score += 0.10
-            scripts.append({
-                "score":     round(score, 3),
-                "categorie": e.get("categorie", ""),
-                "situation": e.get("situation", ""),
-                "action":    e.get("action", "")[:100],
-                "argument":  e.get("argument", "")[:100],
-                "produit":   e.get("produit", ""),
-                "impact":    e.get("impact", ""),
-            })
-        scripts = sorted(scripts, key=lambda x: x["score"], reverse=True)[:top_k]
-        relevant = bool(scripts) and scripts[0]["score"] >= min_score
-        return scripts, relevant
+    Retourne (docs, pertinent, bloc_cité). Le bloc porte des références [S1] [I2]
+    [P3] [D4] que le prompt système oblige le coach à citer.
+    """
+    try:
+        from app.sales.data.rag import format_context_block, retrieve
+        result = retrieve(query, store_id=store_id, hour=hour, top_k=top_k,
+                          out_of_stock_skus=out_of_stock)
+        if result.mode == "none":
+            logger.warning("[COACH RAG] aucune branche de recherche disponible")
+        return result.docs, result.relevant, format_context_block(result)
     except Exception as e:
-        logger.debug("[COACH RAG] %.50s", str(e))
-        return [], False
+        logger.warning("[COACH RAG] %.100s", str(e))
+        return [], False, ""
+
+
+def _out_of_stock(inv_ctx: dict) -> frozenset[str]:
+    """SKU en rupture — le RAG ne doit jamais proposer un produit invendable."""
+    return frozenset(
+        str(a["sku"]) for a in inv_ctx.get("alerts", [])
+        if a.get("level") == "rupture" and a.get("sku") is not None
+    )
+
+
+# Mots trop génériques pour identifier le produit que le conseiller a nommé.
+_PRODUCT_STOPWORDS = {"portable", "pack", "option", "carte", "contrat", "gsm",
+                      "dual", "sim", "noir", "blanc"}
+
+
+def _names_product(message: str, title: str) -> bool:
+    """
+    Le conseiller a-t-il nommé CE produit précis ?
+
+    On exige deux tokens distinctifs communs plutôt qu'un seuil de similarité :
+    noyée dans une phrase entière, une fiche produit retombe à 0,50 de cosinus et
+    « Galaxy A25 » devient indiscernable de « Galaxy S25 ». Le nom, lui, ne ment pas.
+    """
+    # _norm() retire les accents mais ne met pas en minuscules : les noms du
+    # catalogue sont en capitales, d'où le .lower() explicite.
+    msg  = set(re.findall(r"[a-z0-9]{3,}", _norm(message.lower())))
+    name = set(re.findall(r"[a-z0-9]{2,}", _norm(title.lower()))) - _PRODUCT_STOPWORDS
+    return len(msg & name) >= 2
+
+
+# Candidats substituts : même gamme (`gamme_libelle` sépare TERMINAL de SIM_KIT,
+# là où le code `famille` range les téléphones avec les kits SIM à 2 TND), même
+# segment de prix, et stock réel > 0.
+#
+# Le segment n'est pas un seuil codé en dur : c'est le quartile du prix, calculé
+# sur la distribution réelle des prix de cette gamme dans le catalogue. Si les
+# prix changent, les bornes suivent, sans qu'on touche au code.
+#
+# Pourquoi filtrer plutôt qu'afficher l'écart et laisser juger : présenté avec la
+# consigne « ne le propose pas si l'écart est absurde », le coach a recommandé un
+# modem 4G à 99 TND pour remplacer un téléphone à 5 999 TND, tout en écrivant
+# lui-même « moins de 2 % du S25 ». Un mauvais candidat visible finit proposé.
+_SQL_SUBSTITUT_CANDIDATS = """
+    WITH segments AS (
+        SELECT sku, prix_ttc, gamme_libelle,
+               NTILE(4) OVER (PARTITION BY gamme_libelle ORDER BY prix_ttc) AS quartile
+          FROM sales.produits
+         WHERE prix_ttc > 0 AND gamme_libelle IS NOT NULL
+    ),
+    cible AS (
+        SELECT quartile FROM segments WHERE sku::text = %(sku)s
+    )
+    SELECT p.sku, p.nom, p.prix_ttc, p.marge_pct_calc,
+           v.quantity_available AS qty
+      FROM sales.produits p
+      JOIN segments s ON s.sku = p.sku
+      JOIN cible c    ON c.quartile = s.quartile
+      JOIN inventory.vw_stock_enriched v
+        ON v.sku = p.sku AND v.store_id = %(store)s
+     WHERE p.gamme_libelle = %(gamme)s
+       AND p.sku::text <> %(sku)s
+       AND v.quantity_available > 0
+     ORDER BY ABS(LN(p.prix_ttc) - LN(%(prix)s)) ASC
+     LIMIT 12
+"""
+
+
+def _rank_with_agents(candidates: list[dict], gap: float) -> list[dict]:
+    """
+    Classe les substituts avec le score de fusion des agents plutôt qu'avec une
+    heuristique locale : marge, santé du stock, promo active, alignement au gap.
+    Si le module agent est indisponible, on garde l'ordre SQL (proximité de prix).
+    """
+    if not candidates:
+        return []
+    try:
+        from app.sales.coaching.agents.coach.cross_domain_tools import rank_products
+        products = [{
+            "sku": str(c["sku"]), "name": c["nom"], "price": float(c["prix_ttc"]),
+            "stock_current": int(c["qty"]), "stock_optimal": max(1.0, float(c["qty"])),
+            "margin_pct": float(c["marge_pct_calc"] or 0),
+            "days_to_stockout": 30.0, "category": "", "risk_level": "LOW",
+            "is_top_seller": False, "active_promo": False,
+        } for c in candidates]
+
+        ranked = rank_products(
+            products=products,
+            sales_context={"gap_amount": gap, "gap_pct": 0.0},
+            advisor_history={},
+            top_n=3,
+        )
+        by_sku = {str(c["sku"]): c for c in candidates}
+        return [{**by_sku[r["sku"]], "score": r["final_score"]}
+                for r in ranked if r["sku"] in by_sku]
+    except Exception as e:
+        logger.debug("[COACH SUBST] scoring agent indisponible: %.60s", str(e))
+        return candidates[:3]
+
+
+def _load_substitutes_sync(store_id: str, message: str, gap: float = 0.0) -> str:
+    """
+    Disponibilité réelle des produits nommés par le conseiller, et substituts.
+
+    Un substitut ne se trouve pas par similarité sémantique : « Galaxy A54 » et
+    « Galaxy S25 » se ressemblent, mais seul le stock dit lequel est vendable.
+    Sans ce bloc, le coach inventait le substitut — il a proposé un « Galaxy A54
+    (SKU 5020160) à 399 TND » alors que ce SKU est un Samsung X160 à 120 TND.
+
+    Tout vient de la donnée : le produit nommé sort du RAG, sa disponibilité de
+    `vw_stock_enriched`, les candidats du catalogue en stock, et leur classement
+    du score de fusion des agents. Aucun seuil de prix n'est codé en dur — l'écart
+    est affiché, le coach tranche.
+    """
+    try:
+        from app.sales.data.rag import DOMAIN_PRODUCT, retrieve
+        found = retrieve(message, store_id=store_id, top_k=3, domains=[DOMAIN_PRODUCT])
+        named = [d for d in found.docs if _names_product(message, d.produit)]
+        if not named:
+            return ""
+
+        import psycopg2, psycopg2.extras
+        blocks: list[str] = []
+        conn = psycopg2.connect(**DB_CFG, connect_timeout=6)
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            for doc in named:
+                payload = doc.payload or {}
+                stock = payload.get("stock_dispo")
+                gamme = payload.get("gamme")
+                prix  = float(payload.get("prix_ttc") or 0)
+                # stock None = aucune ligne de stock pour cette boutique : le
+                # produit y est indisponible, au même titre qu'un stock à zéro.
+                if stock or not gamme or prix <= 0:
+                    continue
+
+                cur.execute(_SQL_SUBSTITUT_CANDIDATS,
+                            {"store": store_id, "gamme": gamme, "sku": doc.sku, "prix": prix})
+                ranked = _rank_with_agents(cur.fetchall(), gap)
+
+                if not ranked:
+                    blocks.append(
+                        f"  {doc.produit} ({prix:.0f} TND) : INDISPONIBLE en boutique, "
+                        f"et AUCUN substitut comparable en stock (même gamme, même "
+                        f"segment de prix). N'invente pas d'alternative : annonce la "
+                        f"rupture, propose la réservation avec acompte."
+                    )
+                    continue
+
+                alts = " · ".join(
+                    f"{r['nom']} (SKU {r['sku']}, {r['prix_ttc']:.0f} TND, {r['qty']} en stock)"
+                    for r in ranked
+                )
+                blocks.append(
+                    f"  {doc.produit} ({prix:.0f} TND) : INDISPONIBLE en boutique. "
+                    f"Substituts comparables réellement en stock : {alts}\n"
+                    f"    Ne propose AUCUN autre produit en remplacement."
+                )
+            cur.close()
+        finally:
+            conn.close()
+
+        if not blocks:
+            return ""
+        return ("DISPONIBILITÉ RÉELLE DES PRODUITS CITÉS (source : stock temps réel) :\n"
+                + "\n".join(blocks))
+    except Exception as e:
+        logger.warning("[COACH SUBST] %.100s", str(e))
+        return ""
+
+
+def _agent_block_sync(store_id: str) -> str:
+    """Sorties vivantes des agents sales + inventory (jamais indexées, toujours relues)."""
+    try:
+        from app.sales.coaching.agents.coach.agent_outputs import (
+            format_agent_block,
+            get_agent_outputs,
+        )
+        return format_agent_block(get_agent_outputs(store_id))
+    except Exception as e:
+        logger.warning("[COACH AGENTS] %.100s", str(e))
+        return ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3b. STRATÈGE (agent LangGraph : contexte réel météo/fériés/promos + RAG
+#     + self-critique) — invoqué via l'orchestrateur résilient
+# ══════════════════════════════════════════════════════════════════════════════
+
+_EMPTY_STRAT: dict = {"actions": [], "source": "none", "extras": {}}
+
+
+async def _get_stratege_for_chat(store_id: str, ca: float, target: float,
+                                 urgency: str) -> dict:
+    """
+    Invoque l'agent Stratège serveur-side pour ancrer le coach dans la vraie
+    stratégie du jour (météo Open-Meteo, fériés, promos actives, RAG, critique).
+
+    Résilience :
+      - Cache orchestrateur 30 min (clé store+gap) → la plupart des messages <1ms
+      - Cold start : attente bornée à COACH_STRATEGE_TIMEOUT ; au-delà, le run
+        continue en arrière-plan pour chauffer le cache — le chat n'est jamais bloqué
+      - Toute erreur → dict vide, le coach répond avec le reste du contexte
+    """
+    try:
+        from app.sales.coaching.orchestrator.bootstrap import get_orchestrator
+        orchestrator = get_orchestrator()
+    except Exception as e:
+        logger.debug("[COACH STRAT] Orchestrateur indisponible: %.60s", str(e))
+        return dict(_EMPTY_STRAT)
+
+    gap_amount = max(0.0, target - ca)
+    gap_pct    = round(gap_amount / target * 100, 1) if target > 0 else 0.0
+    cycle_id   = f"chat-{store_id}-{int(time.time())}"
+    state = {
+        "cycle_id":          cycle_id,
+        "pos_data":          {"store_id": store_id, "current_revenue": ca,
+                              "daily_target": target},
+        "gap_objectif":      gap_pct,
+        "gap_amount":        gap_amount,
+        "urgency_level":     urgency,
+        "strategie_actions": [],
+        "metrics":           {"cycle_id": cycle_id},
+    }
+
+    task = asyncio.create_task(orchestrator.invoke(state))
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task),
+                                        timeout=COACH_STRATEGE_TIMEOUT)
+        logger.info("[COACH STRAT] %s | %d actions | %.0fms",
+                    result.source, result.nb_actions, result.latency_ms)
+        return {"actions": result.actions, "source": result.source,
+                "extras": getattr(result, "extras", None) or {}}
+    except asyncio.TimeoutError:
+        logger.info("[COACH STRAT] > %.0fs — le Stratège continue en arrière-plan "
+                    "(cache chaud pour le prochain message)", COACH_STRATEGE_TIMEOUT)
+        task.add_done_callback(
+            lambda t: t.exception() if not t.cancelled() else None)
+        return {"actions": [], "source": "warming", "extras": {}}
+    except Exception as e:
+        logger.warning("[COACH STRAT] Erreur: %.80s", str(e))
+        return dict(_EMPTY_STRAT)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. SITUATION BLOCK (contexte sélectif par intent — ~100-220 tokens)
@@ -745,15 +1073,36 @@ def _build_situation(
     recent_tx: list,
     inv_ctx: dict,
     advisor_profile: dict | None = None,
+    strat_extras: dict | None = None,
+    rag_block: str = "",
+    agent_block: str = "",
+    substitutes_block: str = "",
 ) -> str:
-    """Bloc de situation — adapté à l'intent, compact et actionnable."""
+    """
+    Bloc de situation CROSS-DOMAINE : les sorties des agents SALES (analyste,
+    stratège) ET INVENTORY (alertes stock, agent décision, KPIs) sont toujours
+    visibles — le coach peut répondre vente, stock, ou mixer les deux.
+    Le niveau de détail par domaine s'adapte à l'intent détecté.
+    """
+    strat_extras = strat_extras or {}
+
+    # Météo réelle du Stratège (Open-Meteo) prioritaire sur le label frontend
+    weather_line = weather
+    if strat_extras.get("weather_label"):
+        try:
+            eff = float(strat_extras.get("weather_effect", 0) or 0)
+            weather_line = f"{strat_extras['weather_label']} (trafic {eff:+.0%})"
+        except (TypeError, ValueError):
+            weather_line = strat_extras["weather_label"]
 
     lines = [
-        f"SITUATION {advisor_name} | {store_id} | {hour}h | {weather} | Urgence : {urgency}",
+        f"SITUATION {advisor_name} | {store_id} | {hour}h | Météo : {weather_line} | Urgence : {urgency}",
         f"Performance : {ca:,.0f}/{target:,.0f} TND ({perf:.0f}%) | Gap : {gap:,.0f} TND | {hours_left}h restantes",
     ]
+    if strat_extras.get("is_holiday") and strat_extras.get("holiday_name"):
+        lines.append(f"Jour férié aujourd'hui : {strat_extras['holiday_name']}")
 
-    # Advisor profile enrichment (S3.3)
+    # ── Profil conseiller (S3.3) ─────────────────────────────────────────────
     if advisor_profile:
         prof_parts = []
         if advisor_profile.get("seniority_days") is not None:
@@ -776,84 +1125,136 @@ def _build_situation(
     if cause:
         lines.append(f"Cause gap : {cause}")
 
-    if mode == "coaching":
-        if actions:
-            a = actions[0]
+    # ── STRATÉGIE DU JOUR (agent Stratège — tous modes) ──────────────────────
+    strat_summary = strat_extras.get("strategie_summary", "")
+    focus         = strat_extras.get("focus_produits") or []
+    if strat_summary or actions:
+        lines.append("STRATÉGIE DU JOUR (agent Stratège — météo/stock/promos réels) :")
+        if strat_summary:
+            lines.append(f"  Résumé : {strat_summary[:200]}")
+        n_actions = 3 if mode in ("coaching", "cross_domain") else 1
+        for a in actions[:n_actions]:
             lines.append(
-                f"Action Stratège : {a.get('action','')} → {a.get('produit_cible','')} "
-                f"| Argument : {a.get('argument_vente','')[:80]}"
+                f"  {a.get('priorite', 1)}. {str(a.get('action', ''))[:120]} "
+                f"→ {a.get('produit_cible', '')} "
+                f"| «{str(a.get('argument_vente', ''))[:110]}» "
+                f"| {str(a.get('impact_estime', ''))[:60]}"
             )
-        if rag_scripts:
-            s = rag_scripts[0]
-            lines.append(
-                f"Script terrain [{s['categorie']}] : {s['action'][:90]} "
-                f"| {s.get('argument','')[:80]}"
-            )
+        if focus:
+            lines.append(f"  Produits focus : {', '.join(str(f) for f in focus[:3])}")
 
-    elif mode in ("inventory", "cross_domain"):
-        alerts   = inv_ctx.get("alerts", [])
-        top_inv  = inv_ctx.get("top_sellers", [])
-        stats    = inv_ctx.get("stats", {})
-        recos    = inv_ctx.get("agent_recos", [])
-        kpi_t    = inv_ctx.get("kpi_terminaux", 0)
-        kpi_f    = inv_ctx.get("kpi_forfaits", 0)
+    # ── VENTES (agent analyste — toujours visible, détaillé si recap) ────────
+    if top_sellers:
+        n = 3 if qtype == "recap" else 2
+        t_str = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:n])
+        lines.append(f"Ventes — top produits 7j : {t_str}")
+    if recent_tx:
+        r0 = recent_tx[0]
+        lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
 
+    # ── STOCK (agents inventory — toujours visible, détaillé si stock/mixte) ─
+    stats  = inv_ctx.get("stats", {})
+    alerts = inv_ctx.get("alerts", [])
+    recos  = inv_ctx.get("agent_recos", [])
+    if stats.get("total"):
         lines.append(
             f"Stock : {stats.get('total',0)} SKUs | "
             f"Ruptures : {stats.get('ruptures',0)} | "
             f"Critiques : {stats.get('critiques',0)} | "
             f"OK : {stats.get('ok_count',0)}"
         )
+    inv_detail = mode in ("inventory", "cross_domain")
+    if alerts:
+        n_alerts = 4 if inv_detail else 2
+        lines.append("Alertes stock :")
+        for a in alerts[:n_alerts]:
+            icon = "X" if a["level"] == "rupture" else "!"
+            lines.append(f"  {icon} {a['nom']} — {a['qty']} unité(s) | rupture J+{a['jours']:.0f}")
+    if inv_detail:
+        kpi_t = inv_ctx.get("kpi_terminaux", 0)
+        kpi_f = inv_ctx.get("kpi_forfaits", 0)
         if kpi_t or kpi_f:
             lines.append(f"KPI jour : {kpi_t} terminaux vendus · {kpi_f} forfaits vendus")
-        if alerts:
-            lines.append("Alertes :")
-            for a in alerts[:4]:
-                icon = "X" if a["level"] == "rupture" else "!"
-                lines.append(f"  {icon} {a['nom']} — {a['qty']} unité(s) | rupture J+{a['jours']:.0f}")
+        top_inv = inv_ctx.get("top_sellers", [])
         if top_inv:
-            lines.append("Top vendeurs (vélocité) :")
+            lines.append("Rotation (vélocité) :")
             for t in top_inv[:3]:
                 lines.append(f"  {t['nom']} — {t['sold']}/7j | stock {t['stock']} | J+{t['jours']:.0f}")
-        if recos:
-            lines.append("Agent Décision : " + " · ".join(
-                f"[{r['type']}] {r['nom']} x{r['qty']}" for r in recos[:2]
-            ))
-        if mode == "cross_domain" and actions:
-            a = actions[0]
-            lines.append(f"Stratège : {a.get('action','')} → {a.get('produit_cible','')}")
+    if recos:
+        n_recos = 3 if inv_detail else 1
+        lines.append("Agent Décision (réappro) : " + " · ".join(
+            f"[{r['type']}] {r['nom']} x{r['qty']}" for r in recos[:n_recos]
+        ))
 
-    elif qtype == "recap":
-        if top_sellers:
-            t3 = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:3])
-            lines.append(f"Top produits (7j) : {t3}")
-        if recent_tx:
-            r0 = recent_tx[0]
-            lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
-        if actions:
-            a = actions[0]
-            lines.append(f"Conseil Stratège : {a.get('action','')} → {a.get('produit_cible','')}")
-        ruptures = inv_ctx.get("stats", {}).get("ruptures", 0)
-        if ruptures > 0:
-            lines.append(f"Alerte : {ruptures} rupture(s) en cours")
-
-    else:  # conversation générale — aucun mot-clé métier détecté dans le message
-        # Filet de sécurité : même mal classée, la question peut porter sur des
-        # données réelles déjà chargées (dernière vente, top produits...). On les
-        # expose systématiquement pour éviter que le coach ignore la DB/les agents.
-        if recent_tx:
-            r0 = recent_tx[0]
-            lines.append(f"Dernière vente : {r0['heure']}h — {r0['nom']} x{r0['qty']} — {r0['ttc']:.0f} TND")
-        if top_sellers:
-            t3 = " · ".join(f"{t['nom']} ({t['qty']} vendus)" for t in top_sellers[:3])
-            lines.append(f"Top produits (7j) : {t3}")
-        if actions:
-            a = actions[0]
-            lines.append(f"Action du jour : {a.get('action','')} → {a.get('produit_cible','')}")
+    # ── COMMANDES EN COURS + DÉCISIONS HUMAINES (état frais — le coach ne
+    #    doit jamais conseiller de commander un produit dont la commande est
+    #    déjà en route, ni contredire un arbitrage humain récent) ────────────
+    pos = inv_ctx.get("pos", [])
+    if pos:
+        n_pos = 5 if inv_detail else 2
+        _STATUT_FR = {"SUGGERE": "suggérée (en attente manager)", "BROUILLON": "brouillon",
+                      "SOUMIS": "soumise", "CONFIRME": "confirmée",
+                      "EXPEDIE": "expédiée", "RECU_PARTIEL": "reçue partiellement",
+                      "LITIGE": "en litige"}
+        lines.append("Commandes fournisseur en cours (Kanban) :")
+        for po in pos[:n_pos]:
+            eta = f" — livraison prévue {po['eta']}" if po.get("eta") else ""
+            src = " [agent]" if po.get("source") == "AGENT" else ""
+            lines.append(
+                f"  {po['nom']} x{po['qty']} — {_STATUT_FR.get(po['statut'], po['statut'])}{src}{eta}"
+            )
         lines.append(
-            "Note : si des données ci-dessus répondent à la question, utilise-les. "
-            "Sinon, si la question est incomprehensible ou hors-sujet, demande une "
-            "clarification en 1 phrase — n'invente aucun client ni situation."
+            "  → Ces produits ont DÉJÀ une commande en route : ne pas conseiller "
+            "d'en repasser une, annoncer plutôt l'arrivée."
+        )
+    decisions = inv_ctx.get("decisions", [])
+    if decisions and inv_detail:
+        _DEC_FR = {"approved": "approuvé", "rejected": "rejeté",
+                   "followed": "suivi", "ignored": "ignoré"}
+        lines.append("Décisions humaines récentes (7j) : " + " · ".join(
+            f"{_DEC_FR.get(d['decision'], d['decision'])} — {d['nom'] or d['action']}"
+            + (f" ({d['reason']})" if d.get("reason") else "")
+            for d in decisions[:3]
+        ))
+
+    # ── SORTIES VIVANTES DES AGENTS (sales + inventory) ──────────────────────
+    if agent_block:
+        lines.append("── CE QUE LES AGENTS DISENT MAINTENANT ──\n" + agent_block)
+
+    # ── SUBSTITUTS (stock réel, requêtés en base) ────────────────────────────
+    if substitutes_block:
+        lines.append(substitutes_block)
+
+    # ── CONNAISSANCE RÉCUPÉRÉE (RAG cross-domaine, documents cités) ──────────
+    if rag_block:
+        lines.append("── DOCUMENTS RÉCUPÉRÉS (cite leurs références) ──\n" + rag_block)
+    else:
+        # Silence du RAG = danger. Sans cet avertissement, le coach comblait le
+        # vide en inventant : Milvus et Ollama tombés, il a « proposé le Galaxy
+        # A54 (SKU 5020160) à 399 TND » — un SKU qui est en réalité un Samsung
+        # X160 à 120 TND. Une base muette doit rendre le coach prudent, pas
+        # créatif.
+        lines.append(
+            "⚠ AUCUN DOCUMENT RÉCUPÉRÉ (base de connaissance indisponible ou sans "
+            "réponse). Tu n'as donc AUCUNE fiche produit : n'écris ni prix, ni SKU, "
+            "ni nom de modèle que tu ne lis pas explicitement ci-dessus. Appuie-toi "
+            "uniquement sur les chiffres de la SITUATION et des AGENTS, et dis au "
+            "conseiller que tu ne peux pas confirmer le détail catalogue."
+        )
+
+    # ── Consigne de lecture ──────────────────────────────────────────────────
+    if mode == "cross_domain":
+        lines.append(
+            "Consigne : la question croise VENTE et STOCK — combine les deux "
+            "(ex : produit à pousser = demande forte ET stock disponible ; "
+            "rupture = proposer l'alternative en stock)."
+        )
+    elif qtype == "general":
+        lines.append(
+            "Note : si des données ci-dessus répondent à la question, utilise-les "
+            "(vente, stock, ou les deux). Sinon, si la question est incompréhensible "
+            "ou hors-sujet, demande une clarification en 1 phrase — n'invente aucun "
+            "client ni situation."
         )
 
     return "\n".join(lines)
@@ -862,11 +1263,21 @@ def _build_situation(
 # 5. LLM CALL CHAIN (OpenRouter → Ollama → intent fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Débuts de réponse qui trahissent soit un modèle qui répond en anglais, soit un
+# modèle de raisonnement dont la chaîne de pensée a fui dans le contenu.
+# (Comparer `r[:6]` à ces chaînes ne marchait pas : "I'm " fait 4 caractères.)
+_INVALID_PREFIXES = (
+    "I'm ", "I can", "I will", "The c", "To he", "Based", "Here ", "Sure,",
+    "We need", "We should", "We must", "We have", "Let me", "First,",
+    "Okay,", "Alright", "The user", "Thinking", "<think",
+)
+
+
 def _is_valid_reply(reply: str) -> bool:
     if not reply or len(reply.strip()) < 25:
         return False
     r = reply.strip()
-    if r[:6] in ("I'm ", "I can", "I wil", "The c", "To he", "Based", "Here ", "Sure,"):
+    if r.startswith(_INVALID_PREFIXES):
         return False
     if r.startswith(("{", "[", "```")):
         return False
@@ -899,6 +1310,7 @@ async def _call_openrouter(
             body = json.dumps({
                 "model": model, "max_tokens": max_tokens,
                 "temperature": temperature, "messages": messages,
+                **_NO_REASONING,
             }, ensure_ascii=False).encode("utf-8")
             async with httpx.AsyncClient(timeout=28.0) as client:
                 resp = await client.post(OPENROUTER_URL, headers=headers, content=body)
@@ -923,6 +1335,69 @@ async def _call_openrouter(
         except Exception as e:
             logger.warning("[COACH LLM] %s exception: %.60s", model, str(e))
             continue
+    return "", (time.time() - t0) * 1000
+
+
+# ── Groq (rotation clés × modèles — quotas Groq indépendants par modèle) ─────
+async def _call_groq(
+    system: str,
+    user_msg: str,
+    max_tokens: int,
+    temperature: float,
+    history: list,
+) -> tuple[str, float]:
+    t0 = time.time()
+    if not GROQ_KEYS:
+        return "", 0.0
+    import httpx
+    messages = [{"role": "system", "content": system}]
+    if history:
+        messages.extend(history[-8:])
+    messages.append({"role": "user", "content": user_msg})
+    for ki, key in enumerate(GROQ_KEYS, start=1):
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type":  "application/json; charset=utf-8",
+        }
+        for model in _GROQ_MODEL_ROTATION:
+            try:
+                body = json.dumps({
+                    "model": model, "max_tokens": max_tokens,
+                    "temperature": temperature, "messages": messages,
+                }, ensure_ascii=False).encode("utf-8")
+                async with httpx.AsyncClient(timeout=28.0) as client:
+                    resp = await client.post(GROQ_URL, headers=headers, content=body)
+                if resp.status_code in (401, 403):
+                    # Clé invalide/révoquée : inutile d'insister avec d'autres modèles
+                    logger.warning("[COACH GROQ] clé #%d → %s — clé suivante", ki, resp.status_code)
+                    break
+                if resp.status_code == 429:
+                    # Quotas Groq séparés par modèle → modèle suivant, puis clé suivante
+                    logger.warning("[COACH GROQ] clé #%d %s → 429 rate limit", ki, model)
+                    continue
+                if resp.status_code >= 500:
+                    logger.warning("[COACH GROQ] clé #%d %s → %s server error", ki, model, resp.status_code)
+                    continue
+                data = resp.json()
+                if resp.status_code >= 400:
+                    err = data.get("error")
+                    msg = err.get("message") if isinstance(err, dict) else data.get("message", "?")
+                    logger.warning("[COACH GROQ] clé #%d %s → %s: %.60s", ki, model, resp.status_code, str(msg))
+                    continue
+                raw = data["choices"][0]["message"]["content"].strip()
+                for pfx in ["Reponse:", "Coach:", "CoachIA:", "Réponse :", "RÉPONSE :",
+                            "Here is", "Based on", "Voici ma", "D'accord,"]:
+                    if raw.lower().startswith(pfx.lower()):
+                        raw = raw[len(pfx):].strip()
+                if raw.startswith("{"):
+                    m = re.search(r'"(?:reply|response|conseil|text|message)"\s*:\s*"([^"]+)"', raw)
+                    raw = m.group(1).strip() if m else ""
+                ms = (time.time() - t0) * 1000
+                logger.info("[COACH GROQ] %dc | %.0fms | clé #%d %s", len(raw), ms, ki, model)
+                return raw, ms
+            except Exception as e:
+                logger.warning("[COACH GROQ] clé #%d %s exception: %.60s", ki, model, str(e))
+                continue
     return "", (time.time() - t0) * 1000
 
 
@@ -1199,32 +1674,41 @@ async def coach_chat(request: Request, body: dict):
                              "hour": hour, "performance": perf},
         })
 
-    # ── Chargement contexte en parallèle ────────────────────────────────────
-    need_inv = mode in ("inventory", "cross_domain") or qtype == "recap"
+    # ── Chargement contexte en parallèle — CROSS-DOMAINE systématique ───────
+    # Le coach reçoit toujours les sorties des agents SALES (analyste, stratège)
+    # ET INVENTORY (alertes stock, agent décision) : il peut répondre vente,
+    # stock, ou mixer les deux quel que soit l'intent détecté.
     loop = asyncio.get_event_loop()
 
-    if need_inv:
-        pos_data, sales_detail, inv_ctx, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_inventory_context_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-    else:
-        pos_data, sales_detail, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-        inv_ctx = {"stats": {}, "alerts": [], "top_sellers": [], "agent_recos": [],
-                   "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0}
-
+    # POS d'abord (1 requête rapide) : le Stratège reçoit le vrai CA du jour
+    # → gap exact + clé de cache orchestrateur stable.
+    pos_data = await loop.run_in_executor(None, _load_pos_sync, store_id)
     ca     = ca_ctx or pos_data.get("ca", 0.0)
     target = target_ctx
+
+    # Le Stratège serveur-side n'est invoqué que si le frontend n'a pas déjà
+    # fourni ses actions (cycle planifié) — cache orchestrateur 30 min.
+    strat_coro = (
+        _get_stratege_for_chat(store_id, ca, target, urgency)
+        if not actions_ctx else None
+    )
+
+    sales_detail, inv_ctx, day_history, catalog, adv_profile, strat = await asyncio.gather(
+        loop.run_in_executor(None, _load_sales_detail_sync, store_id),
+        loop.run_in_executor(None, _load_inventory_context_sync, store_id),
+        loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
+        loop.run_in_executor(None, _load_catalog, store_id),
+        loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
+        strat_coro if strat_coro is not None else asyncio.sleep(0, result=dict(_EMPTY_STRAT)),
+    )
+
+    strat_extras = strat.get("extras") or {}
+    strat_source = strat.get("source", "frontend" if actions_ctx else "none")
+    if not actions_ctx:
+        actions_ctx = strat.get("actions") or []
+    if not cause_ctx and strat_extras.get("cause_racine"):
+        cause_ctx = strat_extras["cause_racine"]
+
     perf   = round((ca / target * 100), 1) if target > 0 else 0.0
     gap    = max(0.0, target - ca)
     nb_tx  = pos_data.get("nb_tx", 0) or len(sales_detail.get("recent_tx", []))
@@ -1232,19 +1716,20 @@ async def coach_chat(request: Request, body: dict):
     top_sellers = sales_detail.get("top_sellers", [])
     recent_tx   = sales_detail.get("recent_tx", [])
 
-    # ── RAG (coaching seulement) ─────────────────────────────────────────────
-    rag_scripts, rag_relevant, rag_query, rag_ms = [], False, "", 0.0
-    if mode == "coaching" or qtype in ("script","objection","closing","upsell","forfait","objectif"):
-        rag_query = f"{message} {qtype} vente telecom Ooredoo"
-        if gap > target * 0.4:
-            rag_query += " gap critique urgent"
-        _rag_t0 = time.time()
-        rag_scripts, rag_relevant = await loop.run_in_executor(
-            None, _search_rag_sync, rag_query, hour, 2
-        )
-        rag_ms = (time.time() - _rag_t0) * 1000
+    # ── RAG cross-domaine + sorties vivantes des agents ──────────────────────
+    _rag_t0 = time.time()
+    rag_scripts, rag_relevant, rag_block = await loop.run_in_executor(
+        None, _search_rag_sync, message, hour, store_id, 6, _out_of_stock(inv_ctx)
+    )
+    rag_ms = (time.time() - _rag_t0) * 1000
+    rag_query = message
 
-    # ── Prompt (système lean + situation sélective) ─────────────────────────
+    agent_block, substitutes_block = await asyncio.gather(
+        loop.run_in_executor(None, _agent_block_sync, store_id),
+        loop.run_in_executor(None, _load_substitutes_sync, store_id, message, gap),
+    )
+
+    # ── Prompt (système v11 + situation cross-domaine) ──────────────────────
     system_prompt = _build_system_prompt(catalog)
 
     situation_block = _build_situation(
@@ -1255,6 +1740,9 @@ async def coach_chat(request: Request, body: dict):
         actions=actions_ctx, rag_scripts=rag_scripts,
         top_sellers=top_sellers, recent_tx=recent_tx,
         inv_ctx=inv_ctx, advisor_profile=adv_profile,
+        strat_extras=strat_extras,
+        rag_block=rag_block, agent_block=agent_block,
+        substitutes_block=substitutes_block,
     )
     user_message = f"{situation_block}\n\nQUESTION DU CONSEILLER : {message}"
 
@@ -1268,20 +1756,27 @@ async def coach_chat(request: Request, body: dict):
     else:
         max_tokens, temp = 350, 0.22
 
-    # ── Tentative 1 : Mistral direct (quota indépendant d'OpenRouter) ───────
-    reply, llm_ms = await _call_mistral(system_prompt, user_message, max_tokens, temp, day_history)
-    model_used = "mistral" if _is_valid_reply(reply) else ""
+    # ── Tentative 1 : Groq (rotation multi-clés — primaire si configuré) ────
+    reply, llm_ms = await _call_groq(system_prompt, user_message, max_tokens, temp, day_history)
+    model_used = "groq" if _is_valid_reply(reply) else ""
 
-    # ── Tentative 2 : OpenRouter full ───────────────────────────────────────
+    # ── Tentative 2 : OpenRouter / nano-30b ─────────────────────────────────
     if not _is_valid_reply(reply):
-        if MISTRAL_KEY:
-            logger.warning("[COACH] Mistral failed (%.0fms) — retry OpenRouter", llm_ms)
+        if GROQ_KEYS:
+            logger.warning("[COACH] Groq failed (%.0fms) — retry OpenRouter", llm_ms)
         reply, llm_ms = await _call_openrouter(system_prompt, user_message, max_tokens, temp, day_history)
         model_used = OPENROUTER_MODEL if _is_valid_reply(reply) else ""
 
-    # ── Tentative 3 : OpenRouter stripped ───────────────────────────────────
+    # ── Tentative 3 : Mistral direct (quota indépendant d'OpenRouter) ───────
     if not _is_valid_reply(reply):
-        logger.warning("[COACH] Attempt 2 failed (%.0fms) — retry stripped", llm_ms)
+        if OPENROUTER_KEY:
+            logger.warning("[COACH] OpenRouter failed (%.0fms) — retry Mistral", llm_ms)
+        reply, llm_ms = await _call_mistral(system_prompt, user_message, max_tokens, temp, day_history)
+        model_used = "mistral" if _is_valid_reply(reply) else ""
+
+    # ── Tentative 4 : OpenRouter stripped ───────────────────────────────────
+    if not _is_valid_reply(reply):
+        logger.warning("[COACH] Attempt 3 failed (%.0fms) — retry stripped", llm_ms)
         await asyncio.sleep(0.6 + random.uniform(0, 0.8))
 
         min_user = (
@@ -1293,8 +1788,8 @@ async def coach_chat(request: Request, body: dict):
         if _is_valid_reply(reply):
             model_used = f"{OPENROUTER_MODEL}+stripped"
         else:
-            # ── Tentative 4 : Ollama local ───────────────────────────────────
-            logger.warning("[COACH] Attempt 3 failed — trying Ollama")
+            # ── Tentative 5 : Ollama local ───────────────────────────────────
+            logger.warning("[COACH] Attempt 4 failed — trying Ollama")
             reply = await _call_ollama_fallback(system_prompt, min_user, min(max_tokens, 220))
             model_used = "ollama" if _is_valid_reply(reply) else ""
 
@@ -1342,7 +1837,8 @@ async def coach_chat(request: Request, body: dict):
                 for a in inv_ctx.get("alerts", [])
             }
         }
-        _focus = inv_ctx.get("focus_produits") or []
+        _focus = (strat_extras.get("focus_produits")
+                  or inv_ctx.get("focus_produits") or [])
         _grd = evaluate_guardrails(
             recommendation={
                 "product_to_push":     _focus[0] if _focus else None,
@@ -1496,7 +1992,7 @@ async def coach_chat(request: Request, body: dict):
                 log_node_complete(
                     _rid,
                     output_state={"nb_scripts": len(rag_scripts), "relevant": rag_relevant,
-                                  "top_score": rag_scripts[0]["score"] if rag_scripts else 0},
+                                  "top_score": rag_scripts[0].score if rag_scripts else 0},
                     duration_ms=rag_ms,
                     status="completed" if rag_relevant else "fallback",
                 )
@@ -1533,7 +2029,7 @@ async def coach_chat(request: Request, body: dict):
         "mode":            mode,
         "domain":          domain,
         "question_type":   qtype,
-        "source":          f"v10_{model_used}",
+        "source":          f"v11_{model_used}",
         "model":           model_used,
         "confidence":      round(confidence, 3),
         "rag_used":        rag_relevant,
@@ -1565,8 +2061,9 @@ async def coach_chat(request: Request, body: dict):
             "ruptures":      inv_ctx.get("stats", {}).get("ruptures", 0),
         },
         "rag_scripts": [
-            {"categorie": s["categorie"], "action": s["action"],
-             "produit": s.get("produit",""), "score": s["score"]}
+            {"categorie": s.categorie or s.doc_type, "domaine": s.domain,
+             "action": (s.payload or {}).get("action", s.title),
+             "produit": s.produit, "score": s.score}
             for s in rag_scripts[:2]
         ],
         "inventory_alerts": [
@@ -1575,6 +2072,9 @@ async def coach_chat(request: Request, body: dict):
             for a in inv_ctx.get("alerts", [])[:3]
         ],
         "agent_recos":      inv_ctx.get("agent_recos", [])[:3],
+        "strategie_actions": actions_ctx[:3],
+        "stratege_source":  strat_source,
+        "cause_racine":     cause_ctx,
         "scored_products":  _scored_products,
         "guardrail_status": _grd.get("status", "APPROVE"),
         "guardrail_issues": _grd.get("issues", []),
@@ -1678,47 +2178,52 @@ async def coach_chat_stream(request: Request, body: dict):
         return _SR(_greeting_gen(), media_type="text/event-stream",
                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    need_inv = mode in ("inventory", "cross_domain") or qtype == "recap"
-    loop     = asyncio.get_event_loop()
+    # Contexte CROSS-DOMAINE systématique (agents sales + inventory) + Stratège
+    # serveur-side si le frontend n'a pas fourni ses actions.
+    loop = asyncio.get_event_loop()
 
-    if need_inv:
-        pos_data, sales_detail, inv_ctx_data, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_inventory_context_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-    else:
-        pos_data, sales_detail, day_history, catalog, adv_profile = await asyncio.gather(
-            loop.run_in_executor(None, _load_pos_sync, store_id),
-            loop.run_in_executor(None, _load_sales_detail_sync, store_id),
-            loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
-            loop.run_in_executor(None, _load_catalog, store_id),
-            loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
-        )
-        inv_ctx_data = {"stats": {}, "alerts": [], "top_sellers": [], "agent_recos": [],
-                        "kpi_terminaux": 0, "kpi_forfaits": 0, "ca_moy_agent": 0}
-
+    pos_data = await loop.run_in_executor(None, _load_pos_sync, store_id)
     ca     = ca_ctx or pos_data.get("ca", 0.0)
     target = target_ctx
+
+    strat_coro = (
+        _get_stratege_for_chat(store_id, ca, target, urgency)
+        if not actions_ctx else None
+    )
+
+    sales_detail, inv_ctx_data, day_history, catalog, adv_profile, strat = await asyncio.gather(
+        loop.run_in_executor(None, _load_sales_detail_sync, store_id),
+        loop.run_in_executor(None, _load_inventory_context_sync, store_id),
+        loop.run_in_executor(None, _load_day_history_sync, advisor_name, store_id),
+        loop.run_in_executor(None, _load_catalog, store_id),
+        loop.run_in_executor(None, _load_advisor_profile_sync, advisor_name, store_id),
+        strat_coro if strat_coro is not None else asyncio.sleep(0, result=dict(_EMPTY_STRAT)),
+    )
+
+    strat_extras = strat.get("extras") or {}
+    strat_source = strat.get("source", "frontend" if actions_ctx else "none")
+    if not actions_ctx:
+        actions_ctx = strat.get("actions") or []
+    if not cause_ctx and strat_extras.get("cause_racine"):
+        cause_ctx = strat_extras["cause_racine"]
+
     perf   = round((ca / target * 100), 1) if target > 0 else 0.0
     gap    = max(0.0, target - ca)
 
     top_sellers = sales_detail.get("top_sellers", [])
     recent_tx   = sales_detail.get("recent_tx", [])
 
-    rag_scripts, rag_relevant, rag_query, rag_ms = [], False, "", 0.0
-    if mode == "coaching" or qtype in ("script", "objection", "closing", "upsell", "forfait", "objectif"):
-        rag_query = f"{message} {qtype} vente telecom Ooredoo"
-        if gap > target * 0.4:
-            rag_query += " gap critique urgent"
-        _rag_t0 = time.time()
-        rag_scripts, rag_relevant = await loop.run_in_executor(
-            None, _search_rag_sync, rag_query, hour, 2
-        )
-        rag_ms = (time.time() - _rag_t0) * 1000
+    _rag_t0 = time.time()
+    rag_scripts, rag_relevant, rag_block = await loop.run_in_executor(
+        None, _search_rag_sync, message, hour, store_id, 6, _out_of_stock(inv_ctx_data)
+    )
+    rag_ms = (time.time() - _rag_t0) * 1000
+    rag_query = message
+
+    agent_block, substitutes_block = await asyncio.gather(
+        loop.run_in_executor(None, _agent_block_sync, store_id),
+        loop.run_in_executor(None, _load_substitutes_sync, store_id, message, gap),
+    )
 
     system_prompt   = _build_system_prompt(catalog)
     situation_block = _build_situation(
@@ -1729,6 +2234,9 @@ async def coach_chat_stream(request: Request, body: dict):
         actions=actions_ctx, rag_scripts=rag_scripts,
         top_sellers=top_sellers, recent_tx=recent_tx,
         inv_ctx=inv_ctx_data, advisor_profile=adv_profile,
+        strat_extras=strat_extras,
+        rag_block=rag_block, agent_block=agent_block,
+        substitutes_block=substitutes_block,
     )
     user_message = f"{situation_block}\n\nQUESTION DU CONSEILLER : {message}"
 
@@ -1743,27 +2251,55 @@ async def coach_chat_stream(request: Request, body: dict):
         model_used = ""
         streamed_ok = False
 
-        if OPENROUTER_KEY:
-            try:
-                messages = [{"role": "system", "content": system_prompt}]
-                if day_history:
-                    messages.extend(day_history[-8:])
-                messages.append({"role": "user", "content": user_message})
+        messages = [{"role": "system", "content": system_prompt}]
+        if day_history:
+            messages.extend(day_history[-8:])
+        messages.append({"role": "user", "content": user_message})
 
+        # Providers streaming par ordre de priorité : Groq (rotation clés ×
+        # modèles), puis OpenRouter (nano-30b + rotation de secours), puis
+        # Mistral dont le quota est indépendant.
+        providers: list[tuple[str, str, dict]] = []
+        for _gkey in GROQ_KEYS:
+            _g_headers = {
+                "Authorization": f"Bearer {_gkey}",
+                "Content-Type":  "application/json; charset=utf-8",
+            }
+            for _m in _GROQ_MODEL_ROTATION:
+                providers.append((_m, GROQ_URL, _g_headers))
+        if OPENROUTER_KEY:
+            _or_headers = {
+                "Authorization": f"Bearer {OPENROUTER_KEY}",
+                "Content-Type":  "application/json; charset=utf-8",
+                "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                "X-Title":       "AI Sales Coach Ooredoo v11 stream",
+            }
+            for _m in _OR_MODEL_ROTATION:
+                providers.append((_m, OPENROUTER_URL, _or_headers))
+        if MISTRAL_KEY:
+            for _m in _MISTRAL_MODEL_ROTATION:
+                providers.append((_m, MISTRAL_URL, {
+                    "Authorization": f"Bearer {MISTRAL_KEY}",
+                    "Content-Type":  "application/json; charset=utf-8",
+                }))
+
+        for _model, _url, _headers in providers:
+            if streamed_ok:
+                break
+            try:
+                # `reasoning` est une extension OpenRouter : Mistral rejette le champ.
+                _extra = _NO_REASONING if _url == OPENROUTER_URL else {}
                 body = json.dumps({
-                    "model": OPENROUTER_MODEL, "max_tokens": max_tokens,
+                    "model": _model, "max_tokens": max_tokens,
                     "temperature": temp, "messages": messages, "stream": True,
+                    **_extra,
                 }, ensure_ascii=False).encode("utf-8")
 
-                headers = {
-                    "Authorization": f"Bearer {OPENROUTER_KEY}",
-                    "Content-Type":  "application/json; charset=utf-8",
-                    "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                    "X-Title":       "AI Sales Coach Ooredoo v10 stream",
-                }
-
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    async with client.stream("POST", OPENROUTER_URL, headers=headers, content=body) as resp:
+                    async with client.stream("POST", _url, headers=_headers, content=body) as resp:
+                        if resp.status_code >= 400:
+                            logger.warning("[COACH STREAM] %s → HTTP %s", _model, resp.status_code)
+                            continue
                         async for line in resp.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -1778,9 +2314,16 @@ async def coach_chat_stream(request: Request, body: dict):
                                     streamed_ok = True
                             except Exception:
                                 continue
-                model_used = OPENROUTER_MODEL
+                if streamed_ok:
+                    model_used = _model
             except Exception as e:
-                logger.warning("[COACH STREAM] OR error: %.80s", str(e))
+                logger.warning("[COACH STREAM] %s error: %.80s", _model, str(e))
+                # Si des tokens sont déjà partis, ne pas re-streamer un autre
+                # provider (texte dupliqué côté client) — on garde le partiel.
+                if full_reply:
+                    streamed_ok = True
+                    model_used = _model
+                    break
 
         # Fallback: non-streaming chain → word-by-word replay
         if not streamed_ok:
@@ -1894,7 +2437,7 @@ async def coach_chat_stream(request: Request, body: dict):
                     log_node_complete(
                         _rid,
                         output_state={"nb_scripts": len(rag_scripts), "relevant": rag_relevant,
-                                      "top_score": rag_scripts[0]["score"] if rag_scripts else 0},
+                                      "top_score": rag_scripts[0].score if rag_scripts else 0},
                         duration_ms=rag_ms,
                         status="completed" if rag_relevant else "fallback",
                     )
@@ -1937,7 +2480,7 @@ async def coach_chat_stream(request: Request, body: dict):
 
         asyncio.create_task(_persist_stream())
 
-        yield f'data: {json.dumps({"done": True, "reply": final_reply, "rag_used": rag_relevant, "source": f"v10_{model_used}", "model": model_used, "guardrail_status": _sgrd.get("status", "APPROVE"), "guardrail_issues": _sgrd.get("issues", []), "requires_hitl": _sgrd.get("requires_human_validation", False)})}\n\n'
+        yield f'data: {json.dumps({"done": True, "reply": final_reply, "rag_used": rag_relevant, "source": f"v11_{model_used}", "model": model_used, "stratege_source": strat_source, "strategie_actions": actions_ctx[:3], "cause_racine": cause_ctx, "guardrail_status": _sgrd.get("status", "APPROVE"), "guardrail_issues": _sgrd.get("issues", []), "requires_hitl": _sgrd.get("requires_human_validation", False)})}\n\n'
 
     return _SR(
         _sse_gen(),
@@ -1954,28 +2497,31 @@ async def coach_chat_stream(request: Request, body: dict):
 async def coach_health():
     return JSONResponse({
         "status":       "ok",
-        "version":      "10.0.0",
-        "architecture": "claude-like persona-first lean-prompts",
+        "version":      "11.0.0",
+        "architecture": "persona-first cross-domain, stratège server-side, RAG unifié",
         "features": [
-            "persona_first_prompting",
+            "persona_first_prompting_v11",
             "few_shot_in_system_prompt",
-            "lean_context_selection",
-            "intent_selective_context",
+            "cross_domain_context_always_loaded",
+            "stratege_server_side_orchestrated",
+            "stratege_cache_30min_background_warm",
+            "rag_unified_milvus_plus_corpus_fallback",
+            "intent_selective_detail",
             "response_dedup_cache_20s",
             "greeting_fast_path_no_llm",
             "off_topic_guard",
-            "retry_chain_3_levels",
+            "retry_chain_4_levels",
             "ollama_chat_fallback",
             "intent_aware_fallback",
             "response_validator",
             "async_persist_nonblocking",
             "parallel_context_loading",
-            "selective_inventory_loading",
             "dynamic_catalog_db_10min_ttl",
         ],
         "llm_primary":  OPENROUTER_MODEL,
         "llm_fallback": "ollama_local_chat_model",
         "llm_available": bool(OPENROUTER_KEY),
+        "stratege_timeout_s": COACH_STRATEGE_TIMEOUT,
         "prompt_tokens_approx": {
             "system_persona": "~320",
             "catalog":        "~80 (dynamique DB)",

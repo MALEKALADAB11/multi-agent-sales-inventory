@@ -11,6 +11,7 @@ the inventory router's cache/WS machinery.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -62,6 +63,10 @@ _broadcast_po_status = po_ws_bus.broadcast_po_status
 @router.websocket("/ws/{store_id}")
 async def po_board_ws(websocket: WebSocket, store_id: str) -> None:
     await websocket.accept()
+    # The decision agent broadcasts from a worker thread; it needs a handle on
+    # the loop these sockets are bound to. This is the earliest point where we
+    # are guaranteed to be running on it.
+    po_ws_bus.set_server_loop(asyncio.get_running_loop())
     conns = po_ws_bus.connections.setdefault(store_id, [])
     conns.append(websocket)
     logger.info("[supply/ws] connected store=%s (total=%d)", store_id, len(conns))
@@ -77,6 +82,41 @@ async def po_board_ws(websocket: WebSocket, store_id: str) -> None:
         if websocket in conns:
             conns.remove(websocket)
         logger.info("[supply/ws] disconnected store=%s (remaining=%d)", store_id, len(conns))
+
+
+def _record_po_feedback(
+    po: Dict[str, Any],
+    po_id: str,
+    *,
+    decision: str,
+    decided_by: str,
+    reason: Optional[str] = None,
+) -> None:
+    """
+    Journalise la décision humaine sur un PO suggéré dans public.agent_feedback.
+    Le feedback_service agrège ces lignes et les réinjecte dans les prompts du
+    DecisionAgent/Stratège (boucle d'apprentissage). Jamais bloquant : la
+    transition du PO est déjà commitée quoi qu'il arrive ici.
+    """
+    try:
+        from app.core.feedback_service import record_feedback
+        record_feedback(
+            store_id=str(po.get("store_id") or "unknown"),
+            source="po",
+            decision=decision,                       # 'approved' | 'rejected'
+            ref_id=str(po_id),
+            sku=int(po["sku"]) if po.get("sku") is not None else None,
+            action_type="purchase_order",
+            reason=reason,
+            payload={
+                "decided_by": decided_by,
+                "quantite":   po.get("quantite_commandee"),
+                "urgency":    po.get("urgency"),
+                "statut":     po.get("statut"),
+            },
+        )
+    except Exception as exc:
+        logger.debug("Feedback PO %s non enregistré: %s", po_id, exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +169,9 @@ async def get_purchase_order(request: Request, po_id: str) -> Dict[str, Any]:
     if not po:
         raise HTTPException(status_code=404, detail=f"Purchase order '{po_id}' not found.")
     await _require_store_access(request, po["store_id"])
-    return _decimal_safe(po)
+    # Même enrichissement que la vue liste/Kanban : la page détail affiche
+    # couverture stock, ETA et prédiction rupture × réception.
+    return _decimal_safe(SyncPurchaseOrderRepo._enrich_kanban_fields(po))
 
 
 @router.post("/purchase-orders")
@@ -164,9 +206,69 @@ async def create_purchase_order(
             ),
         )
 
+    # Kanban temps réel : sans ce broadcast, la nouvelle carte BROUILLON
+    # n'apparaît qu'au prochain rechargement de page. po_suggested est le
+    # seul event que le store Angular sait upserter (po_status_changed ne
+    # fait que déplacer une carte déjà connue).
+    await po_ws_bus.broadcast_po_suggested(po)
+
     logger.info("Purchase order %s created (BROUILLON) from recommendation %s",
                 po["po_id"], req.recommendation_id)
     return _decimal_safe(po)
+
+
+class SuggestPurchaseOrderRequest(BaseModel):
+    recommendation_id: str = Field(..., description="inventory.recommendations.id")
+
+
+@router.post("/purchase-orders/suggest")
+async def suggest_purchase_order(
+    request: Request,
+    req: SuggestPurchaseOrderRequest,
+) -> Dict[str, Any]:
+    """
+    Puts a SUGGERE card on the Kanban for a recommendation the agent has not
+    yet turned into one — the manual counterpart of the decision agent's
+    auto-suggestion, used by the "créer un ticket" action on a red product in
+    the inventory page.
+
+    Idempotent by design: the one-PO-per-recommendation rule is what makes it
+    safe to click twice. A second call returns the existing card (with
+    already_exists=true) instead of a 409, because from the operator's point of
+    view "the ticket is on the board" is the same successful outcome either way.
+    Unlike POST /purchase-orders it does NOT require the recommendation to be
+    approved — SUGGERE is precisely the pre-approval state, and the human gate
+    stays on the board's approve/reject buttons.
+    """
+    store_id = SyncPurchaseOrderRepo.get_recommendation_store_id(req.recommendation_id)
+    if not store_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Recommendation '{req.recommendation_id}' not found.",
+        )
+    await _require_store_access(request, store_id)
+
+    existing = SyncPurchaseOrderRepo.get_purchase_order_by_recommendation(req.recommendation_id)
+    if existing:
+        return _decimal_safe({**existing, "already_exists": True})
+
+    po = SyncPurchaseOrderRepo.create_suggestion_from_recommendation(
+        recommendation_id=req.recommendation_id,
+    )
+    if not po:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Could not suggest a purchase order for recommendation "
+                f"'{req.recommendation_id}' — it must reference a known product "
+                f"and carry a usable quantity."
+            ),
+        )
+
+    await po_ws_bus.broadcast_po_suggested(po)
+    logger.info("Purchase order %s suggested (SUGGERE) from recommendation %s",
+                po["po_id"], req.recommendation_id)
+    return _decimal_safe({**po, "already_exists": False})
 
 
 @router.patch("/purchase-orders/{po_id}")
@@ -242,6 +344,7 @@ async def approve_purchase_order(
         store_id=updated["store_id"], po_id=po_id, sku=updated["sku"],
         old_statut="SUGGERE", new_statut="BROUILLON",
     )
+    _record_po_feedback(updated, po_id, decision="approved", decided_by=req.decided_by)
     logger.info("Purchase order %s approved by %s (SUGGERE -> BROUILLON)", po_id, req.decided_by)
     return _decimal_safe(updated)
 
@@ -270,5 +373,7 @@ async def reject_purchase_order(
         store_id=updated["store_id"], po_id=po_id, sku=updated["sku"],
         old_statut="SUGGERE", new_statut="ANNULE",
     )
+    _record_po_feedback(updated, po_id, decision="rejected",
+                        decided_by=req.decided_by, reason=req.reason)
     logger.info("Purchase order %s rejected by %s (SUGGERE -> ANNULE)", po_id, req.decided_by)
     return _decimal_safe(updated)

@@ -415,6 +415,11 @@ def log_rag_feedback(
         logger.warning(f"[AGENT_LOGGER] log_rag_feedback: {e}")
 
 
+def _cut_utf8(s: str, max_bytes: int) -> str:
+    """Tronque une chaîne à max_bytes octets UTF-8 sans couper un caractère."""
+    return (s or "").encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+
+
 def enrich_rag_from_cycle(
     cycle_id: str,
     state:    dict,
@@ -491,25 +496,23 @@ def enrich_rag_from_cycle(
                 if len(emb) < 768: emb += [0.0]*(768-len(emb))
                 data.append({
                     "vector":emb[:768],"pg_id":pg_id,
-                    "categorie":script["categorie"][:200],
-                    "situation":script["situation"][:1000],
-                    "action":script["action"][:500],
-                    "produit":script["produit_cible"][:300],
-                    "argument":script["argument_vente"][:1000],
-                    "impact":script["impact_observe"][:300],
+                    # Limites varchar du schéma Milvus coaching_scripts :
+                    # categorie 100, situation 200, action 200, produit 100,
+                    # argument 200, impact 100, store_id 20 — dépasser lève
+                    # MilvusException 1100 et perd tout le batch (PG garde
+                    # les versions longues). Troncature en octets UTF-8 car
+                    # Milvus compte les octets, pas les caractères accentués.
+                    "categorie":_cut_utf8(script["categorie"], 100),
+                    "situation":_cut_utf8(script["situation"], 200),
+                    "action":_cut_utf8(script["action"], 200),
+                    "produit":_cut_utf8(script["produit_cible"], 100),
+                    "argument":_cut_utf8(script["argument_vente"], 200),
+                    "impact":_cut_utf8(script["impact_observe"], 100),
                     "heure_min":9,"heure_max":20,"jour_semaine":-1,
-                    "store_id":store_id[:50],
+                    "store_id":_cut_utf8(store_id, 20),
                 })
             if data:
                 client.insert(collection_name="coaching_scripts",data=data)
-                conn2 = _get_conn()
-                with conn2.cursor() as cur:
-                    cur.execute(
-                        "UPDATE coaching_scripts SET embedded=TRUE WHERE id=ANY(%s)",
-                        (pg_ids,)
-                    )
-                conn2.commit()
-                conn2.close()
                 logger.info(
                     f"[AGENT_LOGGER] RAG enrichi: +{len(data)} scripts "
                     f"(cycle {cycle_id[-8:]})"

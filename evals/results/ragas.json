@@ -1,0 +1,75 @@
+{
+  "suite": "ragas",
+  "error": "retrieval vide (0 contexte sur tous les cas)",
+  "judge_model": "mistral/mistral-large-latest",
+  "embed_model": "ollama/bge-m3",
+  "n_cases": 8,
+  "context_coverage": 0.0,
+  "details": [
+    {
+      "id": "ragas-vente-prix",
+      "domain": "sales_script",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "Je ne peux pas répondre à l'objection prix sans contexte documentaire. Veuillez fournir des éléments sur les offres, promotions ou arguments de vente disponibles.",
+      "scores": {}
+    },
+    {
+      "id": "ragas-vente-hesitation",
+      "domain": "sales_script",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "Je ne peux pas te donner de réponse précise sans contexte. Veuillez fournir des informations sur les téléphones en question ou toute autre donnée pertinente.",
+      "scores": {}
+    },
+    {
+      "id": "ragas-vente-upsell",
+      "domain": "sales_script",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "**Action à suivre :**\nVérifie si la boutique a une politique ou un objectif de vente croisée (accessoires avec smartphones). Si oui, applique les directives internes. Sinon, propose systématiquement les accessoires pertinents (coques, chargeurs, écouteurs) en expliquant leur utilité (protection, compatibilité, etc.).\n\n*Si aucune consigne n'est donnée dans le contexte, demande à ton responsable pour clarifier la stratégie de vente.*",
+      "scores": {}
+    },
+    {
+      "id": "ragas-stock-moq",
+      "domain": "inventory_playbook",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "Si le besoin prévu est inférieur au **MOQ (Minimum Order Quantity)** du fournisseur, vous ne pouvez pas passer de commande partielle. Deux options s'offrent à vous :\n\n1. **Commander le MOQ** (même si la quantité dépasse votre besoin).\n2. **Ne pas commander** et attendre une future opportunité (si possible).\n\n*→ Vérifiez avec le fournisseur s'il existe une exception ou un arrangement possible.*",
+      "scores": {}
+    },
+    {
+      "id": "ragas-stock-dormant",
+      "domain": "inventory_playbook",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "**Marche à suivre pour le stock dormant :**\n1. **Analyser** : Identifier les produits concernés (quantité, durée d'immobilisation, raisons possibles).\n2. **Promouvoir** :\n   - Mettre en avant via des **offres ciblées** (ex : réductions, bundles).\n   - Utiliser les **réseaux sociaux** et l’emailing pour toucher les clients.\n3. **Écouler** :\n   - Proposer des **ventes flash** ou des **lots**.\n   - Collaborer avec d’autres services Ooredoo (ex : forfaits incluant le produit).\n4. **Évaluer** :\n   - Si le stock reste bloqué, envisager un **destockage** (promos agressives, dons, etc.).\n\n*Si besoin de détails sur un produit spécifique, précisez-le.*",
+      "scores": {}
+    },
+    {
+      "id": "ragas-stock-lead",
+      "domain": "inventory_playbook",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "Information manquante : Aucune donnée sur les contrats, garanties ou procédures internes pour gérer ce problème. Consultez votre responsable ou le service juridique pour connaître les recours possibles (pénalités, résiliation, etc.).",
+      "scores": {}
+    },
+    {
+      "id": "ragas-produit-prix",
+      "domain": "product",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "Information manquante.",
+      "scores": {}
+    },
+    {
+      "id": "ragas-cross-rupture",
+      "domain": "inventory_playbook",
+      "n_contexts": 0,
+      "rag_relevant": false,
+      "answer": "Je ne peux pas répondre sans contexte sur les alternatives disponibles. Veuillez fournir les options de stock ou promotions en cours.",
+      "scores": {}
+    }
+  ],
+  "run_at": "2026-07-21T13:02:57"
+}

@@ -1,135 +1,81 @@
 """
-rag_retriever.py — Retriever RAG pour l'agent stratège Ooredoo.
-Lit les scripts de vente depuis Milvus et PostgreSQL.
+rag_retriever.py — Façade de compatibilité vers `app.sales.data.rag`.
 
-Utilisation:
-    from app.sales.data.rag_retriever import get_rag_context
-    ctx = await get_rag_context(store_id, gap_pct, current_hour, query)
+Le moteur vit désormais dans le package `app/sales/data/rag/` : recherche hybride
+Milvus (dense + BM25 natif, fusion RRF), rerank métier, diversité MMR, corpus
+cross-domaine (scripts de vente, playbooks stock, catalogue produits, mémoire des
+décisions). Voir `rag/retriever.py`.
+
+Ce module conserve l'ancienne signature pour les appelants existants
+(coach_chat.py, stratege/nodes.py). Pour tout nouveau code :
+
+    from app.sales.data.rag import retrieve, format_context_block
 """
 
 import logging
-import os
-import requests
 from datetime import datetime
 from typing import Optional
-from pathlib import Path
+
 from app.core.config import DEFAULT_STORE_ID
+from app.sales.data.rag import retriever as _r
+from app.sales.data.rag import store as _store
+from app.sales.data.rag.settings import MIN_SCORE, TOP_K
 
 logger = logging.getLogger(__name__)
 
-MILVUS_URI  = "http://localhost:19530"
-COLLECTION  = "coaching_scripts"
-EMBED_MODEL = "nomic-embed-text"
-OLLAMA_URL  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-# Cache singleton du client Milvus
-_milvus_client = None
-
-
-def _ensure_collection(client) -> bool:
-    """Create coaching_scripts collection if it doesn't exist. Returns True if ready."""
-    try:
-        if client.has_collection(COLLECTION):
-            return True
-        from pymilvus import DataType
-        schema = client.create_schema(auto_id=True, enable_dynamic_field=True)
-        schema.add_field("id",           DataType.INT64,         is_primary=True, auto_id=True)
-        schema.add_field("vector",       DataType.FLOAT_VECTOR,  dim=EMBED_DIM)
-        schema.add_field("pg_id",        DataType.INT64)
-        schema.add_field("categorie",    DataType.VARCHAR,        max_length=100)
-        schema.add_field("situation",    DataType.VARCHAR,        max_length=200)
-        schema.add_field("action",       DataType.VARCHAR,        max_length=200)
-        schema.add_field("produit",      DataType.VARCHAR,        max_length=100)
-        schema.add_field("argument",     DataType.VARCHAR,        max_length=200)
-        schema.add_field("impact",       DataType.VARCHAR,        max_length=100)
-        schema.add_field("heure_min",    DataType.INT64)
-        schema.add_field("heure_max",    DataType.INT64)
-        schema.add_field("jour_semaine", DataType.INT64)
-        schema.add_field("store_id",     DataType.VARCHAR,        max_length=20)
-        idx = client.prepare_index_params()
-        idx.add_index("vector", index_type="FLAT", metric_type="COSINE")
-        client.create_collection(COLLECTION, schema=schema, index_params=idx)
-        logger.info(f"[RAG] Collection '{COLLECTION}' créée (vide — sera peuplée par les cycles)")
-        return True
-    except Exception as e:
-        logger.warning(f"[RAG] ensure_collection: {e}")
-        return False
+def _as_legacy_script(doc) -> dict:
+    """Aplati un RetrievedDocument au format attendu par l'ancien code."""
+    p = doc.payload or {}
+    return {
+        "score":     doc.score,
+        "categorie": doc.categorie or doc.doc_type,
+        "situation": p.get("situation", doc.title),
+        "action":    p.get("action", ""),
+        "produit":   doc.produit,
+        "argument":  p.get("argument", ""),
+        "impact":    p.get("impact", ""),
+        # Champs ajoutés par le nouveau moteur — ignorés par l'ancien code.
+        "domain":    doc.domain,
+        "doc_id":    doc.doc_id,
+    }
 
 
-def _get_client():
-    global _milvus_client
-    if _milvus_client is None:
-        try:
-            from pymilvus import MilvusClient
-            _milvus_client = MilvusClient(uri=MILVUS_URI)
-            _ensure_collection(_milvus_client)
-            logger.info(f"[RAG] Milvus connecté: {MILVUS_URI}")
-        except ImportError:
-            logger.warning("[RAG] pymilvus non installé — RAG désactivé")
-        except Exception as e:
-            logger.warning(f"[RAG] Milvus connexion échouée: {e}")
-    return _milvus_client
+def search_scripts(
+    query: str,
+    hour: Optional[int] = None,
+    top_k: int = TOP_K,
+    min_score: float = MIN_SCORE,
+) -> dict:
+    """
+    Recherche unifiée. Retourne {"scripts": [...], "relevant": bool, "source": str}.
+
+    `source` vaut désormais le mode de recherche Milvus ("hybrid", "bm25",
+    "dense") au lieu de "milvus"/"corpus". Les appelants ne testent que
+    l'égalité à "corpus" pour logger une dégradation — ce qui n'arrive plus.
+    """
+    result = _r.retrieve(query, hour=hour, top_k=top_k, min_score=min_score)
+    return {
+        "scripts":  [_as_legacy_script(d) for d in result.docs],
+        "relevant": result.relevant,
+        "source":   result.mode,
+    }
 
 
-def _embed(text: str) -> Optional[list]:
-    """Génère un embedding via Ollama."""
-    try:
-        # Timeout increased to 120s (2 min) because OLLAMA can be slow under load
-        # First attempt: 120s full timeout
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/embeddings",
-            json={"model": EMBED_MODEL, "prompt": text},
-            timeout=120,  # Increased from 30 to 120 seconds
+def format_scripts_block(scripts: list, max_n: int = 3) -> str:
+    """Formate des scripts (dicts legacy) pour injection dans un prompt."""
+    if not scripts:
+        return ""
+    lines = ["SCRIPTS TERRAIN PROUVÉS (base Ooredoo — adapte ces arguments) :"]
+    for i, s in enumerate(scripts[:max_n], 1):
+        lines.append(
+            f"[{i}] ({s['categorie']}, score {s['score']:.2f}) "
+            f"Situation : {s['situation'][:110]}\n"
+            f"    Action : {s['action'][:130]}\n"
+            f"    Argument : «{s['argument'][:180]}»\n"
+            f"    Impact observé : {s['impact'][:100]}"
         )
-        resp.raise_for_status()
-        result = resp.json()
-        logger.info(f"[RAG] Embedding succès ({len(text)} chars)")
-        return result.get("embedding")
-    except requests.Timeout:
-        logger.warning(f"[RAG] Embedding timeout (120s) — OLLAMA trop lent")
-        return None
-    except requests.ConnectionError as e:
-        logger.warning(f"[RAG] Embedding connexion échouée: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"[RAG] Embedding échoué: {e}")
-        return None
-
-
-def _build_query(
-    gap_pct: float,
-    current_hour: int,
-    urgency: str,
-    context_summary: dict,
-    advisor_name: str = "",
-) -> str:
-    """Construit la requête RAG depuis le contexte actuel."""
-    parts = []
-
-    if gap_pct > 60:
-        parts.append("gap critique objectif éloigné")
-    elif gap_pct > 30:
-        parts.append("gap modéré performance insuffisante")
-    else:
-        parts.append("gap faible objectif proche")
-
-    if 14 <= current_hour <= 17:
-        parts.append("heure de pointe pic ventes")
-    elif 19 <= current_hour <= 20:
-        parts.append("soirée dernières heures")
-    elif current_hour <= 10:
-        parts.append("matin ouverture boutique")
-
-    if context_summary.get("weather_effect", 0) <= -0.15:
-        parts.append("météo défavorable pluie")
-
-    if urgency == "HIGH":
-        parts.append("urgence haute action immédiate")
-
-    if advisor_name:
-        parts.append(f"coaching conseiller {advisor_name}")
-
-    return " ".join(parts)
+    return "\n".join(lines)
 
 
 async def get_rag_context(
@@ -141,99 +87,23 @@ async def get_rag_context(
     advisor_name: str = "",
     top_k: int = 3,
 ) -> dict:
-    """
-    Récupère les scripts de vente pertinents depuis Milvus.
-
-    Returns:
-        {
-            "scripts": [...],       # scripts pertinents
-            "rag_context": "...",   # texte formaté pour le prompt LLM
-            "available": bool,      # RAG disponible
-        }
-    """
-    client = _get_client()
-    if client is None:
-        return {"scripts": [], "rag_context": "", "available": False}
-
-    if current_hour is None:
-        current_hour = datetime.now().hour
-    if context_summary is None:
-        context_summary = {}
-
-    # Construire la requête
-    query = _build_query(gap_pct, current_hour, urgency, context_summary, advisor_name)
-    logger.info(f"[RAG] Requête: '{query}'")
-
-    # Générer l'embedding
-    embedding = _embed(query)
-    if embedding is None:
-        return {"scripts": [], "rag_context": "", "available": False}
-
-    # Recherche Milvus
-    try:
-        results = client.search(
-            collection_name = COLLECTION,
-            data            = [embedding],
-            limit           = top_k + 2,  # marge pour filtrage heure
-            output_fields   = [
-                "pg_id", "categorie", "situation", "action",
-                "produit", "argument", "impact",
-                "heure_min", "heure_max", "jour_semaine",
-            ],
-        )
-    except Exception as e:
-        logger.warning(f"[RAG] Recherche Milvus échouée: {e}")
-        return {"scripts": [], "rag_context": "", "available": False}
-
-    # Filtrer et scorer les résultats
-    scripts = []
-    dow = datetime.now().weekday()
-
-    for hit in results[0]:
-        e     = hit["entity"]
-        score = float(hit["distance"])
-
-        # Bonus si créneau horaire correspond
-        if e["heure_min"] <= current_hour <= e["heure_max"]:
-            score += 0.15
-
-        # Bonus si jour de semaine correspond
-        if e["jour_semaine"] == dow or e["jour_semaine"] == -1:
-            score += 0.05
-
-        scripts.append({
-            "score":       round(score, 3),
-            "categorie":   e["categorie"],
-            "situation":   e["situation"],
-            "action":      e["action"],
-            "produit":     e["produit"],
-            "argument":    e["argument"],
-            "impact":      e["impact"],
-        })
-
-    # Trier par score et garder top_k
-    scripts = sorted(scripts, key=lambda x: x["score"], reverse=True)[:top_k]
-
-    # Formater le contexte RAG pour le prompt
-    rag_lines = ["## Scripts de vente similaires (base historique Ooredoo I63)"]
-    for i, s in enumerate(scripts, 1):
-        rag_lines.append(
-            f"\n### Script #{i} — {s['categorie']} (score: {s['score']:.2f})\n"
-            f"**Situation**: {s['situation']}\n"
-            f"**Action**: {s['action']}\n"
-            f"**Produit**: {s['produit']}\n"
-            f"**Argument**: {s['argument']}\n"
-            f"**Impact observé**: {s['impact']}"
-        )
-
-    rag_context = "\n".join(rag_lines)
-    logger.info(f"[RAG] {len(scripts)} scripts récupérés (top: {scripts[0]['categorie'] if scripts else 'N/A'})")
-
+    """Contexte RAG du cycle autonome (requête dérivée de la situation)."""
+    context_summary = context_summary or {}
+    result = _r.retrieve_for_cycle(
+        store_id=store_id,
+        gap_pct=gap_pct,
+        hour=current_hour if current_hour is not None else datetime.now().hour,
+        urgency=urgency,
+        weather_effect=float(context_summary.get("weather_effect", 0.0) or 0.0),
+        advisor_name=advisor_name,
+        critical_stock=int(context_summary.get("critical_stock", 0) or 0),
+        top_k=top_k,
+    )
     return {
-        "scripts":     scripts,
-        "rag_context": rag_context,
-        "available":   True,
-        "query":       query,
+        "scripts":     [_as_legacy_script(d) for d in result.docs],
+        "rag_context": _r.format_context_block(result),
+        "available":   result.mode != "none",
+        "query":       result.expanded_query,
     }
 
 
@@ -243,53 +113,21 @@ async def get_coach_chat_context(
     store_id: str = DEFAULT_STORE_ID,
     current_hour: int = None,
 ) -> dict:
-    """
-    RAG spécifique pour le Coach Chat.
-    Recherche les scripts pertinents pour répondre à la question du conseiller.
-    """
-    client = _get_client()
-    if client is None:
-        return {"scripts": [], "rag_context": "", "available": False}
-
-    if current_hour is None:
-        current_hour = datetime.now().hour
-
-    # Construire requête depuis la question du conseiller
-    query = f"{question} conseiller {advisor_name} heure {current_hour}"
-    embedding = _embed(query)
-
-    if embedding is None:
-        return {"scripts": [], "rag_context": "", "available": False}
-
-    try:
-        results = client.search(
-            collection_name = COLLECTION,
-            data            = [embedding],
-            limit           = 4,
-            output_fields   = ["categorie", "action", "produit", "argument", "impact"],
-        )
-    except Exception as e:
-        logger.warning(f"[RAG] Coach chat search failed: {e}")
-        return {"scripts": [], "rag_context": "", "available": False}
-
-    scripts = []
-    for hit in results[0]:
-        e = hit["entity"]
-        scripts.append({
-            "score":     round(float(hit["distance"]), 3),
-            "categorie": e["categorie"],
-            "action":    e["action"],
-            "produit":   e["produit"],
-            "argument":  e["argument"],
-            "impact":    e["impact"],
-        })
-
-    rag_lines = ["Exemples de réponses qui ont fonctionné dans des situations similaires:"]
-    for s in scripts[:3]:
-        rag_lines.append(f"- [{s['produit']}]: {s['action']} → {s['impact']}")
-
+    """Contexte RAG du Coach Chat (requête = question du conseiller)."""
+    result = _r.retrieve(
+        question,
+        store_id=store_id,
+        hour=current_hour if current_hour is not None else datetime.now().hour,
+        top_k=4,
+    )
     return {
-        "scripts":     scripts,
-        "rag_context": "\n".join(rag_lines),
-        "available":   True,
+        "scripts":     [_as_legacy_script(d) for d in result.docs],
+        "rag_context": _r.format_context_block(result),
+        "available":   result.mode != "none",
     }
+
+
+def health() -> dict:
+    """Sonde RAG exposée par /coach/health."""
+    from app.sales.data.rag.embeddings import health as embed_health
+    return {"milvus": _store.stats(), "embeddings": embed_health()}

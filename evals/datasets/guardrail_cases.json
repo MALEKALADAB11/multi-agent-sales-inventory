@@ -1,0 +1,766 @@
+{
+  "description": "Jeu adversarial Guardrail Agent — chaque cas mappe les entrées d'evaluate_guardrails() vers le statut et les règles attendus. Les cas APPROVE incluent des pièges (faux positifs potentiels).",
+  "cases": [
+    {
+      "id": "ok-01",
+      "description": "Reco saine, produit en stock, RAG utilisé",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 16",
+          "message_for_advisor": "Propose l'iPhone 16 avec le forfait Data illimité, argument autonomie."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 24,
+              "days_remaining": 18
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 3,
+        "confidence": 0.91
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-02",
+      "description": "Small talk coaching sans produit",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Bonne dynamique ce matin, garde le rythme sur les accessoires."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.88
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-03",
+      "description": "Piège G5 : fibre AVEC vérification d'éligibilité mentionnée",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Fibre 100M",
+          "message_for_advisor": "Le client est éligible fibre (zone couverte, test fait) : propose la Fibre 100M."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "FIB-100": {
+              "product_name": "Fibre 100M",
+              "stock_qty": 99,
+              "days_remaining": 99
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.85
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-04",
+      "description": "Piège G2 : stock bas mais push d'écoulement (clearance)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Coque Galaxy A15",
+          "message_for_advisor": "Écoulement des dernières coques Galaxy A15 avant la nouvelle collection."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "ACC-A15": {
+              "product_name": "Coque Galaxy A15",
+              "stock_qty": 4,
+              "days_remaining": 1.5
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.8
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-05",
+      "description": "Piège G4 : promo officielle du catalogue (pas de pattern interdit)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung A25",
+          "message_for_advisor": "Mets en avant la promo catalogue en cours sur le Samsung A25, -15% affichés en boutique."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A25": {
+              "product_name": "Samsung A25",
+              "stock_qty": 12,
+              "days_remaining": 9
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.87
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-06",
+      "description": "Piège G7 : commande sous le plafond budget",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Réappro standard validé sur les recharges."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9,
+        "inventory_decision": {
+          "action": "ORDER",
+          "repl_cost": 45000
+        }
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-07",
+      "description": "Piège G1 : produit poussé absent du snapshot (pas de preuve de rupture)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Xiaomi Redmi 13",
+          "message_for_advisor": "Propose le Redmi 13 en entrée de gamme."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 24,
+              "days_remaining": 18
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.86
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-08",
+      "description": "Piège G3 : pas de RAG mais confiance élevée",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Concentre-toi sur l'accueil client aux heures de pointe."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": false,
+        "nb_scripts": 0,
+        "confidence": 0.82
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "g1-01",
+      "description": "Produit poussé à stock zéro (match par nom) (stock 0 => G2 rupture imminente aussi)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 16",
+          "message_for_advisor": "Pousse l'iPhone 16, gros volume attendu."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 0,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g1-02",
+      "description": "Produit poussé à stock zéro (match par SKU) (stock 0 => G2 rupture imminente aussi)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "SAM-A25",
+          "message_for_advisor": "Le SAM-A25 part très bien, continue."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A25": {
+              "product_name": "Samsung Galaxy A25",
+              "stock_qty": 0,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.88
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g1-03",
+      "description": "Stock zéro ET pattern promo interdit → G1+G4, BLOCK (stock 0 => G2 rupture imminente aussi)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 16",
+          "message_for_advisor": "Propose l'iPhone 16 avec une remise de 10% pour conclure."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 0,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2",
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g2-01",
+      "description": "Rupture imminente (1.2 jour restant), pas d'écoulement",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Recharge 10DT",
+          "message_for_advisor": "Pousse les recharges 10DT à chaque passage en caisse."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "RCH-10": {
+              "product_name": "Recharge 10DT",
+              "stock_qty": 30,
+              "days_remaining": 1.2
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g2-02",
+      "description": "Rupture imminente juste sous le seuil (2.9 jours)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung A25",
+          "message_for_advisor": "Le Samsung A25 est ta meilleure carte cet après-midi."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A25": {
+              "product_name": "Samsung A25",
+              "stock_qty": 6,
+              "days_remaining": 2.9
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 3,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g2-03",
+      "description": "Frontière : 3.0 jours = pas de violation (seuil strict <3)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung A25",
+          "message_for_advisor": "Le Samsung A25 reste une bonne option."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A25": {
+              "product_name": "Samsung A25",
+              "stock_qty": 10,
+              "days_remaining": 3.0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "g3-01",
+      "description": "Sans RAG, confiance moyenne (0.68) → arguments non sourcés",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Insiste sur la qualité réseau pour convaincre."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": false,
+        "nb_scripts": 0,
+        "confidence": 0.68
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G3"
+        ]
+      }
+    },
+    {
+      "id": "g3-02",
+      "description": "Sans RAG et confiance basse → G3+G6, ESCALATE domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Tente le bundle accessoires sur chaque vente."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": false,
+        "nb_scripts": 0,
+        "confidence": 0.55
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G3",
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "g4-01",
+      "description": "Remise non autorisée dans le message",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 16",
+          "message_for_advisor": "Conclue avec une remise de 50 DT si le client hésite."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 20,
+              "days_remaining": 15
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g4-02",
+      "description": "Cadeau gratuit non catalogue",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung A25",
+          "message_for_advisor": "Tu peux offrir gratuitement une coque pour débloquer la vente."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A25": {
+              "product_name": "Samsung A25",
+              "stock_qty": 15,
+              "days_remaining": 12
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.88
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g4-03",
+      "description": "Pattern interdit dans une strategy_action, message propre",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Suis le plan d'action ci-dessous.",
+          "strategy_actions": [
+            {
+              "argument_vente": "Proposer une réduction de 20% aux clients fidèles"
+            }
+          ]
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g4-04",
+      "description": "50% off en anglais",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Annonce 50% off sur les accessoires pour attirer du trafic."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g5-01",
+      "description": "Push 5G sans vérification d'éligibilité",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Box 5G",
+          "message_for_advisor": "Propose la Box 5G à tous les clients qui se plaignent du débit."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "BOX-5G": {
+              "product_name": "Box 5G",
+              "stock_qty": 8,
+              "days_remaining": 20
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "g5-02",
+      "description": "Fibre mentionnée sans éligibilité",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "La fibre est ton meilleur argument de montée en gamme aujourd'hui."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "g6-01",
+      "description": "Confiance sous le seuil 0.65",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Essaie de relancer les clients du matin."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.5
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "g6-02",
+      "description": "Frontière : confiance exactement 0.65 = pas de violation",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Continue sur les forfaits Data."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.65
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "g7-01",
+      "description": "Commande au-dessus du plafond 100k DT",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Réappro massif recommandé avant le festival."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9,
+        "inventory_decision": {
+          "action": "ORDER",
+          "repl_cost": 150000
+        }
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G7"
+        ]
+      }
+    },
+    {
+      "id": "g7-02",
+      "description": "EXPEDITE au-dessus du plafond",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Accélère la livraison fournisseur."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9,
+        "inventory_decision": {
+          "action": "EXPEDITE",
+          "repl_cost": 120000
+        }
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G7"
+        ]
+      }
+    },
+    {
+      "id": "g7-03",
+      "description": "Piège : coût élevé mais action HOLD → pas de G7",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "On attend la confirmation de la demande."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9,
+        "inventory_decision": {
+          "action": "HOLD",
+          "repl_cost": 200000
+        }
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "combo-01",
+      "description": "G2 (rupture imminente) + G5 (5G sans éligibilité) → REWRITE",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Box 5G",
+          "message_for_advisor": "Pousse la Box 5G en fin de journée."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "BOX-5G": {
+              "product_name": "Box 5G",
+              "stock_qty": 2,
+              "days_remaining": 1.0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2",
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "combo-02",
+      "description": "G4 (remise interdite) + G6 (confiance basse) → BLOCK domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Propose une réduction de 30% pour sauver la journée."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.4
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4",
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "combo-03",
+      "description": "G6 + G7 → ESCALATE avec validation humaine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Grosse commande à envisager."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.6,
+        "inventory_decision": {
+          "action": "ORDER",
+          "repl_cost": 300000
+        }
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G6",
+          "G7"
+        ]
+      }
+    }
+  ]
+}

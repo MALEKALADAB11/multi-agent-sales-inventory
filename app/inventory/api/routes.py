@@ -153,7 +153,8 @@ async def _push_update_to_store(store_id: str) -> None:
             payload = await loop.run_in_executor(
                 None,
                 lambda obj=business_objective: analyze_store(
-                    store_id, obj, force_refresh=False, fast=True
+                    store_id, obj, force_refresh=True, fast=True,
+                    page=1, page_size=0,
                 ),
             )
 
@@ -732,6 +733,11 @@ def _to_inventory_item(
         "stockMin":         stock.get("stock_min") or metrics.get("reorder_point", 0),
         "stockMax":         stock.get("stock_max") or (metrics.get("reorder_point", 0) * 2),
         "demandForecast24h": round(avg_daily),
+        # Provenance de la prévision de demande (pipeline demand sensing) :
+        # "demand_sensing_db" = baseline MSTL + correction XGBoost lue en DB,
+        # "live_ts_engine" = TS engine calculé à la volée, "fallback_flat" sinon.
+        "forecastSource":   forecast.get("forecast_source", "unknown"),
+        "forecastEngine":   forecast.get("forecast_engine"),
         "coverageRatio":    coverage_ratio,
         "riskLevel":        risk_level,
         "riskScore":        risk_score,
@@ -1105,6 +1111,17 @@ def analyze_store(
       GET /store/I63?page=2&page_size=100   → next 100
       GET /store/I63?page_size=0            → all (slow — avoid on large stores)
     """
+    # Direct Python calls (WS broadcast, get_summary) bypass FastAPI's
+    # dependency injection, so Query(...) sentinels leak through as defaults.
+    from fastapi.params import Query as _QueryParam
+    if isinstance(business_objective, _QueryParam):
+        business_objective = business_objective.default
+    if isinstance(force_refresh, _QueryParam):
+        force_refresh = force_refresh.default
+    if isinstance(page, _QueryParam):
+        page = page.default
+    if isinstance(page_size, _QueryParam):
+        page_size = page_size.default
     # Check cache first (no lock needed for read)
     if not force_refresh:
         cached = _get_cached(store_id, business_objective)
@@ -1272,6 +1289,46 @@ def get_summary(
     """Summary only — benefits from the same store cache."""
     payload = analyze_store(store_id, business_objective, page=1, page_size=0)
     return payload["summary"]
+
+
+@router.get("/forecast/{store_id}/{sku}")
+def get_demand_forecast(
+    store_id: str,
+    sku: str,
+    days: int = Query(default=14, ge=1, le=30),
+) -> Dict[str, Any]:
+    """
+    Série de prévision de demande jour par jour pour un SKU (pipeline demand
+    sensing) : baseline MSTL 30 j + correction XGBoost 7 j quand elle existe.
+    `predicted` = COALESCE(corrected, baseline) — la valeur que les agents
+    utilisent réellement.
+    """
+    from app.inventory.tools.internal.stock_tools import get_forecast_data
+
+    def _num(v):
+        return None if v is None or pd.isna(v) else _json_safe(v)
+
+    df = get_forecast_data(sku, store_id, days=days)
+    points = []
+    corrected_count = 0
+    for row in df.itertuples(index=False):
+        corrected = _num(getattr(row, "corrected_demand", None))
+        if corrected is not None:
+            corrected_count += 1
+        points.append({
+            "date":      row.date.date().isoformat() if hasattr(row.date, "date") else str(row.date),
+            "predicted": _num(row.predicted_demand),
+            "baseline":  _num(getattr(row, "baseline_demand", None)),
+            "corrected": corrected,
+        })
+    return {
+        "sku":            sku,
+        "store_id":       store_id,
+        "points":         points,
+        "correctedDays":  corrected_count,
+        "model":          "baseline_mstl_v1 + sensing_model_v1" if corrected_count else "baseline_mstl_v1",
+        "source":         "inventory.demand_forecast",
+    }
 
 
 @router.delete("/cache")
@@ -1637,6 +1694,30 @@ async def update_recommendation(
             "Recommendation %s → %s (by %s)",
             recommendation_id, req.status, req.decided_by or "unknown",
         )
+
+        # Boucle de feedback : la décision humaine (Approuver/Rejeter dans la
+        # page Inventory) est journalisée dans public.agent_feedback puis
+        # réinjectée dans les prompts DecisionAgent/Stratège par
+        # feedback_service.get_learning_context_sync. Jamais bloquant.
+        try:
+            from app.core.feedback_service import record_feedback
+            reco = SyncInventoryRepo.get_recommendation_by_id(recommendation_id) or {}
+            record_feedback(
+                store_id=str(reco.get("store_id") or "unknown"),
+                source="reco",
+                decision=req.status,                    # 'approved' | 'rejected'
+                ref_id=recommendation_id,
+                sku=int(reco["sku"]) if reco.get("sku") is not None else None,
+                action_type=reco.get("recommendation_type") or "recommendation",
+                payload={
+                    "decided_by":   req.decided_by,
+                    "order_qty":    reco.get("order_qty"),
+                    "urgency":      reco.get("urgency"),
+                },
+            )
+        except Exception as exc:
+            logger.debug("Feedback recommendation %s non enregistré: %s", recommendation_id, exc)
+
         return {
             "recommendation_id": recommendation_id,
             "status":            req.status,

@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 from app.api.auth import router as auth_router
-from app.sales.data.postgres_provider import get_data_provider
+from app.sales.data.postgres_provider import get_data_provider, PATTERN_HORAIRE
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -166,6 +166,13 @@ except ImportError as e:
     logger.warning(f"⚠️ coach_chat_rag non trouvé: {e}")
 
 try:
+    from app.api.product_requests import router as product_requests_router
+    app.include_router(product_requests_router)
+    logger.info("✅ Product requests router chargé (demandes conseillers)")
+except ImportError as e:
+    logger.warning(f"⚠️ product_requests_router non trouvé: {e}")
+
+try:
     from app.api.hitl import router as hitl_router
     app.include_router(hitl_router)
     logger.info("✅ HITL router chargé")
@@ -182,18 +189,34 @@ except ImportError as e:
 
 # ── Broadcast vers toutes les connexions actives d'un store ──────────────────
 async def _broadcast(store_id: str, payload: str) -> None:
-    """Envoie payload à toutes les connexions WS actives du store."""
+    """Envoie payload à toutes les connexions WS actives du store.
+
+    Livraison par identifiant CANONIQUE. Le simulateur émet ses événements temps
+    réel (`realtime_stock_update`) sous l'id POS du magasin (ex. « I63 »), alors
+    que le frontend se connecte sous un alias (ex. « store-lac2 »). Un simple
+    match exact laissait donc tomber toutes les ventes en direct. On résout ici
+    l'alias : toute connexion dont l'id résout vers le même magasin reçoit
+    l'événement. Les magasins hors-alias (pass-through) ne matchent qu'eux-mêmes,
+    donc aucune diaphonie entre boutiques.
+    """
     _last_payload[store_id] = payload          # mise en cache systématique
-    conns = list(_store_connections.get(store_id, set()))
-    dead  = set()
-    for ws in conns:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
+    canon = map_store_id(store_id)
+    target_keys = {
+        key for key in _store_connections
+        if key == store_id or map_store_id(key) == canon
+    }
+    dead: set = set()
+    for key in target_keys:
+        for ws in list(_store_connections.get(key, set())):
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.add((key, ws))
     # Nettoyer les connexions mortes
-    if dead and store_id in _store_connections:
-        _store_connections[store_id] -= dead
+    for key, ws in dead:
+        conns = _store_connections.get(key)
+        if conns:
+            conns.discard(ws)
 
 
 async def _safe_send(websocket: WebSocket, data: str) -> bool:
@@ -221,6 +244,12 @@ async def startup_event():
     _store_connections.clear()
     _last_payload.clear()
     _agent_running.clear()
+
+    # Pool asyncpg partagé, ouvert sur la boucle uvicorn : les outils agents le
+    # réutilisent au lieu d'ouvrir une connexion par appel.
+    from app.core.db import get_async_pool
+    if await get_async_pool() is None:
+        logger.warning("⚠️ Pool asyncpg indisponible — connexions directes en repli")
 
     # Le schéma appartient aux migrations Alembic — l'app vérifie, ne crée pas.
     from app.core.schema_check import verify_schema
@@ -281,7 +310,9 @@ async def startup_event():
     logger.info("✅ TimesFM chargé")
 
     stock_sim = None
-    simulator = RealtimeSimulator(store_id=DEFAULT_STORE_ID, interval=15)
+    # Aucune boutique imposée : le simulateur découvre lui-même les boutiques
+    # actives les plus actives des 30 derniers jours (SIM_MAX_STORES).
+    simulator = RealtimeSimulator()
 
     _RT_DB_CFG = {
         "host":     os.getenv("POSTGRES_HOST", "localhost"),
@@ -294,13 +325,25 @@ async def startup_event():
     def _on_sale(store_id: str, sku: str, units: int, product_name: str = None, amount: float = None) -> None:
         """
         Callback temps réel : une vente vient d'être enregistrée dans transactions_rt.
-        1. Décrémente quantity_available dans inventory.stock_levels (persistence PG)
-        2. Met à jour le cache mémoire _live_stock
-        3. Broadcast WebSocket immédiat avec le nouveau niveau de stock
-        4. Déclenche une alerte si stock critique
+        La persistance PG (décrement stock_levels + mouvement VENTE) est faite
+        par le trigger trg_sync_stock_on_sale — ici uniquement :
+        1. Met à jour le cache mémoire _live_stock
+        2. Broadcast WebSocket immédiat avec le nouveau niveau de stock
+        3. Déclenche une alerte si stock critique
         """
         sku_str = str(sku)
-        sku_int = int(sku) if str(sku).isdigit() else None
+
+        # ── 0. Signaler la vente à l'Analyste ──────────────────────────────
+        # Purement synchrone (un compteur incrémenté) : le chemin
+        # d'encaissement n'attend rien. La coalescence et le recalcul se font
+        # dans la boucle du déclencheur.
+        try:
+            from app.sales.orchestration.sale_trigger import get_sale_trigger
+            _st = get_sale_trigger()
+            if _st is not None:
+                _st.notify_sale(store_id, float(amount or 0.0))
+        except Exception as e:
+            logger.debug("[RT_SYNC] sale_trigger: %s", e)
 
         # ── 1. Lire stock actuel depuis PG ou cache ────────────────────────
         try:
@@ -334,26 +377,14 @@ async def startup_event():
             sku_str, store_id, current, new_stock, units, severity
         )
 
-        # ── 2. Persister le décrement dans PostgreSQL (async, non bloquant) ─
+        # ── 2. Broadcast (la persistance PG est faite par le trigger DB) ────
+        # Le décrement de inventory.stock_levels ET l'écriture du mouvement
+        # VENTE dans supply.stock_movements sont assurés par le trigger
+        # trg_sync_stock_on_sale sur transactions_rt (migrations 0001+0009).
+        # L'UPDATE applicatif qui vivait ici échouait de toute façon :
+        # quantity_available est une colonne générée, non modifiable — et le
+        # réparer aurait décrémenté le stock deux fois (trigger + app).
         async def _persist_and_broadcast():
-            # Décrement stock_levels dans PG
-            if sku_int is not None:
-                try:
-                    import asyncpg as _apg
-                    _conn = await _apg.connect(**_RT_DB_CFG, timeout=5)
-                    await _conn.execute("""
-                        UPDATE inventory.stock_levels
-                        SET quantity_available = GREATEST(0, COALESCE(quantity_available, quantity, 0) - $1),
-                            quantity           = GREATEST(0, COALESCE(quantity, 0) - $2),
-                            last_sold          = NOW(),
-                            updated_at         = NOW()
-                        WHERE store_id = $3 AND sku = $4
-                    """, units, units, store_id, sku_int)
-                    await _conn.close()
-                    logger.debug("[RT_SYNC] PG stock_levels decremented: %s@%s -%d", sku_str, store_id, units)
-                except Exception as e:
-                    logger.debug("[RT_SYNC] PG decrement skipped: %s", e)
-
             # Broadcast immédiat vers le frontend — event dédié temps réel
             label = product_name or f"SKU {sku_str}"
             amount_str = f" — {amount:.0f} DT" if amount is not None else ""
@@ -411,7 +442,28 @@ async def startup_event():
         if loop.is_running():
             asyncio.create_task(_persist_and_broadcast())
 
+    def _on_stockout(store_id: str, sku, product_name: str = None) -> None:
+        """
+        Une vente a été tentée sur un SKU à zéro : le simulateur ne la persiste
+        pas (pas de stock négatif). On remonte l'information au cache et au flux
+        WebSocket pour que la rupture soit visible immédiatement, sans attendre
+        le prochain cycle d'inventaire.
+        """
+        sku_str = str(sku)
+        _live_stock[sku_str] = 0.0
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_broadcast(store_id, json.dumps({
+                "type":         "stockout",
+                "store_id":     store_id,
+                "sku":          sku_str,
+                "product_name": product_name,
+                "message":      f"Rupture : {product_name or sku_str} indisponible",
+                "timestamp":    datetime.now().isoformat(),
+            }, default=str)))
+
     simulator.on_sale = _on_sale
+    simulator.on_stockout = _on_stockout
     simulator.start()
     app.state.simulator = simulator
     logger.info("✅ Inventory ↔ Sales sync")
@@ -462,6 +514,47 @@ async def startup_event():
     alert_trigger = AlertCycleTrigger(orchestrator=orchestrator)
     app.state.alert_trigger = alert_trigger
 
+    # ── Déclenchement sur nouvelle vente — deux étages ───────────────────────
+    # Étage 1 : recalcul analytique déterministe (< 1 s, zéro LLM) quelques
+    # secondes après la dernière vente, poussé au frontend. Étage 2 : cycle
+    # agent complet, uniquement si l'urgence, la faisabilité ou le gap ont
+    # matériellement bougé. Voir sale_trigger.py pour le raisonnement.
+    from app.sales.orchestration.sale_trigger import init_sale_trigger
+
+    async def _push_analysis(store_id: str, analysis: dict) -> None:
+        """Diffuse le recalcul analytique sur le flux WebSocket de la boutique."""
+        await _broadcast(store_id, json.dumps({
+            "type":            "analyst_update",
+            "store_id":        store_id,
+            "current_revenue": analysis.get("current_ca"),
+            "daily_target":    analysis.get("daily_target"),
+            "attainment_pct":  analysis.get("attainment_pct"),
+            "forecast_eod":    analysis.get("eod_forecast"),
+            "forecast_ci":     [analysis.get("eod_ci_low"), analysis.get("eod_ci_high")],
+            "gap_pct":         analysis.get("gap_pct"),
+            "gap_amount":      analysis.get("gap_eod"),
+            "urgency_level":   analysis.get("urgency_level"),
+            "urgency_score":   analysis.get("urgency_score"),
+            "feasibility":     analysis.get("feasibility"),
+            "trend_signal":    analysis.get("trend_signal"),
+            "hourly_gaps":     analysis.get("hourly_gaps", []),
+            "next_hours":      analysis.get("next_hours", []),
+            "target_hit_hour": analysis.get("target_hit_hour"),
+            "model_engine":    analysis.get("model_engine"),
+            "summary":         analysis.get("summary"),
+            "timestamp":       datetime.now().isoformat(),
+        }, default=str))
+
+    async def _run_full_cycle(store_id: str, reason: str) -> None:
+        await orchestrator.run_cycle(store_id=store_id, triggered_by=f"sale:{reason}")
+
+    sale_trigger = init_sale_trigger(
+        on_analysis=_push_analysis, run_full_cycle=_run_full_cycle)
+    for _sid in active_stores:
+        sale_trigger.track_store(_sid)
+    sale_trigger.start()
+    app.state.sale_trigger = sale_trigger
+
     async def _delayed_trigger_start():
         logger.info("⏳ CronTrigger démarrera après stabilisation des données...")
         await asyncio.sleep(10)
@@ -485,6 +578,58 @@ async def startup_event():
             logger.warning(f"⚠️ TimesFM preload: {e}")
 
     asyncio.create_task(_preload_timesfm())
+
+    # ── Scraper événements (FIC, offres Ooredoo) → market.events, quotidien ──
+    try:
+        from app.sales.coaching.agents.stratege.events_scraper import refresh_events_loop
+        asyncio.create_task(refresh_events_loop())
+        logger.info("✅ Events scraper programmé (rafraîchissement quotidien)")
+    except Exception as e:
+        logger.warning(f"⚠️ Events scraper non démarré: {e}")
+
+    # ── Kanban : auto-confirmation des BC SOUMIS > 24h sans action humaine ──
+    try:
+        from app.inventory.services.po_auto_confirm import auto_confirm_loop
+        asyncio.create_task(auto_confirm_loop())
+        logger.info("✅ Auto-confirmation BC programmée (SOUMIS -> CONFIRME après 24h)")
+    except Exception as e:
+        logger.warning(f"⚠️ Auto-confirmation BC non démarrée: {e}")
+
+    # ── Préchauffage du cache inventory ──────────────────────────────────────
+    # Le pipeline a froid coute ~3 min sur I63 (143 SKUs), dont l'essentiel en
+    # ajustement statsforecast. Le dashboard, lui, abandonne chaque tentative
+    # HTTP au bout de 60 s : tant que le cache est froid il affiche 0 partout,
+    # ce qui se lit a tort comme « aucune rupture ». On paie donc ce cout une
+    # fois au demarrage, en tache de fond, pour que la premiere ouverture du
+    # dashboard tape un cache chaud (~0,2 s).
+    async def _prewarm_inventory():
+        from app.inventory.api.routes import analyze_store
+        stores = [s.strip() for s in os.getenv(
+            "INVENTORY_PREWARM_STORES", DEFAULT_STORE_ID).split(",") if s.strip()]
+        for store_id in stores:
+            try:
+                t0 = time.time()
+                loop = asyncio.get_event_loop()
+                # run_in_executor : analyze_store est synchrone et tient la
+                # boucle plusieurs minutes si on l'appelle directement.
+                payload = await loop.run_in_executor(
+                    None,
+                    lambda sid=store_id: analyze_store(
+                        sid, "balanced", force_refresh=False, fast=False,
+                        page=1, page_size=0,
+                    ),
+                )
+                logger.info(
+                    "✅ Cache inventory prechauffe — %s : %d SKUs en %.0fs",
+                    store_id, len(payload.get("items", [])), time.time() - t0,
+                )
+            except Exception as e:
+                logger.warning("⚠️ Prechauffage inventory %s echoue: %s", store_id, e)
+
+    if os.getenv("INVENTORY_PREWARM", "true").lower() == "true":
+        asyncio.create_task(_prewarm_inventory())
+        logger.info("✅ Préchauffage cache inventory programmé")
+
     logger.info("🚀 All systems started — v5.0.0")
 
 
@@ -492,10 +637,16 @@ async def startup_event():
 async def shutdown_event():
     simulator = getattr(app.state, "simulator", None)
     if simulator: simulator.stop()
+    sale_trigger = getattr(app.state, "sale_trigger", None)
+    if sale_trigger: sale_trigger.stop()
     trigger = getattr(app.state, "trigger", None)
     if trigger: trigger.stop()
     alert_trigger = getattr(app.state, "alert_trigger", None)
     if alert_trigger: alert_trigger.stop()
+
+    from app.core.db import close_async_pool
+    await close_async_pool()
+
     logger.info("Shutting down cleanly.")
 
 
@@ -749,6 +900,12 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         "daily_target": dt_val, "forecast_eod": feo, "attainment": att,
         "coverage": cov, "mape": prediction.get("mape", 14.3),
         "timesfm_prediction": prediction, "feedback_history": [],
+        # Signaux horaires réels de l'Analyste v4 (ledger + prévision h+1..h+3)
+        "ts_analysis":         supervisor_result.get("ts_analysis") or {},
+        "hourly_gaps":         supervisor_result.get("hourly_gaps") or [],
+        "next_hours_forecast": supervisor_result.get("next_hours_forecast") or [],
+        "trend_signal":        supervisor_result.get("trend_signal", ""),
+        "feasibility":         supervisor_result.get("feasibility", ""),
         "metrics": {"cycle_id": cycle_id, "store_id": store_id},
     }
 
@@ -825,7 +982,10 @@ def _build_payload(analysis: dict) -> dict:
     cr     = analysis.get("current_revenue") or 0
     dt_val = analysis.get("daily_target") or 1007
     feo    = analysis.get("forecast_eod") or 0
-    att    = analysis.get("attainment") or 0
+    # Invariant du payload : attainment TOUJOURS calculé sur le même couple
+    # (ca_today, ca_target) que les cartes CA/gap — jamais une valeur venue
+    # d'une autre base de revenu (sinon "atteint 185%" à côté d'un gap -24%).
+    att    = round((cr / dt_val) * 100, 1) if dt_val > 0 else 0
 
     strategie         = analysis.get("strategie") or ""
     strategie_actions = analysis.get("strategie_actions") or []
@@ -845,22 +1005,94 @@ def _build_payload(analysis: dict) -> dict:
 
     weather_str  = f"{weather_sum.get('weather_icon','🌤️')} {weather_sum.get('weather_label','Tunis')}".strip()
     next_holiday = holidays.get("next_holiday") or {}
-    event_str    = ""
 
+    # Les lignes CONCURRENTIEL de market.events sont des offres scrapées
+    # (« Offre Ooredoo — … » avec des URL dans le nom), pas des événements
+    # terrain : elles vivent déjà dans le badge « offres Ooredoo » et ne doivent
+    # pas noyer les festivals dans la liste des événements.
+    def _is_event(e: dict) -> bool:
+        return (e.get("type") or "").upper() != "CONCURRENTIEL"
+
+    events_en_cours = [e for e in (external_ctx.get("events_en_cours") or []) if _is_event(e)]
+    events_a_venir  = [e for e in (external_ctx.get("events_a_venir") or [])  if _is_event(e)]
+
+    # Un festival national (Carthage, Hammamet, Sousse… souvent sponsorisés par
+    # Ooredoo) prime sur les soldes commerciales : c'est l'événement que le
+    # terrain doit voir en priorité. Tri stable : festival d'abord, puis par
+    # date de début.
+    def _event_priority(e: dict) -> tuple:
+        nom = (e.get("nom") or "").lower()
+        typ = (e.get("type") or "").upper()
+        is_festival = "festival" in nom or typ in ("NATIONAL", "CULTUREL", "SPORTIF", "FESTIVAL")
+        return (0 if is_festival else 1, e.get("debut", ""))
+
+    events_en_cours = sorted(events_en_cours, key=_event_priority)
+    events_a_venir  = sorted(events_a_venir,  key=lambda e: e.get("jours_avant", 99))
+
+    # ── Badge ÉVÉNEMENT (festival/marché) — indépendant du jour férié ──────────
+    event_str = ""
+    if events_en_cours:
+        event_str = f"🎪 {events_en_cours[0]['nom']} (en cours)"
+    elif events_a_venir and events_a_venir[0].get("jours_avant", 99) <= 14:
+        ev = events_a_venir[0]
+        event_str = f"🎪 {ev['nom']} dans {ev['jours_avant']}j"
+
+    # ── Badge JOUR FÉRIÉ — slot distinct : ne doit plus être écrasé par un
+    # événement en cours (soldes toute l'année). Sinon « les jours fériés ne
+    # sortent jamais ».
+    holiday_str = ""
     if holidays.get("is_holiday_today"):
-        event_str = f"🎉 {(holidays.get('today_holiday') or {}).get('name','Jour férié')}"
+        holiday_str = f"🎉 {(holidays.get('today_holiday') or {}).get('name','Jour férié')} (aujourd'hui)"
     elif next_holiday.get("name"):
-        event_str = f"📅 {next_holiday['name']} dans {next_holiday.get('days_until',0)}j"
+        holiday_str = f"📅 {next_holiday['name']} dans {next_holiday.get('days_until',0)}j"
 
     all_promos = (events_data.get("promotions") or []) + (events_data.get("new_offers") or [])
     promo_str  = f"🎯 {len(all_promos)} offre(s) Ooredoo" if all_promos else ""
 
+    # La modal "Offres Ooredoo actives" du dashboard lit store_context.active_offers
+    # (title/price/category/details/script) — n'envoyer que le compteur laissait
+    # la liste vide alors que le badge annonçait N offres.
+    active_offers = [
+        {
+            "title":    o.get("title", ""),
+            "price":    o.get("price", ""),
+            "category": o.get("category", ""),
+            "details":  o.get("details", ""),
+            "script":   (
+                f"Mentionnez « {o.get('title','')} »"
+                + (f" à {o['price']}" if o.get("price") else "")
+                + " — vérifiez l'éligibilité du client et proposez le bundle associé."
+            ),
+        }
+        for o in all_promos[:8] if o.get("title")
+    ]
+
+    # État d'ouverture : hors horaires, la boutique est fermée → le simulateur
+    # n'émet plus aucune vente et le dashboard doit l'afficher clairement plutôt
+    # que de laisser le ticker sur « En attente de la première vente ».
+    from app.core.config import is_store_open, Config as _Cfg
+    _store_open = is_store_open()
+
     store_context = {
-        "weather":     weather_str,
-        "event":       event_str,
-        "promo":       promo_str,
-        "stock_alert": "📦 Stock critique — vérifier boutique",
-        "temperature": f"{weather_sum.get('temperature',22)}°C",
+        "weather":       weather_str,
+        "event":         event_str,
+        "holiday":       holiday_str,
+        "promo":         promo_str,
+        "is_open":       _store_open,
+        "open_hour":     _Cfg.STORE_OPEN_HOUR,
+        "close_hour":    _Cfg.STORE_CLOSE_HOUR,
+        "status_label":  "Ouverte" if _store_open else "Fermée",
+        "active_offers": active_offers,
+        "events_en_cours": [
+            {"nom": e["nom"], "fin": e.get("fin",""), "intensite": e.get("intensite","")}
+            for e in events_en_cours[:3]
+        ],
+        "events_a_venir": [
+            {"nom": e["nom"], "debut": e.get("debut",""), "jours_avant": e.get("jours_avant",0)}
+            for e in events_a_venir[:3]
+        ],
+        "stock_alert":   "📦 Stock critique — vérifier boutique",
+        "temperature":   f"{weather_sum.get('temperature',22)}°C",
     }
 
     hour          = datetime.now().hour
@@ -911,32 +1143,70 @@ def _build_payload(analysis: dict) -> dict:
         if a["attainment"] < 80
     ]
 
-    tph         = round(dt_val / 11)
+    # Objectif horaire réel : profil de trafic du magasin (PATTERN_HORAIRE),
+    # pas un dt_val/11 uniforme qui donnait une ligne "Objectif" plate.
+    def _tph(h: int) -> int:
+        return round(dt_val * PATTERN_HORAIRE.get(h, 5) / 100)
+
     hourly_rate = cr / hours_elapsed
+
+    # CA réel par heure. pos_history (postgres_provider) expose "hour" (int)
+    # et "revenue" — l'ancien code lisait "transaction_time", clé inexistante,
+    # d'où un graphe horaire vide (CA matin 0, meilleure heure "—").
     hd: dict[int, float] = {}
     for tx in pos_history:
-        t = tx.get("transaction_time")
-        if t and hasattr(t, "hour"):
-            hd[t.hour] = hd.get(t.hour,0.0) + tx.get("revenue",0.0)
+        h_tx = tx.get("hour")
+        if h_tx is None:
+            t = tx.get("transaction_time")
+            h_tx = t.hour if t is not None and hasattr(t, "hour") else None
+        if h_tx is not None:
+            hd[int(h_tx)] = hd.get(int(h_tx), 0.0) + float(tx.get("revenue", 0.0) or 0.0)
+    # Repli : hourly_ca de fetch_pos_data (batch + RT) si l'historique est vide
+    if not hd:
+        hd = {int(k): float(v or 0) for k, v in (pos_data.get("hourly_ca") or {}).items()}
+
+    # Attendu/prévision horaires RÉELS de l'Analyste v4 : ledger (heures passées,
+    # attendu Holt-Winters × profil horaire) + next_hours (h+1..h+3). Remplace
+    # l'ancien bruit random.uniform — la courbe prévision affichée est celle
+    # que l'agent a réellement calculée.
+    ts_expected: dict[int, float] = {}
+    ts_risk:     dict[int, bool]  = {}
+    for e in (analysis.get("hourly_gaps") or []):
+        try:
+            ts_expected[int(e["hour"])] = float(e.get("expected", 0) or 0)
+            ts_risk[int(e["hour"])]     = e.get("status") in ("WATCH", "ALERT")
+        except (KeyError, TypeError, ValueError):
+            continue
+    for e in (analysis.get("next_hours_forecast") or []):
+        try:
+            ts_expected[int(e["hour"])] = float(e.get("expected_ca", 0) or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    def _hour_label(h: int) -> str:
+        return "12PM" if h == 12 else f"{h}AM" if h < 12 else f"{h-12}PM"
 
     hourly_performance = []
     for h in range(9, min(hour+1, 21)):
-        rev   = max(0, hd.get(h,0.0))
-        label = "12PM" if h==12 else f"{h}AM" if h<12 else f"{h-12}PM"
+        rev      = max(0.0, hd.get(h, 0.0))
+        expected = ts_expected.get(h)
+        forecast = expected if expected is not None else (rev if rev > 0 else max(0.0, hourly_rate))
         hourly_performance.append({
-            "hour":label,"revenue":round(rev),"actual":round(rev),"target":tph,
-            "forecast":round(rev) if rev>0 else round(max(0,hourly_rate)*random.uniform(0.85,1.10)),
-            "risk":rev>0 and rev<tph*0.85,
+            "hour": _hour_label(h), "revenue": round(rev), "actual": round(rev),
+            "target": _tph(h), "forecast": round(forecast),
+            "risk": ts_risk.get(h, rev > 0 and rev < _tph(h) * 0.85),
         })
     for h in range(hour+1, 21):
-        label = "12PM" if h==12 else f"{h}AM" if h<12 else f"{h-12}PM"
-        mult  = random.uniform(1.10,1.30) if h in [12,13,17,18] else random.uniform(0.60,0.80) if h in [9,10,19,20] else random.uniform(0.90,1.10)
-        hourly_performance.append({"hour":label,"revenue":0,"actual":0,"target":tph,"forecast":round(tph*mult),"risk":False})
+        expected = ts_expected.get(h)
+        hourly_performance.append({
+            "hour": _hour_label(h), "revenue": 0, "actual": 0, "target": _tph(h),
+            "forecast": round(expected if expected is not None else _tph(h)), "risk": False,
+        })
 
     risk_hours = [
-        {"hour":h["hour"],"target_pct":round((h["revenue"]/tph)*100),"units_behind":round((h["revenue"]-tph)/150)}
+        {"hour":h["hour"],"target_pct":round((h["revenue"]/h["target"])*100),"units_behind":round((h["revenue"]-h["target"])/150)}
         for h in hourly_performance
-        if tph>0 and h["revenue"]>0 and (h["revenue"]/tph)*100<85
+        if h["target"]>0 and h["revenue"]>0 and (h["revenue"]/h["target"])*100<85
     ]
 
     by_cat: dict[str,float] = {}
@@ -959,7 +1229,9 @@ def _build_payload(analysis: dict) -> dict:
         {"type":"weather","label":f"{weather_sum.get('weather_icon','⛅')} {weather_sum.get('weather_label','Tunis')} — {weather_sum.get('temperature',22)}°C","level":w_level,"value":w_eff},
     ]
     if event_str and not context_signals:
-        final_signals.append({"type":"holiday","label":event_str,"level":"med","value":0.5})
+        final_signals.append({"type":"event","label":event_str,"level":"med","value":0.5})
+    if holiday_str and not context_signals:
+        final_signals.append({"type":"holiday","label":holiday_str,"level":"med","value":0.4})
     if promo_str and not context_signals:
         final_signals.append({"type":"event","label":promo_str,"level":"low","value":0.2})
 
@@ -1298,43 +1570,49 @@ async def health():
 
 @app.get("/api/v1/stores/{store_id}/metrics")
 async def get_store_metrics(store_id: str):
+    from app.sales.coaching.agents.analyst.ts_engine import analyze_store
     mapped_id = map_store_id(store_id)
     provider  = get_data_provider()
     pos_data  = await provider.fetch_pos_data(mapped_id)
     weather   = _fetch_weather_fallback()
-    cr = pos_data.get("current_revenue",0) or 0
-    dt = pos_data.get("daily_target",1007) or 1007
+
+    # CA, objectif, atteinte : issus du moteur analytique, cohérents avec le
+    # reste du système. pos_data ne sert plus qu'au nombre de transactions.
+    a  = await analyze_store(mapped_id)
+    cr = a.get("current_ca", pos_data.get("current_revenue", 0) or 0)
+    dt = a.get("daily_target", pos_data.get("daily_target", 1007) or 1007)
     return JSONResponse({
-        "ca_today":   cr, "ca_target": dt,
-        "attainment": round((cr/dt)*100,1) if dt>0 else 0,
-        "visitors_h": pos_data.get("nb_transactions_today",0),
-        "agents_live": 4,
+        "ca_today":     cr, "ca_target": dt,
+        "attainment":   a.get("attainment_pct", round((cr/dt)*100,1) if dt>0 else 0),
+        "forecast_eod": a.get("eod_forecast"),
+        "gap_pct":      a.get("gap_pct"),
+        "urgency":      a.get("urgency_level"),
+        "visitors_h":   pos_data.get("nb_transactions_today",0),
+        "agents_live":  4,
         "store_context": {
             "weather":     f"{weather['weather_icon']} {weather['weather_label']}",
             "event":"","promo":"",
             "stock_alert": "📦 Stock critique — vérifier boutique",
             "temperature": f"{weather['temperature']}°C",
         },
-        "ca_yesterday_same_hour": cr*0.88,
-        "source":"postgresql",
+        "source":"ts_engine",
     })
 
 
 @app.get("/api/v1/forecast/eod/{store_id}")
 async def get_forecast_eod(store_id: str):
+    # Servi par le moteur de l'Analyste : mêmes chiffres que le WebSocket, avec
+    # le modèle entraîné et le garde-fou d'invariants. Fini le "prophet+ratio".
+    from app.sales.coaching.agents.analyst.ts_engine import analyze_store
     mapped_id = map_store_id(store_id)
-    provider  = get_data_provider()
-    pred      = await provider.fetch_timesfm_prediction(mapped_id)
-    pos_data  = await provider.fetch_pos_data(mapped_id)
-    dt = pos_data.get("daily_target",1007) or 1007
-    cr = pos_data.get("current_revenue",0) or 0
-    ga = max(0, dt-cr)
-    gp = round((ga/dt*100) if dt>0 else 0, 1)
+    a = await analyze_store(mapped_id)
+    if a.get("error"):
+        return JSONResponse({"store_id": mapped_id, "error": a["error"]})
     return JSONResponse({
-        "eod":pred.get("forecast_end_of_day",0),"gap_pct":gp,"gap_amount":ga,
-        "ci_low":(pred.get("confidence_interval") or {}).get("low",0),
-        "ci_high":(pred.get("confidence_interval") or {}).get("high",0),
-        "source":"prophet+ratio",
+        "eod": a["eod_forecast"], "gap_pct": a["gap_pct"], "gap_amount": a["gap_eod"],
+        "ci_low": a["eod_ci_low"], "ci_high": a["eod_ci_high"],
+        "urgency": a["urgency_level"], "feasibility": a["feasibility"],
+        "model": a["model_engine"], "source": "ts_engine",
     })
 
 
@@ -1375,20 +1653,28 @@ async def get_live_analysis(store_id: str):
         pos_data.get("current_revenue",0),
         pos_data.get("daily_target",1007),
     )
-    cr  = pos_data.get("current_revenue",0) or 0
-    dt  = pos_data.get("daily_target",1007) or 1007
-    ga  = max(0, dt-cr)
-    gp  = round((ga/dt*100) if dt>0 else 0, 1)
-    feo = prediction.get("forecast_end_of_day",0) or 0
-    ul  = "HIGH" if gp>30 else "MEDIUM" if gp>15 else "LOW"
+    # Chiffres issus du moteur analytique (mêmes que le WebSocket), avec repli
+    # sur pos_data si l'analyse échoue.
+    from app.sales.coaching.agents.analyst.ts_engine import analyze_store
+    a   = await analyze_store(mapped_id)
+    cr  = a.get("current_ca", pos_data.get("current_revenue",0) or 0)
+    dt  = a.get("daily_target", pos_data.get("daily_target",1007) or 1007)
+    ga  = a.get("gap_eod", max(0, dt-cr))
+    gp  = a.get("gap_pct", round((ga/dt*100) if dt>0 else 0, 1))
+    feo = a.get("eod_forecast", prediction.get("forecast_end_of_day",0) or 0)
+    ul  = a.get("urgency_level", "MEDIUM")
     return JSONResponse(_build_payload({
         "pos_data":pos_data,"pos_history":pos_history,"prediction":prediction,
-        "urgency_level":ul,"urgency_score":round(min(1.0,gp/60),3),
+        "urgency_level":ul,"urgency_score":a.get("urgency_score",round(min(1.0,gp/60),3)),
         "gap_pct":gp,"gap_amount":ga,
-        "analyst_summary":f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt:,.0f} TND.",
+        "analyst_summary":a.get("summary", f"Gap {gp:.1f}% — CA {cr:,.0f}/{dt:,.0f} TND."),
         "current_revenue":cr,"daily_target":dt,"forecast_eod":feo,
-        "attainment":round((cr/dt)*100,1) if dt>0 else 0,
-        "coverage":100.0,"mape":14.3,
+        "attainment":a.get("attainment_pct", round((cr/dt)*100,1) if dt>0 else 0),
+        "coverage":a.get("coverage_pct",100.0),"mape":a.get("mape_backtest",14.3),
+        "forecast_eod_ci_low":a.get("eod_ci_low"),"forecast_eod_ci_high":a.get("eod_ci_high"),
+        "feasibility":a.get("feasibility"),"trend_signal":a.get("trend_signal"),
+        "next_hours_forecast":a.get("next_hours",[]),"target_hit_hour":a.get("target_hit_hour"),
+        "hourly_gaps":a.get("hourly_gaps",[]),"model_engine":a.get("model_engine"),
         "strategie":"","strategie_actions":[],"cause_racine":"",
         "context_heatmap":{},"context_signals":[],"external_context":{},
         "message_manager":"","focus_produits":[],"_sellers_cache":sellers,

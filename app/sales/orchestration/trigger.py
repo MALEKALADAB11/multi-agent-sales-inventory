@@ -74,11 +74,19 @@ class CronTrigger:
             except Exception as e:
                 logger.error("CronTrigger error (store=%s): %s", store_id, e)
 
-    async def fire_now(self, triggered_by: str = "manual") -> dict:
-        """Déclenche un cycle immédiatement — appelé par l'API."""
+    async def fire_now(self, triggered_by: str = "manual",
+                       store_id: Optional[str] = None) -> dict:
+        """
+        Déclenche un cycle immédiatement — appelé par l'API.
+
+        `store_id` permet de cibler une boutique précise ; sans lui, la première
+        boutique suivie. L'ancienne version ignorait le paramètre et lançait
+        toujours la boutique par défaut, quel que soit ce que l'appelant
+        demandait.
+        """
         result = await self.orchestrator.run_cycle(
-            store_id     = self.store_id,
-            triggered_by = triggered_by
+            store_id     = store_id or self.store_id,
+            triggered_by = triggered_by,
         )
         self.last_result = result
         return result

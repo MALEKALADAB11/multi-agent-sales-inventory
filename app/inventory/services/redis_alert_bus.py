@@ -34,29 +34,29 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Singleton Redis client ─────────────────────────────────────────────────────
-#
-# IMPORTANT: _redis_client / _redis_available are only ever touched from the
-# single persistent background event loop set up below (_ensure_background_loop).
-# They used to be reset and rebuilt by a fresh thread+loop on every single
-# dispatch_alerts_sync() call — with 30-50 alert-worthy SKUs dispatched
-# concurrently from the orchestrator's worker threads, that meant many
-# concurrently-spawned event loops racing to reset/rebuild the SAME global
-# client, producing "attached to a different loop" errors, connections torn
-# down after their owning loop was already closed, and dispatch calls
-# stalling for up to the full 15s join() timeout each. Routing every call
-# through one long-lived loop removes the race entirely.
+# ── Clients Redis par event loop ───────────────────────────────────────────────
+# Un client asyncio Redis est lié à SA boucle : le partager entre la boucle
+# FastAPI et les boucles temporaires de dispatch_alerts_sync provoquait des
+# publications perdues (« Connection closed by server ») et un spam
+# « RuntimeError: Event loop is closed » quand le GC détruisait les connexions
+# d'une boucle fermée. WeakKeyDictionary : les entrées des boucles mortes
+# disparaissent d'elles-mêmes.
 
-_redis_client = None
-_redis_available: bool = False
+import weakref
+
+_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any]" = weakref.WeakKeyDictionary()
+_failed:  "weakref.WeakSet[asyncio.AbstractEventLoop]" = weakref.WeakSet()
 
 
 async def _get_redis():
-    """Lazy-init Redis async client. Thread-safe via asyncio."""
-    global _redis_client, _redis_available
+    """Client Redis async de la boucle courante (lazy-init, un par loop)."""
+    loop = asyncio.get_running_loop()
 
-    if _redis_client is not None:
-        return _redis_client if _redis_available else None
+    client = _clients.get(loop)
+    if client is not None:
+        return client
+    if loop in _failed:
+        return None
 
     try:
         import redis.asyncio as aioredis  # type: ignore
@@ -66,7 +66,7 @@ async def _get_redis():
         db       = int(os.getenv("REDIS_DB", "0"))
         password = os.getenv("REDIS_PASSWORD") or None
 
-        _redis_client = aioredis.Redis(
+        client = aioredis.Redis(
             host=host,
             port=port,
             db=db,
@@ -75,26 +75,24 @@ async def _get_redis():
             socket_connect_timeout=2,
             socket_timeout=2,
         )
-        await _redis_client.ping()
-        _redis_available = True
+        await client.ping()
+        _clients[loop] = client
         logger.info("[AlertBus] Redis connecté — %s:%d/db%d", host, port, db)
+        return client
 
     except ImportError:
         logger.warning("[AlertBus] redis.asyncio non installé — alertes désactivées")
-        _redis_available = False
     except Exception as exc:
         logger.warning("[AlertBus] Redis indisponible (%s) — alertes non publiées", exc)
-        _redis_available = False
 
-    return _redis_client if _redis_available else None
+    _failed.add(loop)
+    return None
 
 
 def _reset_client() -> None:
-    """Réinitialise le client (tests unitaires uniquement — ne pas appeler en prod,
-    voir _ensure_background_loop pour le fonctionnement en production)."""
-    global _redis_client, _redis_available
-    _redis_client    = None
-    _redis_available = False
+    """Réinitialise les clients (tests unitaires)."""
+    _clients.clear()
+    _failed.clear()
 
 
 # ── Persistent background event loop ───────────────────────────────────────────

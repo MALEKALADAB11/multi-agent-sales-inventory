@@ -1,0 +1,463 @@
+% ============================================================
+% CHAPITRE 2 : ANALYSE DES BESOINS ET CONCEPTION DU SYSTEME
+% Structure : Introduction / Spécification des besoins /
+% Product Backlog et distribution des sprints / Environnement
+% de développement / Architecture du système / Conclusion
+% ============================================================
+
+\chapter{Analyse des besoins et conception du système}
+\label{chap:analyse-conception}
+\minitocsection
+\newpage
+
+% ------------------------------------------------------------
+\section*{Introduction}
+\addcontentsline{toc}{section}{Introduction}
+% ------------------------------------------------------------
+
+Après avoir présenté le cadre général du projet, la problématique et la méthodologie retenue, ce deuxième chapitre est consacré à l'analyse des besoins et à la conception globale du système. Il s'agit d'une étape déterminante, car la qualité de la spécification conditionne directement la pertinence de la solution développée.
+
+Le chapitre est organisé en quatre parties principales. Nous commençons par la spécification des besoins, en identifiant les acteurs du système puis en formalisant les besoins fonctionnels et non fonctionnels. Conformément à la méthodologie hybride Scrum / CRISP-DM adoptée, ces besoins sont ensuite traduits en un Product Backlog composé de user stories et d'enablers techniques, dont nous présentons la priorisation et la distribution sur les douze sprints du projet. Nous décrivons ensuite l'environnement matériel et logiciel de développement. Enfin, nous présentons l'architecture du système selon plusieurs points de vue complémentaires : architecture globale, architecture logique, architecture physique et diagramme de composants.
+
+% ------------------------------------------------------------
+\section{Spécification des besoins}
+% ------------------------------------------------------------
+
+La spécification des besoins consiste à identifier les acteurs du système, puis à formaliser ce que la plateforme doit offrir (besoins fonctionnels) et les qualités qu'elle doit garantir (besoins non fonctionnels). Cette spécification résulte de l'analyse du contexte Retail d'Ooredoo Tunisie présentée au chapitre précédent, ainsi que des échanges menés avec les parties prenantes durant la phase de compréhension métier (Sprint 0).
+
+\subsection{Identification des acteurs}
+
+Le système fait intervenir deux acteurs humains principaux, auxquels s'ajoutent des acteurs secondaires de nature technique.
+
+\begin{itemize}[label=--]
+    \item \textbf{Le conseiller de vente} : utilisateur principal du volet coaching commercial. Il consulte son tableau de bord de performance, interagit en langage naturel avec le Coach, reçoit des recommandations de produits, des scripts de vente et des alertes contextualisées pendant sa journée en boutique.
+
+    \item \textbf{Le manager} (responsable de boutique) : utilisateur principal des volets supervision et optimisation des stocks. Il suit la performance de la boutique et des conseillers, consulte l'état des stocks et les prévisions de demande, valide ou refuse les décisions d'approvisionnement proposées par le système (Human-in-the-Loop) et pilote le cycle de vie des commandes via un tableau Kanban.
+
+    \item \textbf{Les acteurs secondaires} : les fournisseurs de modèles de langage (Mistral, OpenRouter, Groq, Ollama) sollicités pour la génération des recommandations, ainsi que les sources de contexte externe (événements, promotions, météo) exploitées par les agents.
+\end{itemize}
+
+Le tableau suivant synthétise les rôles et les principales responsabilités des acteurs humains.
+
+\begin{longtable}{|P{3cm}|P{5.2cm}|P{5.8cm}|}
+\hline
+\rowcolor{red!75}
+\textcolor{white}{\textbf{Acteur}} &
+\textcolor{white}{\textbf{Rôle}} &
+\textcolor{white}{\textbf{Principales interactions}} \\
+\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+Conseiller de vente &
+Utilisateur terrain du coaching commercial &
+Tableau de bord de performance, chat avec le Coach, recommandations de produits, scripts de vente, alertes d'anomalies \\
+\hline
+Manager &
+Superviseur de la boutique et décideur des approvisionnements &
+Supervision des ventes et des conseillers, état des stocks, validation HITL des recommandations et des commandes, Kanban des commandes, monitoring des agents \\
+\hline
+\caption{Acteurs du système et responsabilités}
+\label{tab:acteurs-chap2}
+\end{longtable}
+
+Chaque acteur accède uniquement aux fonctionnalités et aux données correspondant à son rôle et à sa boutique, grâce à un mécanisme d'authentification et de contrôle d'accès basé sur les rôles (RBAC).
+
+\subsection{Besoins fonctionnels}
+
+Les besoins fonctionnels décrivent les services que le système doit rendre aux acteurs. Ils sont regroupés en huit familles cohérentes.
+
+\subsubsection*{BF-1 : Analyse et suivi de l'état des stocks}
+\begin{itemize}[label=--]
+    \item \textbf{BF-1.1 — Consultation de l'état des stocks} : l'utilisateur doit pouvoir consulter la disponibilité actuelle des produits dans chaque point de vente.
+    \item \textbf{BF-1.2 — Identification des risques de stock} : le système doit signaler visuellement les produits présentant un risque (rupture, stock insuffisant, surstock).
+    \item \textbf{BF-1.3 — Prise en compte du contexte de demande} : l'utilisateur doit pouvoir consulter les éléments influençant la demande future (promotions, événements, périodes particulières).
+    \item \textbf{BF-1.4 — Consultation des prévisions de demande} : le système doit fournir des prévisions de demande par produit afin d'anticiper les besoins en stock.
+\end{itemize}
+
+\subsubsection*{BF-2 : Assistance à la décision de réapprovisionnement}
+\begin{itemize}[label=--]
+    \item \textbf{BF-2.1 — Proposition d'actions de réapprovisionnement} : pour chaque produit, le système doit recommander une action : commander, accélérer, maintenir ou surveiller.
+    \item \textbf{BF-2.2 — Suggestion des quantités à commander} : le système doit proposer une quantité de réapprovisionnement recommandée.
+    \item \textbf{BF-2.3 — Adaptation aux objectifs du magasin} : les recommandations doivent pouvoir arbitrer entre la disponibilité des produits et la réduction des coûts de stockage.
+\end{itemize}
+
+\subsubsection*{BF-3 : Validation et gestion des commandes}
+\begin{itemize}[label=--]
+    \item \textbf{BF-3.1 — Explication des recommandations} : chaque recommandation doit être accompagnée d'une justification compréhensible.
+    \item \textbf{BF-3.2 — Validation humaine des décisions} : l'utilisateur doit pouvoir accepter, modifier ou refuser les recommandations avant leur application.
+    \item \textbf{BF-3.3 — Suivi du cycle des commandes} : l'utilisateur doit pouvoir suivre les commandes d'approvisionnement à travers leurs différents états (suggéré, en attente, en livraison, reçu).
+\end{itemize}
+
+\subsubsection*{BF-4 : Coaching commercial en temps réel}
+\begin{itemize}[label=--]
+    \item \textbf{BF-4.1 — Assistant conversationnel de coaching} : le conseiller doit pouvoir interroger en langage naturel un assistant qui répond sur les produits, les ventes et les actions à mener.
+    \item \textbf{BF-4.2 — Recommandations de produits à proposer} : le système doit suggérer les produits à mettre en avant, classés par un score combinant ventes, disponibilité et contexte.
+    \item \textbf{BF-4.3 — Scripts et arguments de vente} : le système doit fournir des scripts adaptés à la situation, issus d'une base de connaissances métier.
+    \item \textbf{BF-4.4 — Réponse progressive en temps réel} : les réponses de l'assistant doivent s'afficher au fur et à mesure de leur génération (streaming).
+\end{itemize}
+
+\subsubsection*{BF-5 : Analyse des performances de vente}
+\begin{itemize}[label=--]
+    \item \textbf{BF-5.1 — Consultation des indicateurs de vente} : tableaux de bord synthétiques (volumes, tendances, comparaisons périodiques, taux d'atteinte des objectifs).
+    \item \textbf{BF-5.2 — Prévisions de ventes} : prévisions multi-horizons alimentant les décisions commerciales et de stock.
+    \item \textbf{BF-5.3 — Détection d'anomalies et de tendances} : détection automatique des comportements atypiques (chute, pic, rupture de tendance, saisonnalité).
+    \item \textbf{BF-5.4 — Prise en compte du profil du conseiller} : personnalisation du coaching selon l'historique et le profil du conseiller.
+\end{itemize}
+
+\subsubsection*{BF-6 : Contexte marché et stratégie commerciale}
+\begin{itemize}[label=--]
+    \item \textbf{BF-6.1 — Intégration du contexte marché} : prise en compte des événements datés et des offres commerciales actives, en distinguant les événements en cours et à venir.
+    \item \textbf{BF-6.2 — Recommandations stratégiques cross-domaine} : production de recommandations croisant les signaux de vente et l'état des stocks, afin par exemple de ne pas promouvoir un produit en risque de rupture.
+    \item \textbf{BF-6.3 — Alertes proactives} : notification en temps réel des situations nécessitant une action, sans que l'utilisateur ait à les rechercher.
+\end{itemize}
+
+\subsubsection*{BF-7 : Contrôle et fiabilité des réponses générées}
+\begin{itemize}[label=--]
+    \item \textbf{BF-7.1 — Contrôle automatique des réponses} : chaque réponse générée doit être vérifiée par un agent de contrôle (Guardrail) avant affichage, avec indication visible du statut de vérification.
+    \item \textbf{BF-7.2 — Validation humaine des cas sensibles} : les réponses ou décisions jugées sensibles doivent être soumises à une validation humaine (Human-in-the-Loop).
+    \item \textbf{BF-7.3 — Réponse de repli} : en cas de réponse non conforme, le système doit fournir une réponse de repli sûre plutôt qu'une absence de réponse.
+\end{itemize}
+
+\subsubsection*{BF-8 : Orchestration, sécurité et communication}
+\begin{itemize}[label=--]
+    \item \textbf{BF-8.1 — Orchestration multi-agents} : coordination de l'exécution parallèle des agents spécialisés et fusion de leurs résultats en une réponse unique et cohérente.
+    \item \textbf{BF-8.2 — Authentification et contrôle d'accès} : accès restreint selon le rôle de l'utilisateur et son point de vente.
+    \item \textbf{BF-8.3 — Boucle de feedback} : enregistrement et exploitation des décisions humaines (acceptation, modification, refus) pour améliorer les recommandations futures.
+    \item \textbf{BF-8.4 — Communication inter-domaines} : les analyses commerciales doivent pouvoir exploiter l'état des stocks et réciproquement, via des outils partagés entre les agents.
+    \item \textbf{BF-8.5 — Notifications temps réel} : diffusion en temps réel des événements importants (alertes de stock, statuts de vérification, mouvements de commandes) vers l'interface.
+\end{itemize}
+
+\subsection{Besoins non fonctionnels}
+
+Les besoins non fonctionnels précisent les qualités attendues du système, indépendamment de ses fonctionnalités.
+
+\begin{itemize}[label=--]
+    \item \textbf{Performance et réactivité}
+    \begin{itemize}[label=$\bullet$]
+        \item \textbf{BNF-1.1} : les analyses de stock et la génération des recommandations doivent s'exécuter dans un délai compatible avec un usage opérationnel en boutique.
+        \item \textbf{BNF-1.2} : les actions de l'utilisateur sur l'interface doivent être prises en compte rapidement afin d'assurer une expérience fluide.
+        \item \textbf{BNF-1.3} : le premier élément de réponse du Coach doit apparaître en quelques secondes, le raisonnement multi-agents étant parallélisé et le premier token diffusé en streaming.
+    \end{itemize}
+
+    \item \textbf{Disponibilité et robustesse}
+    \begin{itemize}[label=$\bullet$]
+        \item \textbf{BNF-2.1} : les fonctionnalités essentielles doivent être maintenues même en cas d'indisponibilité temporaire de composants externes.
+        \item \textbf{BNF-2.2} : les erreurs doivent être détectées et signalées par un retour approprié à l'utilisateur.
+        \item \textbf{BNF-2.3} : en cas d'indisponibilité du fournisseur LLM principal, le système doit basculer automatiquement vers un fournisseur alternatif (cascade multi-fournisseurs).
+        \item \textbf{BNF-2.4} : l'indisponibilité d'un composant (base vectorielle, service de prévision, cache) doit déclencher un mécanisme de repli — corpus local pour la recherche documentaire, méthode statistique pour les prévisions — sans bloquer le flux principal.
+    \end{itemize}
+
+    \item \textbf{Sécurité et intégrité des données}
+    \begin{itemize}[label=$\bullet$]
+        \item \textbf{BNF-3.1} : l'accès aux données et aux fonctionnalités doit être contrôlé selon les rôles et permissions (authentification JWT, RBAC au niveau boutique).
+        \item \textbf{BNF-3.2} : les opérations sur les stocks et les commandes doivent respecter les règles métier définies (idempotence de la mise à jour du stock à la réception, aucune validation automatique de commande).
+        \item \textbf{BNF-3.3} : les points d'accès exposés doivent être protégés par une limitation de débit (rate limiting) afin de préserver la stabilité du service et de maîtriser la consommation des API de modèles.
+    \end{itemize}
+
+    \item \textbf{Utilisabilité et expérience utilisateur}
+    \begin{itemize}[label=$\bullet$]
+        \item \textbf{BNF-4.1} : l'état des stocks, les risques détectés et les recommandations doivent être compréhensibles rapidement.
+        \item \textbf{BNF-4.2} : chaque action doit fournir un retour clair indiquant son résultat.
+        \item \textbf{BNF-4.3} : les situations critiques (risques de rupture, besoins de réapprovisionnement) doivent être facilement identifiables, y compris sur tablette grâce à une interface responsive.
+    \end{itemize}
+
+    \item \textbf{Traçabilité et explicabilité}
+    \begin{itemize}[label=$\bullet$]
+        \item \textbf{BNF-5.1} : les recommandations générées et les décisions humaines associées doivent être historisées.
+        \item \textbf{BNF-5.2} : les recommandations automatisées doivent être accompagnées d'éléments d'explication.
+        \item \textbf{BNF-5.3} : le fonctionnement du système doit être observable afin de faciliter l'analyse des performances.
+        \item \textbf{BNF-5.4} : chaque exécution du graphe multi-agents doit être tracée (entrées, sorties, durées, coûts) afin de permettre l'évaluation continue de la qualité des réponses.
+    \end{itemize}
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{Product Backlog et distribution des sprints}
+% ------------------------------------------------------------
+
+Conformément à la méthodologie hybride Scrum / CRISP-DM présentée au chapitre précédent, les besoins spécifiés ont été traduits en un \textbf{Product Backlog}, puis distribués sur \textbf{douze sprints de deux semaines}, couvrant une durée totale de six mois.
+
+\subsection{Product Backlog}
+
+Le Product Backlog est composé de deux catégories d'items :
+
+\begin{itemize}[label=--]
+    \item \textbf{les user stories (US)}, qui expriment une valeur fonctionnelle directement perceptible par le conseiller ou le manager ;
+    \item \textbf{les enablers techniques (EN)}, qui construisent les fondations nécessaires à la réalisation des user stories (infrastructure, agents, orchestration, tests).
+\end{itemize}
+
+La priorisation suit la méthode \textbf{MoSCoW} (Must have, Should have, Could have, Won't have) et l'estimation de l'effort utilise les \textbf{points de story} selon la suite de Fibonacci (1, 2, 3, 5, 8, 13). Le backlog compte \textbf{82 user stories actives} et \textbf{46 enablers techniques}, pour un total planifié d'environ 471 points.
+
+Le tableau suivant présente un extrait représentatif des user stories du backlog.
+
+\begin{longtable}{|P{1.3cm}|P{8cm}|P{1.6cm}|P{1.2cm}|P{1.2cm}|}
+\hline
+\rowcolor{red!75}
+\textcolor{white}{\textbf{ID}} &
+\textcolor{white}{\textbf{User Story}} &
+\textcolor{white}{\textbf{Priorité}} &
+\textcolor{white}{\textbf{Points}} &
+\textcolor{white}{\textbf{Sprint}} \\
+\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+US-01 & En tant que conseiller, je veux me connecter à l'application afin d'accéder aux fonctionnalités correspondant à mon rôle et à ma boutique. & M & 3 & S2 \\
+\hline
+US-03 & En tant que conseiller, je veux consulter mon tableau de bord commercial (chiffre d'affaires en temps réel, écart réalisé/objectif, taux d'atteinte) afin de suivre ma performance actuelle. & M & 5 & S2 \\
+\hline
+US-11 & En tant que conseiller, je veux poser une question en langage naturel au Coach afin d'obtenir une assistance pendant la vente. & M & 5 & S3 \\
+\hline
+US-12 & En tant que conseiller, je veux recevoir la réponse du Coach progressivement afin de réduire le temps d'attente. & M & 3 & S3 \\
+\hline
+US-18 & En tant que conseiller, je veux recevoir des recommandations tenant compte de l'heure, du contexte et de l'état de la boutique afin d'obtenir un coaching pertinent. & M & 5 & S5 \\
+\hline
+US-20 & En tant que conseiller, je veux recevoir un produit de substitution lorsqu'un produit demandé est indisponible afin de ne pas perdre la vente. & M & 3 & S5 \\
+\hline
+US-37 & En tant que manager, je veux consulter les actions stratégiques prioritaires afin de décider des actions commerciales à lancer. & M & 3 & S6 \\
+\hline
+US-47 & En tant que manager, je veux voir chaque produit classé comme rupture, insuffisant, sain ou surstock afin d'identifier rapidement les risques. & M & 3 & S7 \\
+\hline
+US-58 & En tant que manager, je veux recevoir une décision d'approvisionnement par produit afin de savoir s'il faut commander, maintenir, surveiller ou accélérer. & M & 3 & S9 \\
+\hline
+US-64 & En tant que manager, je veux consulter les commandes suggérées dans un Kanban afin de suivre leur cycle de traitement. & M & 5 & S12 \\
+\hline
+US-76 & En tant que manager, je veux qu'une anomalie de vente déclenche automatiquement un cycle d'analyse afin d'obtenir une recommandation proactive. & M & 5 & S11 \\
+\hline
+US-83 & En tant que manager, je veux valider une recommandation escaladée afin d'autoriser sa diffusion ou son application. & M & 2 & S11 \\
+\hline
+\caption{Extrait du Product Backlog — user stories}
+\label{tab:backlog-us-chap2}
+\end{longtable}
+
+Les enablers techniques couvrent notamment : la mise en place des fondations (backend FastAPI, frontend Angular, PostgreSQL avec migrations Alembic, Redis, Milvus), le moteur de prévision (Holt-Winters saisonnier avec backtest, modèles de fondation en repli), le développement des sept agents intelligents (Analyste, Stratège, Coach, Guardrail, Analysis, Context, Decision), l'orchestration LangGraph (superviseur, exécution parallèle, état partagé \textit{RetailState}, checkpointing), la cascade multi-fournisseurs LLM, le RAG hybride (embeddings, BM25, reranking, corpus de repli), les mécanismes temps réel (SSE, WebSockets), l'observabilité (Langfuse) et l'industrialisation (tests, CI, Docker).
+
+Enfin, certains items ont été explicitement exclus du périmètre (Won't have) : interface multilingue, application mobile native, intégration à un ERP réel et fine-tuning d'un modèle propriétaire. Ces arbitrages permettent de concentrer la capacité des douze sprints sur les priorités Must et Should.
+
+\subsection{Distribution des sprints}
+
+La distribution des items sur les sprints suit la logique d'alignement Scrum / CRISP-DM : les premiers sprints sont dominés par la compréhension et la préparation des données, les sprints intermédiaires par la modélisation et le développement des agents, et les derniers sprints par l'intégration, le contrôle qualité et l'industrialisation.
+
+\begin{longtable}{|P{1.2cm}|P{2.2cm}|P{7.6cm}|P{1.4cm}|}
+\hline
+\rowcolor{red!75}
+\textcolor{white}{\textbf{Sprint}} &
+\textcolor{white}{\textbf{Période}} &
+\textcolor{white}{\textbf{Objectif de sprint}} &
+\textcolor{white}{\textbf{Points}} \\
+\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+S1 & M1, sem. 1--2 & Fondations backend, frontend et données (FastAPI, Angular, PostgreSQL, Alembic, Redis) & 31 \\
+\hline
+S2 & M1, sem. 3--4 & Authentification, moteur de prévision, premier tableau de bord conseiller & 33 \\
+\hline
+S3 & M2, sem. 1--2 & Tableau de bord conseiller complet et Coach conversationnel (streaming SSE) & 32 \\
+\hline
+S4 & M2, sem. 3--4 & RAG (Milvus, recherche hybride, corpus de repli) et robustesse LLM & 33 \\
+\hline
+S5 & M3, sem. 1--2 & Coaching enrichi : scores, substitution, contexte, personnalisation & 34 \\
+\hline
+S6 & M3, sem. 3--4 & Supervision manager des ventes, Agent Stratège, interface responsive & 39 \\
+\hline
+S7 & M4, sem. 1--2 & Inventory : état des stocks et analyse (couverture, rotation, EOQ) & 37 \\
+\hline
+S8 & M4, sem. 3--4 & Prévisions de demande, contraintes fournisseurs, recommandations cross-domaine & 30 \\
+\hline
+S9 & M5, sem. 1--2 & Agent Decision et démarrage de l'orchestration LangGraph & 36 \\
+\hline
+S10 & M5, sem. 3--4 & Orchestration avancée, observabilité, Guardrail & 46 \\
+\hline
+S11 & M6, sem. 1--2 & Human-in-the-Loop, temps réel, boucle proactive, feedback & 50 \\
+\hline
+S12 & M6, sem. 3--4 & Kanban des commandes, industrialisation, livrables PFE & 54 \\
+\hline
+--- & S8--S12 & Activités transverses : tests, intégration continue, corrections & 16 \\
+\hline
+\caption{Distribution des sprints}
+\label{tab:sprints-chap2}
+\end{longtable}
+
+La vélocité moyenne planifiée est d'environ 38 points par sprint. La charge croît volontairement en fin de projet (S10 à S12), ce qui constitue le principal point de vigilance du plan ; des leviers d'ajustement ont été prévus, notamment la dépriorisation des items Should des derniers sprints et la livraison du Kanban en deux incréments.
+
+% ------------------------------------------------------------
+\section{Environnement de développement}
+% ------------------------------------------------------------
+
+\subsection{Environnement matériel}
+
+Le développement a été réalisé sur un poste de travail unique, dont les caractéristiques sont résumées dans le tableau suivant. Cette configuration s'est révélée suffisante pour exécuter simultanément le backend, le frontend, les bases de données et les services annexes.
+
+\begin{longtable}{|P{4.5cm}|P{9.5cm}|}
+\hline
+\rowcolor{red!75}
+\textcolor{white}{\textbf{Composant}} &
+\textcolor{white}{\textbf{Caractéristiques}} \\
+\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+Système d'exploitation & Microsoft Windows 10 Professionnel (64 bits) \\
+\hline
+Processeur & Intel Core i7 (à ajuster selon votre machine) \\
+\hline
+Mémoire vive & 16 Go de RAM (à ajuster) \\
+\hline
+Stockage & SSD 512 Go (à ajuster) \\
+\hline
+Carte graphique & (à ajuster si utilisée pour l'inférence locale) \\
+\hline
+\caption{Environnement matériel de développement}
+\label{tab:env-materiel-chap2}
+\end{longtable}
+
+\subsection{Environnement logiciel}
+
+L'environnement logiciel combine des technologies de développement web, des bases de données spécialisées et des frameworks d'intelligence artificielle agentique.
+
+\begin{longtable}{|P{3.4cm}|P{3.4cm}|P{7.2cm}|}
+\hline
+\rowcolor{red!75}
+\textcolor{white}{\textbf{Catégorie}} &
+\textcolor{white}{\textbf{Technologie}} &
+\textcolor{white}{\textbf{Rôle dans le projet}} \\
+\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+Langage backend & Python 3.11 & Langage principal du backend et des agents \\
+\hline
+Framework backend & FastAPI / Uvicorn & API REST asynchrone, SSE et WebSockets \\
+\hline
+Orchestration agentique & LangGraph / LangChain & Construction du graphe multi-agents, exécution parallèle des branches, gestion de l'état partagé \\
+\hline
+Base de données & PostgreSQL & Base principale : ventes, stocks, produits, objectifs, commandes, prévisions \\
+\hline
+Migrations & Alembic / SQLAlchemy & Versionnement du schéma de données, source de vérité unique \\
+\hline
+Cache et temps réel & Redis & Cache applicatif, bus d'alertes, flux temps réel \\
+\hline
+Base vectorielle & Milvus & Recherche sémantique des scripts de vente (RAG) \\
+\hline
+Modèles de langage & Mistral, OpenRouter, Groq, Ollama & Cascade multi-fournisseurs pour la génération des recommandations \\
+\hline
+Embeddings & bge-m3 & Vectorisation multilingue des documents du corpus métier \\
+\hline
+Prévision & Holt-Winters (statsmodels), TimesFM / Chronos & Prévisions de ventes et de demande, avec repli statistique \\
+\hline
+Frontend & Angular (composants standalone, Signals), TypeScript & Interface web responsive : tableaux de bord, chat, inventory, Kanban, panneaux HITL \\
+\hline
+Observabilité & Langfuse & Traçage des agents : durées, erreurs, coûts LLM \\
+\hline
+Conteneurisation & Docker / Docker Compose & Environnement reproductible pour l'ensemble des services \\
+\hline
+Gestion de versions & Git / GitHub (+ GitHub Actions) & Versionnement du code et intégration continue \\
+\hline
+IDE & Visual Studio Code & Environnement de développement principal \\
+\hline
+Modélisation & draw.io / PlantUML & Réalisation des diagrammes UML \\
+\hline
+\caption{Environnement logiciel de développement}
+\label{tab:env-logiciel-chap2}
+\end{longtable}
+
+% ------------------------------------------------------------
+\section{Architecture du système}
+% ------------------------------------------------------------
+
+L'architecture du système est présentée selon quatre points de vue complémentaires : l'architecture globale, qui donne une vision d'ensemble des grands blocs ; l'architecture logique, qui détaille l'organisation en couches et le moteur multi-agents ; l'architecture physique, qui décrit le déploiement des services ; et le diagramme de composants, qui précise les dépendances entre les modules logiciels.
+
+\subsection{Architecture globale}
+
+L'architecture globale suit un modèle client-serveur en trois tiers, enrichi de services spécialisés pour l'intelligence artificielle.
+
+\begin{itemize}[label=--]
+    \item \textbf{Le tiers présentation} : une application web Angular utilisée par les conseillers et les managers. Elle communique avec le backend via des appels REST pour les consultations, des flux SSE pour les réponses progressives du Coach et des WebSockets pour les alertes, les verdicts du Guardrail et les mouvements du Kanban.
+
+    \item \textbf{Le tiers applicatif} : un backend FastAPI qui expose les API, applique l'authentification et le contrôle d'accès, et héberge le \textbf{moteur agentique} orchestré par LangGraph. Ce moteur coordonne les agents spécialisés des deux domaines, Sales (Analyste, Stratège, Coach, Guardrail) et Inventory (Analysis, Context, Decision), et fusionne leurs résultats en une réponse unique.
+
+    \item \textbf{Le tiers données et services} : PostgreSQL pour les données métier, Redis pour le cache et les flux temps réel, Milvus pour la recherche vectorielle des connaissances métier, ainsi que les fournisseurs de modèles de langage externes accessibles via une cascade avec repli automatique.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.98\textwidth]{img/architecture_globale.png}
+    \caption{Architecture globale du système}
+    \label{fig:architecture-globale-chap2}
+\end{figure}
+
+\subsection{Architecture logique}
+
+L'architecture logique du backend est organisée en couches, afin de séparer les responsabilités et de faciliter la maintenance et les tests.
+
+\begin{itemize}[label=--]
+    \item \textbf{Couche API} : routes FastAPI exposant les endpoints REST, SSE et WebSocket ; elle applique l'authentification JWT, le contrôle d'accès RBAC et la limitation de débit.
+
+    \item \textbf{Couche orchestration} : le superviseur LangGraph reçoit la requête, identifie l'intention, puis exécute en parallèle les branches spécialisées (Sales, Inventory, Knowledge, Context). Les sorties des agents sont fusionnées dans un état partagé unique, le \textit{RetailState}, à l'aide de fonctions de réduction. La réponse consolidée passe ensuite par l'Agent Coach, qui la formule pour l'utilisateur, puis par l'Agent Guardrail, qui l'approuve, la réécrit, la bloque ou l'escalade vers une validation humaine (HITL).
+
+    \item \textbf{Couche agents} : chaque agent encapsule une expertise. Côté Sales, l'Analyste calcule les écarts, prévisions et anomalies à partir d'un moteur de séries temporelles déterministe ; le Stratège produit des actions commerciales croisant ventes, stocks, événements et offres ; le Coach génère les messages destinés au conseiller ; le Guardrail contrôle la conformité des réponses. Côté Inventory, l'agent Analysis calcule la couverture, la rotation, le point de commande et la quantité économique de commande ; l'agent Context enrichit l'analyse avec les prévisions, promotions, événements et contraintes fournisseurs ; l'agent Decision produit une décision d'approvisionnement explicable soumise à validation humaine.
+
+    \item \textbf{Couche services et repositories} : logique métier réutilisable et accès aux données (PostgreSQL, Redis, Milvus), isolés des routes et des agents.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.98\textwidth]{img/architecture_logique.png}
+    \caption{Architecture logique du moteur multi-agents}
+    \label{fig:architecture-logique-chap2}
+\end{figure}
+
+\subsection{Architecture physique}
+
+Sur le plan physique, l'ensemble des services est conteneurisé avec Docker afin de garantir un environnement reproductible. Le déploiement comprend les conteneurs suivants :
+
+\begin{itemize}[label=--]
+    \item le conteneur \textbf{frontend} servant l'application Angular ;
+    \item le conteneur \textbf{backend} FastAPI hébergeant les API et le moteur agentique ;
+    \item le conteneur \textbf{PostgreSQL} pour la persistance des données métier ;
+    \item le conteneur \textbf{Redis} pour le cache et les flux temps réel ;
+    \item le conteneur \textbf{Milvus} pour la recherche vectorielle ;
+    \item les \textbf{services externes} : fournisseurs de modèles de langage accessibles via Internet, et instance locale Ollama en dernier repli.
+\end{itemize}
+
+Les échanges entre le navigateur et le backend s'effectuent en HTTP/HTTPS (REST et SSE) et via le protocole WebSocket pour les flux temps réel. Le backend communique avec PostgreSQL et Redis sur le réseau interne Docker, et avec les fournisseurs LLM via des appels HTTPS sortants.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{img/architecture_physique.png}
+    \caption{Architecture physique et déploiement}
+    \label{fig:architecture-physique-chap2}
+\end{figure}
+
+\subsection{Diagramme de composants}
+
+Le diagramme de composants précise les principaux modules logiciels du système et leurs dépendances : le module d'authentification, les modules Sales et Inventory (chacun regroupant ses agents, services et repositories), le superviseur d'orchestration, le module RAG, le bus d'alertes, le module HITL, le Kanban des commandes et les interfaces de communication (REST, SSE, WebSocket). Cette vue met en évidence la séparation des domaines Sales et Inventory ainsi que les composants partagés qui assurent la communication inter-domaines.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.98\textwidth]{img/diagramme_composants.png}
+    \caption{Diagramme de composants du système}
+    \label{fig:diagramme-composants-chap2}
+\end{figure}
+
+% ------------------------------------------------------------
+\section*{Conclusion}
+\addcontentsline{toc}{section}{Conclusion}
+% ------------------------------------------------------------
+
+Ce chapitre a permis de poser les fondations analytiques et architecturales du projet. Nous avons d'abord identifié les acteurs du système, puis formalisé les besoins fonctionnels — regroupés en huit familles couvrant le coaching commercial, l'analyse des performances, la gestion des stocks, la décision d'approvisionnement, le contrôle des réponses et l'orchestration — ainsi que les besoins non fonctionnels de performance, robustesse, sécurité, utilisabilité et traçabilité.
+
+Ces besoins ont été traduits en un Product Backlog priorisé selon MoSCoW et distribué sur douze sprints de deux semaines, conformément à la méthodologie hybride Scrum / CRISP-DM retenue. Nous avons ensuite décrit l'environnement matériel et logiciel de développement, puis présenté l'architecture du système selon quatre vues complémentaires : globale, logique, physique et composants.
+
+Le chapitre suivant sera consacré à la réalisation : il présentera la préparation des données, la conception détaillée des agents intelligents, les choix d'implémentation et les résultats obtenus au fil des sprints.

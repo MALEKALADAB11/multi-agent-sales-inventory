@@ -14,47 +14,26 @@ Couvrir : stock_history, sales_history, product_master, promotions,
           SKU listing, store listing.
 """
 
-import os
 import logging
 from typing import Optional, List
 
 import pandas as pd
 import psycopg2
-from psycopg2.pool import ThreadedConnectionPool
 from app.core.config import DEFAULT_STORE_ID
+from app.core import db as core_db
 
 logger = logging.getLogger(__name__)
 
-DB_CONFIG = {
-    "host":     os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
-    "port":     int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
-    "dbname":   os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
-    "user":     os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
-    "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
-}
 
-_pool: ThreadedConnectionPool = None
-
-
-def _get_pool() -> ThreadedConnectionPool:
-    global _pool
-    if _pool is None:
-        _pool = ThreadedConnectionPool(2, 10, **DB_CONFIG, connect_timeout=10)
-    return _pool
-
+# Connexions : pool partagé app.core.db (un seul pool pour tout le process,
+# borné — évite de saturer max_connections côté serveur pendant les batchs).
 
 def _conn():
-    return _get_pool().getconn()
+    return core_db.getconn()
 
 
 def _release(conn):
-    try:
-        _get_pool().putconn(conn)
-    except Exception:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    core_db.putconn(conn)
 
 
 def _read_sql(sql: str, params=None) -> pd.DataFrame:
@@ -204,6 +183,7 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
                     FROM inventory.sales_history
                     WHERE sku = %s AND store_id = %s AND quantity_sold > 0
                       AND NOT COALESCE(is_promo, FALSE)
+                      AND month_num IS NOT NULL
                     GROUP BY month_num
                 ),
                 by_event_q AS (
@@ -241,8 +221,12 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
             by_event: dict = {}
             by_season: dict = {}
             by_dow: dict = {}
+            # `key` NULL = colonne de calendrier non renseignée sur la ligne
+            # (~3% de sales_history). Sans ce garde-fou, un seul mois NULL levait
+            # un TypeError sur int(key) et faisait retomber TOUT le profil
+            # saisonnier — tous SKU, tous magasins — sur le fallback à zéro.
             for dim, key, avg_qty, n in cur.fetchall():
-                if avg_qty is None:
+                if avg_qty is None or key is None:
                     continue
                 factor = round(float(avg_qty) / avg_base, 3)
                 if dim == "month":
@@ -268,9 +252,16 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
                 "source":           "postgresql_3years",
             }
     except Exception as e:
-        logger.warning(f"[PG_LOADER] seasonal profile error: {e}")
+        # exc_info : un « int() argument ... NoneType » sans pile a coûté une
+        # demi-journée de recherche — la ligne fautive vaut la verbosité.
+        logger.warning("[PG_LOADER] seasonal profile error (sku=%s store=%s): %s",
+                       sku, store_id, e, exc_info=True)
+        try:
+            sku_out = int(sku)
+        except (TypeError, ValueError):
+            sku_out = sku  # ne jamais lever depuis le chemin de repli
         return {
-            "sku": int(sku), "baseline_demand": 0, "demand_std": 0,
+            "sku": sku_out, "baseline_demand": 0, "demand_std": 0,
             "n_data_years": 0, "by_month": {}, "by_event_type": {},
             "by_season": {}, "by_dow": {}, "trend_6m_pct": 0,
             "source": "error",

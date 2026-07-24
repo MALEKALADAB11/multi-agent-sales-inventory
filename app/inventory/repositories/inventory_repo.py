@@ -12,6 +12,7 @@ Usage from any agent or service:
 import os
 import json
 import logging
+import threading
 from datetime import date, datetime
 from typing import Optional
 from pathlib import Path
@@ -688,13 +689,13 @@ class InventoryRepo:
 # This thin psycopg2 wrapper exposes exactly what those files need.
 #
 # Same .env variables as the async InventoryRepo above.
-# Opens/closes one connection per call — acceptable because calls happen
-# once per SKU per batch run, not in a tight loop.
+# Les connexions viennent d'un pool : voir _get_sync_pool() plus bas.
 # =============================================================================
 
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
     _PSYCOPG2_OK = True
 except ImportError:
     _PSYCOPG2_OK = False
@@ -702,6 +703,68 @@ except ImportError:
         "psycopg2 not installed — SyncInventoryRepo disabled. "
         "Run: pip install psycopg2-binary"
     )
+
+
+# ── Pool de connexions synchrones ────────────────────────────────────────────
+# _conn() ouvrait une connexion neuve a chaque appel. L'hypothese d'origine
+# (« un appel par SKU, jamais en boucle serree ») est fausse des que le batch
+# inventory tourne : 8 workers x 143 SKUs x plusieurs requetes chacun, soit des
+# milliers de handshakes TCP+auth vers Postgres. Mesure sur store I63 : 1,2 s
+# pour un SKU analyse seul, contre ~11,7 s effectifs par SKU en batch — un
+# parallelisme 10x contre-productif, purement de la contention de connexion.
+#
+# _conn() renvoie desormais un wrapper dont .close() rend la connexion au pool,
+# pour que les ~27 sites d'appel en `finally: conn.close()` restent corrects
+# sans modification.
+
+_SYNC_POOL = None
+_SYNC_POOL_LOCK = threading.Lock()
+_SYNC_POOL_MAX = int(os.getenv("INVENTORY_SYNC_POOL_MAX", "32"))
+
+
+class _PooledConn:
+    """Delegue tout a la connexion psycopg2, sauf close() qui la rend au pool."""
+
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def __getattr__(self, name):
+        # Appele uniquement pour les attributs absents de l'instance :
+        # _pool/_conn restent servis normalement.
+        return getattr(self._conn, name)
+
+    def close(self):
+        if self._conn is None:
+            return                      # close() idempotent
+        conn, self._conn = self._conn, None
+        try:
+            # putconn rollback tout seul si une transaction est restee ouverte,
+            # et jette la connexion si le lien serveur est perdu.
+            self._pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _get_sync_pool():
+    """Pool process-wide, cree a la premiere utilisation."""
+    global _SYNC_POOL
+    if _SYNC_POOL is not None:
+        return _SYNC_POOL
+    with _SYNC_POOL_LOCK:
+        if _SYNC_POOL is None:
+            from app.core.config import config
+            _SYNC_POOL = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1, maxconn=_SYNC_POOL_MAX,
+                host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
+                user=config.DB_USER, password=config.DB_PASSWORD,
+            )
+            logger.info("[SyncInventoryRepo] pool de connexions cree (max=%d)",
+                        _SYNC_POOL_MAX)
+    return _SYNC_POOL
 
 
 class SyncInventoryRepo:
@@ -713,17 +776,26 @@ class SyncInventoryRepo:
 
     @staticmethod
     def _conn():
+        """Connexion du pool. L'appelant la libere via conn.close()."""
         if not _PSYCOPG2_OK:
             return None
         try:
-            from app.core.config import config
-            return psycopg2.connect(
-                host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
-                user=config.DB_USER, password=config.DB_PASSWORD,
-            )
+            pool = _get_sync_pool()
+            return _PooledConn(pool, pool.getconn())
         except Exception as exc:
-            logger.warning("SyncInventoryRepo: DB connection failed: %s", exc)
-            return None
+            # getconn() leve PoolError quand les maxconn sont toutes prises (il
+            # n'attend pas). On retombe alors sur une connexion directe : c'est
+            # le comportement d'avant le pool, jamais pire.
+            logger.warning("SyncInventoryRepo: pool indisponible (%s) — connexion directe", exc)
+            try:
+                from app.core.config import config
+                return psycopg2.connect(
+                    host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
+                    user=config.DB_USER, password=config.DB_PASSWORD,
+                )
+            except Exception as exc2:
+                logger.warning("SyncInventoryRepo: DB connection failed: %s", exc2)
+                return None
 
     # ── Reads ─────────────────────────────────────────────────────────────────
     @staticmethod
@@ -1517,13 +1589,15 @@ class SyncInventoryRepo:
             return 0
         try:
             with conn.cursor() as cur:
+                # sku est INTEGER en base (migration 0006) mais le pipeline
+                # manipule des SKUs str — comparaison en text des deux côtés.
                 cur.execute("""
                     UPDATE inventory.alerts
                     SET status = 'resolved', resolved_at = NOW()
                     WHERE store_id = %s
                       AND status = 'pending'
-                      AND NOT (sku = ANY(%s))
-                """, (store_id, list(current_skus)))
+                      AND NOT (sku::text = ANY(%s))
+                """, (store_id, [str(s) for s in current_skus]))
                 conn.commit()
                 return cur.rowcount
         except Exception as exc:
@@ -1611,17 +1685,15 @@ class SyncInventoryRepo:
         rattachée automatiquement à l'alerte 'pending' la plus récente du même
         (sku, store) — c'est elle qui a déclenché la décision.
 
-        There's a partial unique index (uq_reco_pending_sku_store) enforcing
-        at most one 'pending' recommendation per (sku, store_id). Previously
-        this was a plain INSERT, so once a SKU had a pending recommendation,
-        every later cycle's attempt to save an updated one just hit the
-        unique-violation, logged a warning, and silently did nothing —
-        meaning recommendations never refreshed until a human approved or
-        rejected the existing pending row. This is now an UPSERT: a repeat
-        run for the same still-pending SKU updates the existing row (fresh
-        quantity/confidence/urgency/agent_run_id) instead of erroring.
+        L'index partiel uq_reco_pending_sku_store n'autorise qu'UNE
+        recommandation 'pending' par (sku, store). Un INSERT nu échouait donc à
+        chaque cycle dès qu'une recommandation pendante existait déjà : l'agent
+        ne rendait plus jamais d'id, et aucune suggestion n'atteignait le Kanban.
+        On rafraîchit la ligne pendante à la place — la décision la plus récente
+        fait autorité. La contrainte garde son rôle (pas de doublons) sans
+        bloquer le pipeline.
 
-        Returns the UUID string of the inserted/updated row, or None on failure.
+        Returns the UUID string of the inserted/refreshed row, or None on failure.
         """
         conn = SyncInventoryRepo._conn()
         if conn is None:
@@ -1640,14 +1712,15 @@ class SyncInventoryRepo:
                                           ORDER BY a.created_at DESC LIMIT 1)))
                     ON CONFLICT (sku, store_id) WHERE status = 'pending'
                     DO UPDATE SET
-                        agent_run_id         = EXCLUDED.agent_run_id,
-                        recommendation_type  = EXCLUDED.recommendation_type,
-                        recommendation_text  = EXCLUDED.recommendation_text,
-                        suggested_quantity   = EXCLUDED.suggested_quantity,
-                        confidence            = EXCLUDED.confidence,
-                        urgency               = EXCLUDED.urgency,
-                        alert_id              = COALESCE(EXCLUDED.alert_id,
-                                                           inventory.recommendations.alert_id)
+                        agent_run_id        = EXCLUDED.agent_run_id,
+                        recommendation_type = EXCLUDED.recommendation_type,
+                        recommendation_text = EXCLUDED.recommendation_text,
+                        suggested_quantity  = EXCLUDED.suggested_quantity,
+                        confidence          = EXCLUDED.confidence,
+                        urgency             = EXCLUDED.urgency,
+                        alert_id            = COALESCE(EXCLUDED.alert_id,
+                                                       inventory.recommendations.alert_id),
+                        created_at          = NOW()
                     RETURNING id
                 """, (
                     sku, store_id,
@@ -1659,8 +1732,8 @@ class SyncInventoryRepo:
                     urgency,
                     alert_id, sku, store_id,
                 ))
-                conn.commit()
                 row = cur.fetchone()
+                conn.commit()
                 return str(row[0]) if row else None
         except Exception as exc:
             logger.warning(
@@ -1717,7 +1790,8 @@ class SyncInventoryRepo:
             import psycopg2.extras
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, status, decided_by, decided_at
+                    SELECT id, status, decided_by, decided_at,
+                           store_id, sku, recommendation_type, order_qty, urgency
                     FROM inventory.recommendations
                     WHERE id = %s
                 """, (recommendation_id,))

@@ -35,8 +35,9 @@ ENV/
 *.swo
 *~
 
-# Data directories
+# Data directories (racine uniquement — ne pas ignorer app/sales/data)
 data/
+app/sales/data/cache/
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
@@ -59,4 +60,12 @@ q
 # ── ML experiment tracking ────────────────────────────────────────────────────
 mlruns/
 .timesfm_cache/
+sales-module/data/transactions_2025_2026_v2.csv
 volumes/
+sales-module/.env
+.env
+backups/
+data-archive/
+
+# Cache local des embeddings RAG (regenerable via: python -m app.sales.data.rag.ingest --all)
+.rag_cache/

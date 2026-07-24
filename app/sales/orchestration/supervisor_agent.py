@@ -41,20 +41,41 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def node_initialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Bootstrap the RetailState for a new cycle."""
+    """Bootstrap the RetailState for a new cycle.
+
+    Contrat du graphe : chaque node retourne UNIQUEMENT son delta.
+    agents_invoked / errors / metrics ont des reducers (operator.add / merge)
+    dans RetailState — retourner la liste cumulée lue depuis le state la
+    dupliquerait, et retourner **state ferait écrire cycle_id/store_id par
+    les 4 branches parallèles dans le même superstep (InvalidUpdateError).
+    """
     cycle_id = state.get("cycle_id") or f"cycle-{uuid.uuid4().hex[:8]}"
-    return {
-        **state,
-        "cycle_id":      cycle_id,
-        "agents_invoked": [],
-        "errors":         [],
-        "metrics":        {},
-    }
+    return {"cycle_id": cycle_id}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Node: sales_branch  (Analyst → Strategist)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# Champs de RetailState possédés par la branche sales (analyste + stratège).
+# external_context est possédé par context_branch (conflit parallèle sinon) ;
+# rag_context/retrieved_scripts par knowledge_branch.
+_SALES_BRANCH_KEYS = (
+    "pos_data",
+    "gap_pct", "gap_objectif", "gap_amount",
+    "forecast_eod", "coverage", "attainment",
+    "urgency_level", "urgency_score", "analyst_summary",
+    "underperforming_categories", "intraday_trend",
+    "strategie", "strategie_actions", "focus_produits",
+    "cause_racine", "message_manager", "real_time_alerts",
+    "rag_used", "nb_rag_scripts", "critique_score", "critique_passed",
+    "context_heatmap", "context_signals",
+    # Signaux horaires réels de l'Analyste v4 (ledger attendu/réel + prévision
+    # h+1..h+3) — consommés par le payload dashboard (hourly_performance).
+    "ts_analysis", "hourly_gaps", "next_hours_forecast",
+    "trend_signal", "feasibility",
+)
+
 
 async def node_sales_branch(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -75,21 +96,20 @@ async def node_sales_branch(state: Dict[str, Any]) -> Dict[str, Any]:
             triggered_by=state.get("trigger_type", "supervisor"),
         )
         ms = round((time.time() - t0) * 1000)
-        agents = list(state.get("agents_invoked", [])) + ["analyst", "strategist"]
-        return {
-            **state,
-            **result,
-            "agents_invoked": agents,
-            "metrics": {**state.get("metrics", {}), "sales_branch_ms": ms},
-        }
+        # Whitelist des champs possédés par la branche sales — surtout PAS
+        # **result : le state complet du cycle contient external_context
+        # (écrit par context_branch dans le même superstep) et cycle_id/store_id.
+        delta = {k: result[k] for k in _SALES_BRANCH_KEYS if k in result}
+        delta.update({
+            "agents_invoked": ["analyst", "strategist"],
+            "metrics": {"sales_branch_ms": ms},
+        })
+        return delta
     except Exception as e:
         logger.warning("[Supervisor] sales_branch failed: %s", e)
-        errors = list(state.get("errors", [])) + [f"sales_branch: {e}"]
         return {
-            **state,
-            "errors": errors,
-            "urgency_level": state.get("urgency_level", "MEDIUM"),
-            "agents_invoked": list(state.get("agents_invoked", [])) + ["analyst_failed"],
+            "errors": [f"sales_branch: {e}"],
+            "agents_invoked": ["analyst_failed"],
         }
 
 
@@ -107,17 +127,21 @@ async def node_knowledge_branch(state: Dict[str, Any]) -> Dict[str, Any]:
         from app.sales.coaching.agents.stratege.nodes import node_rag_search
         result = await node_rag_search(state)
         ms = round((time.time() - t0) * 1000)
-        agents = list(state.get("agents_invoked", [])) + ["knowledge_rag"]
+        # rag_used / nb_rag_scripts appartiennent à sales_branch (le stratège
+        # interne les écrit) — ne garder ici que les champs knowledge.
+        scripts = result.get("rag_context") or []
         return {
-            **state,
-            **result,
-            "agents_invoked": agents,
-            "metrics": {**state.get("metrics", {}), "knowledge_branch_ms": ms},
+            "rag_context":       {"docs": scripts, "query": result.get("rag_query", "")},
+            "retrieved_scripts": list(scripts),
+            "agents_invoked":    ["knowledge_rag"],
+            "metrics":           {"knowledge_branch_ms": ms},
         }
     except Exception as e:
         logger.warning("[Supervisor] knowledge_branch failed: %s", e)
-        errors = list(state.get("errors", [])) + [f"knowledge_branch: {e}"]
-        return {**state, "errors": errors, "rag_context": {}, "retrieved_scripts": []}
+        return {
+            "errors": [f"knowledge_branch: {e}"],
+            "rag_context": {}, "retrieved_scripts": [],
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -135,18 +159,15 @@ async def node_context_branch(state: Dict[str, Any]) -> Dict[str, Any]:
         from app.sales.coaching.agents.stratege.tools import fetch_full_context
         context = await fetch_full_context(store_id)
         ms = round((time.time() - t0) * 1000)
-        agents = list(state.get("agents_invoked", [])) + ["context_sentinel"]
         return {
-            **state,
             "external_context": context,
             "context_report":   context.get("summary", {}),
-            "agents_invoked":   agents,
-            "metrics": {**state.get("metrics", {}), "context_branch_ms": ms},
+            "agents_invoked":   ["context_sentinel"],
+            "metrics":          {"context_branch_ms": ms},
         }
     except Exception as e:
         logger.warning("[Supervisor] context_branch failed: %s", e)
-        errors = list(state.get("errors", [])) + [f"context_branch: {e}"]
-        return {**state, "errors": errors, "external_context": {}}
+        return {"errors": [f"context_branch: {e}"], "external_context": {}}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -186,7 +207,6 @@ async def node_inventory_branch(state: Dict[str, Any]) -> Dict[str, Any]:
             ),
         )
         ms = round((time.time() - t0) * 1000)
-        agents = list(state.get("agents_invoked", [])) + ["inventory_analysis", "inventory_decision"]
         items     = result.get("items", []) if isinstance(result, dict) else []
         # fast=True doesn't populate decision_result (no LLM narration), so
         # "recommendation" stays None — fall back to riskLevel/formulaOrderQty
@@ -202,16 +222,17 @@ async def node_inventory_branch(state: Dict[str, Any]) -> Dict[str, Any]:
         ]
 
         return {
-            **state,
             "inventory_decisions":   decisions,
             "critical_stock_alerts": critical,
-            "agents_invoked":        agents,
-            "metrics": {**state.get("metrics", {}), "inventory_branch_ms": ms},
+            "agents_invoked":        ["inventory_analysis", "inventory_decision"],
+            "metrics":               {"inventory_branch_ms": ms},
         }
     except Exception as e:
         logger.warning("[Supervisor] inventory_branch failed: %s", e)
-        errors = list(state.get("errors", [])) + [f"inventory_branch: {e}"]
-        return {**state, "errors": errors, "inventory_decisions": [], "critical_stock_alerts": []}
+        return {
+            "errors": [f"inventory_branch: {e}"],
+            "inventory_decisions": [], "critical_stock_alerts": [],
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -233,10 +254,7 @@ async def node_merge_outputs(state: Dict[str, Any]) -> Dict[str, Any]:
         gap_pct, urgency, inv_count, script_count, len(state.get("errors", [])),
     )
 
-    return {
-        **state,
-        "agents_invoked": list(state.get("agents_invoked", [])) + ["merge"],
-    }
+    return {"agents_invoked": ["merge"]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -298,22 +316,18 @@ async def node_coach_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             "confidence": top_product.get("final_score", 0.5),
         }
 
-        agents = list(state.get("agents_invoked", [])) + ["coach_cross_domain"]
         return {
-            **state,
             "coach_recommendation":  coach_recommendation,
             "scored_products":       scored,
             "gap_amount":            float(sales_ctx.get("gap_amount", 0)),
-            "agents_invoked":        agents,
-            "metrics": {**state.get("metrics", {}), "coach_agent_ms": ms},
+            "agents_invoked":        ["coach_cross_domain"],
+            "metrics":               {"coach_agent_ms": ms},
         }
 
     except Exception as e:
         logger.warning("[Supervisor] coach_agent failed: %s", e)
-        errors = list(state.get("errors", [])) + [f"coach_agent: {e}"]
         return {
-            **state,
-            "errors": errors,
+            "errors": [f"coach_agent: {e}"],
             "coach_recommendation": {
                 "priority": "MEDIUM",
                 "product_to_push": "",
@@ -331,10 +345,18 @@ async def node_guardrail(state: Dict[str, Any]) -> Dict[str, Any]:
     """Run the Guardrail Agent (S5.1) on the coach recommendation."""
     try:
         from app.sales.coaching.agents.guardrail.guardrail_agent import guardrail_node
-        return guardrail_node(state)
+        result = guardrail_node(state)
+        # guardrail_node retourne {**state, ...} — ne propager que ses champs,
+        # sinon les canaux à reducer (agents_invoked/errors/metrics) doublent.
+        keys = (
+            "guardrail_status", "guardrail_issues", "guardrail_feedback",
+            "guardrail_confidence", "requires_human_validation",
+            "guardrail_safe_fallback",
+        )
+        return {k: result[k] for k in keys if k in result}
     except Exception as e:
         logger.warning("[Supervisor] guardrail failed: %s", e)
-        return {**state, "guardrail_status": "APPROVE", "guardrail_issues": []}
+        return {"guardrail_status": "APPROVE", "guardrail_issues": []}
 
 
 def route_after_guardrail(state: Dict[str, Any]) -> str:
@@ -372,14 +394,15 @@ async def node_notify_frontend(state: Dict[str, Any]) -> Dict[str, Any]:
             "timestamp":          __import__("datetime").datetime.utcnow().isoformat(),
         })
 
-        # Fire-and-forget broadcast — main.py's _broadcast is in scope at runtime
-        from main import _broadcast
+        # Fire-and-forget broadcast — le shim racine main.py ne réexporte que
+        # `app`, _broadcast vit dans app.main
+        from app.main import _broadcast
         await _broadcast(store_id, payload)
         logger.info("[Supervisor] notify_frontend — %s guardrail=%s", store_id, guardrail)
     except Exception as e:
         logger.warning("[Supervisor] notify_frontend: %s", e)
 
-    return {**state, "agents_invoked": list(state.get("agents_invoked", [])) + ["notify_frontend"]}
+    return {"agents_invoked": ["notify_frontend"]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -398,8 +421,7 @@ async def node_safe_fallback(state: Dict[str, Any]) -> Dict[str, Any]:
         "message_for_advisor": fallback_msg,
         "confidence":          0.0,
     }
-    return {**state, "coach_recommendation": safe_reco,
-            "agents_invoked": list(state.get("agents_invoked", [])) + ["safe_fallback"]}
+    return {"coach_recommendation": safe_reco, "agents_invoked": ["safe_fallback"]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -421,11 +443,11 @@ async def node_human_validation(state: Dict[str, Any]) -> Dict[str, Any]:
             actions           = state.get("strategie_actions", [])[:3],
             source            = "guardrail_escalate",
         )
-        return {**state, "hitl_required": True, "hitl_review_id": review_id,
-                "agents_invoked": list(state.get("agents_invoked", [])) + ["human_validation"]}
+        return {"hitl_required": True, "hitl_review_id": review_id,
+                "agents_invoked": ["human_validation"]}
     except Exception as e:
         logger.warning("[Supervisor] human_validation submit failed: %s", e)
-        return {**state, "hitl_required": True}
+        return {"hitl_required": True}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -457,7 +479,7 @@ async def node_save_memory(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.debug("[Supervisor] save_memory: %s", e)
 
-    return {**state, "agents_invoked": list(state.get("agents_invoked", [])) + ["save_memory"]}
+    return {"agents_invoked": ["save_memory"]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

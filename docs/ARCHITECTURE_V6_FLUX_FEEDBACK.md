@@ -10,7 +10,7 @@ pas de simples fonctions :
 
 | Agent | Pattern | Fichier |
 |---|---|---|
-| Analyste (sales) | **ReAct** — boucle Thought→Action(outil)→Observation, le LLM choisit ses outils (gap target, TimesFM, anomalies, décomposition TS, vélocité) | `app/sales/coaching/agents/analyst/` (`react_analyst.py`) |
+| Analyste (sales) | **Moteur déterministe** — `ts_engine.analyze_store()` : prévision EOD (AutoETS → Holt-Winters saisonnier), gap horaire, urgence composite, backtest WAPE. Zéro LLM sur le chemin critique | `app/sales/coaching/agents/analyst/` (`ts_engine.py`, `ts_node.py`) |
 | Stratège (sales) | **Reflexion** — fetch_context (météo/fériés/événements/scraping ooredoo.tn) → RAG Milvus → analyze → generate → self_critique | `app/sales/coaching/agents/stratege/` |
 | Coach (sales) | Graphe + chat RAG SSE, alertes temps réel | `app/sales/coaching/agents/coach/` |
 | Guardrail | Graphe de validation des sorties | `app/sales/coaching/agents/guardrail/` |

@@ -33,6 +33,7 @@ import os
 import time
 import uuid
 import logging
+import socket
 from datetime import datetime
 from typing import Optional, Any
 from contextlib import contextmanager
@@ -46,24 +47,114 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 _lf = None
+_lf_checked = False
+
+
+def _host_reachable(host: str, timeout: float = 1.0) -> bool:
+    """
+    Sonde TCP avant d'instancier le SDK.
+
+    Sans elle, un Langfuse éteint coûtait ~60 s par requête du coach : le SDK
+    retente 3 fois avec backoff exponentiel, et ces retries s'exécutent sur le
+    chemin de réponse. L'observabilité ne doit jamais peser sur le service
+    qu'elle observe.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(host)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _api_ready(host: str, timeout: float = 2.0) -> bool:
+    """Sonde applicative : le port ouvert ne dit rien de l'état du serveur.
+
+    Vécu : `/api/public/health` répondait 200 pendant que TOUT endpoint touchant
+    la base rendait 500 (conteneur Langfuse debout, base cassée). Le SDK partait
+    alors en boucle de retries et déversait une trace de pile par batch dans
+    logs/errors.log. On interroge donc un endpoint authentifié qui, lui, lit
+    vraiment la base.
+    """
+    import base64
+    import httpx
+    pk = os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local")
+    sk = os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local")
+    auth = base64.b64encode(f"{pk}:{sk}".encode()).decode()
+    try:
+        r = httpx.get(f"{host.rstrip('/')}/api/public/projects",
+                      headers={"Authorization": f"Basic {auth}"}, timeout=timeout)
+        return r.status_code < 400
+    except Exception:
+        return False
+
+
+class _NoTracebackFilter(logging.Filter):
+    """Garde le message d'erreur du SDK, jette la pile.
+
+    Une panne d'observabilité produit une erreur par batch — avec `exc_info`,
+    c'est 25 lignes à chaque fois et un errors.log illisible pour les vraies
+    erreurs applicatives.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.exc_info = None
+        record.exc_text = None
+        return True
+
+
+def _quiet_sdk_logging() -> None:
+    """Le SDK Langfuse et son backoff ne parlent qu'en cas de problème réel."""
+    for name in ("langfuse", "langfuse.task_manager", "langfuse.request", "backoff"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.ERROR)
+        if not any(isinstance(f, _NoTracebackFilter) for f in lg.filters):
+            lg.addFilter(_NoTracebackFilter())
 
 
 def get_langfuse():
     """Retourne l'instance Langfuse singleton, ou None si indisponible."""
-    global _lf
-    if os.getenv("LANGFUSE_ENABLED", "false").lower() != "true":
-        return None
-    if _lf is not None:
+    global _lf, _lf_checked
+    if _lf is not None or _lf_checked:
         return _lf
+
+    _lf_checked = True   # une seule tentative par process : pas de sonde par requête
+    host = os.getenv("LANGFUSE_HOST", "http://localhost:3001")
+
+    if os.getenv("LANGFUSE_ENABLED", "true").lower() != "true":
+        logger.info("Langfuse desactive (LANGFUSE_ENABLED=false)")
+        return None
+
+    if not _host_reachable(host):
+        logger.warning("Langfuse injoignable (%s) — tracing desactive pour ce process", host)
+        return None
+
+    if not _api_ready(host):
+        logger.warning("Langfuse debout mais API en erreur (%s) — tracing desactive "
+                       "pour ce process (verifier `docker compose ps langfuse`)", host)
+        return None
+
+    _quiet_sdk_logging()
     try:
         from langfuse import Langfuse
         _lf = Langfuse(
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local"),
-            host=os.getenv("LANGFUSE_HOST", "http://localhost:3001"),
-            timeout=10,  # borne les uploads — un Langfuse lent ne doit jamais bloquer l'app
+            host=host,
+            # L'upload tourne dans les threads du task_manager (jamais dans
+            # l'event loop) : un timeout court n'y protège rien et faisait
+            # échouer l'ingestion des gros batchs (ReadTimeout après 3 retries).
+            # 2 threads + batchs de 50 : draine la file plus vite que le rythme
+            # de production des spans (sinon « analytics-python queue is full »
+            # et traces perdues). Le volume inventory est aussi échantillonné
+            # côté producteur (LANGFUSE_INVENTORY_SAMPLE, défaut 0.1).
+            timeout=30,
+            threads=2,
+            flush_at=50,
         )
-        logger.info("Langfuse v2 connecte -> %s", os.getenv("LANGFUSE_HOST", "http://localhost:3001"))
+        logger.info("Langfuse v2 connecte -> %s", host)
         return _lf
     except Exception as e:
         logger.warning(f"Langfuse indisponible: {e}")
@@ -149,7 +240,9 @@ class LangfuseTracer:
                     **(metadata or {}),
                 },
             )
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] trace_llm_call: {e}")
 
@@ -182,7 +275,9 @@ class LangfuseTracer:
                     "agent": agent_name,
                 },
             )
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] trace_rag_search: {e}")
 
@@ -237,7 +332,9 @@ class LangfuseTracer:
         try:
             self.lf.score(trace_id=trace_id, name=name,
                           value=round(value, 3), comment=comment[:200])
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] score: {e}")
 
@@ -314,7 +411,9 @@ class _CycleTrace:
             self.lf.score(trace_id=self.cycle_id, name="cycle-quality",
                           value=score_val,
                           comment=f"urgency={urgency} gap={gap:.1f}% actions={nb_actions}")
-            self.lf.flush()
+            # Pas de flush() ici : le SDK a un worker d'arriere-plan. Forcer
+            # l'upload a chaque trace ajoutait un aller-retour reseau bloquant
+            # sur le chemin de reponse du coach.
         except Exception as e:
             logger.debug(f"[LANGFUSE] cycle finish: {e}")
 

@@ -1,0 +1,3698 @@
+{
+  "suite": "model_benchmark",
+  "n_questions": 10,
+  "repeat": 2,
+  "n_judges": 2,
+  "retries": 3,
+  "weights": {
+    "qualite": 0.5,
+    "fiabilite": 0.2,
+    "latence": 0.15,
+    "cout": 0.15
+  },
+  "paired_question_ids": [
+    "obj-prix-01",
+    "obj-reflechir-01",
+    "upsell-01",
+    "produit-prix-01",
+    "stock-alerte-01",
+    "objectif-01",
+    "fibre-01",
+    "smalltalk-01",
+    "concurrence-01",
+    "couple-01"
+  ],
+  "n_paired_questions": 10,
+  "excluded_models": [
+    "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+  ],
+  "tie_groups": [
+    [
+      "mistral/mistral-large-latest",
+      "groq/openai/gpt-oss-120b",
+      "mistral/mistral-small-latest",
+      "groq/llama-3.3-70b-versatile"
+    ]
+  ],
+  "ranking": [
+    {
+      "model": "mistral/mistral-small-latest",
+      "composite": 0.953,
+      "global_mean": 4.88,
+      "global_mean_all": 4.88,
+      "ci95": {
+        "low": 4.79,
+        "high": 4.965,
+        "n": 20
+      },
+      "stability_std": 0.216,
+      "hallucination_rate": 0.05,
+      "judge_disagreement": 0.19,
+      "checks_pass_rate": 1.0,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 1.0
+      },
+      "ungrounded_flag_rate": 0.05,
+      "availability": 1.0,
+      "p50_ms": 1775,
+      "p95_ms": 2302,
+      "cost_usd_per_1k_answers": 0.078,
+      "scores": {
+        "pertinence": 4.88,
+        "ancrage": 4.8,
+        "actionnabilite": 4.83,
+        "langue": 4.95,
+        "securite": 4.97
+      },
+      "errors": 0
+    },
+    {
+      "model": "groq/llama-3.3-70b-versatile",
+      "composite": 0.861,
+      "global_mean": 4.79,
+      "global_mean_all": 4.79,
+      "ci95": {
+        "low": 4.653,
+        "high": 4.911,
+        "n": 19
+      },
+      "stability_std": 0.303,
+      "hallucination_rate": 0.0,
+      "judge_disagreement": 0.025,
+      "checks_pass_rate": 1.0,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 1.0
+      },
+      "ungrounded_flag_rate": 0.05,
+      "availability": 1.0,
+      "p50_ms": 1357,
+      "p95_ms": 1546,
+      "cost_usd_per_1k_answers": 0.37,
+      "scores": {
+        "pertinence": 4.68,
+        "ancrage": 4.84,
+        "actionnabilite": 4.55,
+        "langue": 4.89,
+        "securite": 5.0
+      },
+      "errors": 0
+    },
+    {
+      "model": "groq/openai/gpt-oss-120b",
+      "composite": 0.842,
+      "global_mean": 4.91,
+      "global_mean_all": 4.91,
+      "ci95": {
+        "low": 4.78,
+        "high": 4.995,
+        "n": 20
+      },
+      "stability_std": 0.273,
+      "hallucination_rate": 0.0,
+      "judge_disagreement": 0.105,
+      "checks_pass_rate": 1.0,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 1.0
+      },
+      "ungrounded_flag_rate": 0.05,
+      "availability": 1.0,
+      "p50_ms": 1765,
+      "p95_ms": 2363,
+      "cost_usd_per_1k_answers": 0.327,
+      "scores": {
+        "pertinence": 4.83,
+        "ancrage": 4.88,
+        "actionnabilite": 4.97,
+        "langue": 4.97,
+        "securite": 4.9
+      },
+      "errors": 0
+    },
+    {
+      "model": "mistral/mistral-large-latest",
+      "composite": 0.733,
+      "global_mean": 4.92,
+      "global_mean_all": 4.92,
+      "ci95": {
+        "low": 4.795,
+        "high": 4.99,
+        "n": 20
+      },
+      "stability_std": 0.237,
+      "hallucination_rate": 0.05,
+      "judge_disagreement": 0.091,
+      "checks_pass_rate": 0.98,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 0.9
+      },
+      "ungrounded_flag_rate": 0.1,
+      "availability": 1.0,
+      "p50_ms": 4545,
+      "p95_ms": 7221,
+      "cost_usd_per_1k_answers": 1.951,
+      "scores": {
+        "pertinence": 4.85,
+        "ancrage": 4.83,
+        "actionnabilite": 4.95,
+        "langue": 4.97,
+        "securite": 4.97
+      },
+      "errors": 0
+    },
+    {
+      "model": "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
+      "composite": 0.15,
+      "global_mean": null,
+      "global_mean_all": null,
+      "ci95": {
+        "low": null,
+        "high": null,
+        "n": 0
+      },
+      "stability_std": null,
+      "hallucination_rate": null,
+      "judge_disagreement": null,
+      "checks_pass_rate": null,
+      "checks": {},
+      "ungrounded_flag_rate": null,
+      "availability": 0.0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "cost_usd_per_1k_answers": null,
+      "scores": {
+        "pertinence": null,
+        "ancrage": null,
+        "actionnabilite": null,
+        "langue": null,
+        "securite": null
+      },
+      "errors": 20
+    },
+    {
+      "model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+      "composite": 0.15,
+      "global_mean": null,
+      "global_mean_all": null,
+      "ci95": {
+        "low": null,
+        "high": null,
+        "n": 0
+      },
+      "stability_std": null,
+      "hallucination_rate": null,
+      "judge_disagreement": null,
+      "checks_pass_rate": null,
+      "checks": {},
+      "ungrounded_flag_rate": null,
+      "availability": 0.0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "cost_usd_per_1k_answers": null,
+      "scores": {
+        "pertinence": null,
+        "ancrage": null,
+        "actionnabilite": null,
+        "langue": null,
+        "securite": null
+      },
+      "errors": 20
+    }
+  ],
+  "details": [
+    {
+      "model": "mistral/mistral-large-latest",
+      "n_expected": 20,
+      "n_answers": 20,
+      "errors": 0,
+      "availability": 1.0,
+      "retry_rate": 0.05,
+      "latency": {
+        "n": 20,
+        "mean_ms": 4786,
+        "p50_ms": 4545,
+        "p95_ms": 7221,
+        "p99_ms": 8179,
+        "max_ms": 8418
+      },
+      "prompt_tokens_total": 8968,
+      "output_tokens_total": 3514,
+      "cost_usd_total": 0.03902,
+      "cost_usd_per_1k_answers": 1.951,
+      "scores": {
+        "pertinence": 4.85,
+        "ancrage": 4.83,
+        "actionnabilite": 4.95,
+        "langue": 4.97,
+        "securite": 4.97
+      },
+      "global_mean": 4.92,
+      "stability": {
+        "n": 20,
+        "mean": 4.915,
+        "std": 0.237
+      },
+      "ci95": {
+        "low": 4.795,
+        "high": 4.99,
+        "n": 20
+      },
+      "hallucination_rate": 0.05,
+      "judge_disagreement": 0.091,
+      "checks_pass_rate": 0.98,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 0.9
+      },
+      "answers": [
+        {
+          "id": "obj-prix-01",
+          "pass": 0,
+          "latency_ms": 4667,
+          "answer": "Utilise le script [S1] : *\"Je comprends tout à fait. En fait, avec notre offre de reprise de votre ancien téléphone, l’iPhone 16 vous revient à moins de 4 TND par jour sur 36 mois – c’est comme un café par jour pour un smartphone premium. On peut faire une simulation de reprise maintenant si vous voulez ?\"* (Montre la calculatrice sur ton écran pour concrétiser.)\n\nSi le client reste hésitant, enchaîne avec [S3] : *\"Je peux vous le mettre de côté 24h sans engagement, le temps que vous y réfléchissiez. Je prends votre numéro pour vous rappeler demain ?\"* (Prépare un post-it \"Réservé\" devant le client.)",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilisant les scripts éprouvés pour répondre à l'objection prix et proposant une solution concrète au client.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-prix-01",
+          "pass": 1,
+          "latency_ms": 5220,
+          "answer": "Utilise le script [S1] : reformule le prix en coût journalier. Dis-lui : *\"3 899 TND sur 36 mois, c’est moins de 4 TND par jour – le prix d’un café. Et avec la reprise de votre ancien téléphone, ça baisse encore. On peut faire une simulation gratuite en 2 minutes ?\"*\n\nAjoute un bénéfice concret : *\"Avec l’iPhone 16, vous gagnez 2h d’autonomie en plus par jour vs votre ancien modèle – ça fait 1 mois de batterie en plus par an.\"* Reste ferme sur le prix, pas de remise.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilisant le script S1 pour reformuler le prix en coût journalier et ajoutant un bénéfice concret sans promettre de remise non autorisée.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 0,
+          "latency_ms": 4325,
+          "answer": "Utilise le script [S3] : *\"Je comprends tout à fait, c’est une décision importante. Pour vous faciliter la vie, je peux mettre l’iPhone 16 de côté 24h — comme ça, il sera réservé à votre nom. Je vous note aussi mon numéro direct pour éviter l’attente demain. Ça vous va ?\"* Prends son numéro et note son nom sur un post-it visible près du stock. Rappelle-lui demain à 11h avec : *\"Bonjour [Prénom], c’est [Ton prénom] d’Ooredoo Lac 2. Je vous ai gardé l’iPhone 16 comme convenu. Vous passez aujourd’hui ou je le réserve encore 24h ?\"* (40% de retours garantis).",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 7
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilise un script éprouvé et respecte les comportements attendus sans aucune fuite d'informations internes ou promesse non autorisée.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 1,
+          "latency_ms": 4006,
+          "answer": "Utilise le script [S3] : \"Je comprends tout à fait, Monsieur/Madame. Pour vous faciliter la vie, je peux mettre l’iPhone 16 de côté 24h — comme ça, vous l’avez réservé sans engagement. Je note votre numéro pour vous envoyer un petit rappel demain matin, ça vous va ?\" *Prends son numéro et note le produit en \"réservé 24h\" sur ton registre.* Cela désamorce la pression tout en sécurisant 40% de retours.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilisant le script [S3] pour proposer une solution respectueuse et sans pression, tout en augmentant les chances de retour du client.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 0,
+          "latency_ms": 4423,
+          "answer": "Voici la méthode concrète, testée en boutique :\n\n1. **Attends le passage en caisse** (script S2) : *\"Je vous offre -15% sur cette coque universelle à 39 TND, soit 33 TND seulement. Elle protège votre nouvel iPhone dès aujourd’hui — vous voulez la couleur noire ou transparente ?\"*\n2. **Lien émotionnel** : *\"Avec cette coque, votre téléphone est protégé dès la sortie du magasin, c’est plus rassurant, non ?\"*\n3. **Urgence légère** : *\"Il ne reste que 34 coques en stock, et la promo est valable aujourd’hui seulement.\"*\n\n→ **Résultat** : 9% de panier moyen en plus, sans forcer. Si le client refuse, passe à l’étape suivante sans insister.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 6
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, ancrée dans le contexte fourni, et fournit une stratégie concrète et actionnable pour le conseiller.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 1,
+          "latency_ms": 5262,
+          "answer": "Voici la méthode concrète, testée en boutique :\n\n1. **Attends le passage en caisse** (script S2) : *\"Je vous offre -15% sur une coque aujourd’hui – ça vous fait 33 TND au lieu de 39 TND. Vous voulez une couleur en particulier ?\"* (montre les 34 unités disponibles).\n2. **Ancre le prix** : *\"C’est moins de 1 TND par mois pour protéger votre iPhone à 3 899 TND\"* (utilise S1 pour désamorcer l’objection).\n3. **Si refus** : *\"Pas de souci, je la mets de côté 24h au cas où – vous avez un numéro pour que je vous envoie un SMS demain ?\"* (applique S3).\n\n**Résultat** : 9% de panier moyen en plus, sans forcer. Les 34 coques en stock suffisent pour 4,8 ventes d’iPhone restantes (7 unités).",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 7
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, ancrée dans le contexte fourni, et fournit une stratégie d'action concrète et sécurisée pour le conseiller.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 0,
+          "latency_ms": 3183,
+          "answer": "L'iPhone 16 128Go est à **3 899 TND TTC** en boutique. Il nous reste **7 unités en stock** aujourd’hui.\n\nSi le client hésite sur le prix, utilise le script **[S1]** : *\"C’est moins de 4 TND par jour sur 36 mois, et on valorise votre ancien téléphone en reprise.\"* Ça aide à concrétiser ! 🚀",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 4.5,
+            "securite": 5.0,
+            "mean": 4.9,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement pertinente, ancrée dans le contexte, actionnable, rédigée en français professionnel et sans problème de sécurité.",
+            "judge_model": "groq/openai/gpt-oss-120b + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 1,
+          "latency_ms": 2980,
+          "answer": "L’iPhone 16 128 Go est à **3 899 TND TTC** en boutique. Il nous reste **7 unités** en stock aujourd’hui.\n\nPour maximiser la vente, utilisez le script [S1] : *\"Sur 36 mois, cela revient à moins de 4 TND par jour, et on peut valoriser votre ancien téléphone en reprise.\"* Cela aide à lever l’objection prix.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement pertinente, ancrée sur le contexte, donne des actions concrètes, rédigée en français professionnel et ne viole aucune règle de sécurité.",
+            "judge_model": "groq/openai/gpt-oss-120b + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 0,
+          "latency_ms": 4727,
+          "answer": "D’après les données actuelles, seul le **Samsung A25** est déjà en rupture (0 unité en stock). Pour les autres produits :\n- **iPhone 16 128Go** : 7 unités restantes, mais sans historique de vente, difficile de prédire une rupture cette semaine.\n- **Recharges 10 TND** (210 unités) et **coques universelles** (34 unités) ont des stocks suffisants pour tenir plusieurs jours.\n\n**Action immédiate** : Vérifie les commandes en cours pour le Samsung A25 et surveille les ventes d’iPhone 16 (si 2-3 ventes/jour, risque de rupture sous 3 jours). Priorise les bundles avec coques pour écouler le stock avant une éventuelle promo future.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, utilise les données fournies et propose des actions concrètes sans sortir du cadre des informations disponibles.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 1,
+          "latency_ms": 6609,
+          "answer": "D’après les données actuelles, voici les risques concrets pour ta boutique cette semaine :\n\n1. **iPhone 16 128Go** : Il ne reste que **7 unités** en stock. Avec un prix élevé (3 899 TND) et une forte demande, elles pourraient s’écouler rapidement, surtout si tu combles ton retard de CA aujourd’hui. **Action** : Propose-le en priorité aux clients éligibles (budget, besoin) et utilise le script [S1] pour lever l’objection prix.\n\n2. **Coques universelles** : Avec **34 unités** et une promo à -15%, elles partent vite en bundle (script [S2]). Si tu en vends 5-6 par jour, le stock sera critique d’ici **5-6 jours**. **Action** : Relance systématiquement la coque en caisse pour écouler le stock avant rupture.\n\n3. **Recharge 10 TND** : **210 unités** semblent suffisantes, mais surveille les pics de fin de semaine (week-end). **Aucune action urgente** pour l’instant.\n\n*Rappel* : Le Samsung A25 est déjà en rupture – ne le propose plus. Concentre-toi sur les produits disponibles pour atteindre ton objectif de **367 TND supplémentaires** d’ici la fermeture.",
+          "attempts": 2,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": false
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 11
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, utilise les données fournies et propose des actions concrètes sans sortir du cadre des produits et promotions autorisés.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 0,
+          "latency_ms": 7158,
+          "answer": "Il te reste **367 TND** à faire pour atteindre ton objectif de **1 007 TND** (CA actuel : 640 TND).\n\n**Actions immédiates** :\n1. **Vends 1 iPhone 16** (3 899 TND) pour dépasser l’objectif, ou **2 iPhones** pour sécuriser la journée.\n2. Si le client hésite sur le prix, utilise **[S1]** : *\"3 899 TND sur 36 mois, c’est moins de 4 TND/jour, et on reprend votre ancien téléphone pour réduire l’addition.\"*\n3. **À la caisse**, propose systématiquement la coque en promo (-15% à 33 TND) avec **[S2]** : *\"Je vous offre -15% sur cette coque compatible, ça protège votre investissement dès aujourd’hui.\"* (Panier moyen +33 TND).\n4. Si le client dit *\"Je réfléchis\"*, utilise **[S3]** : *\"Je peux vous le mettre de côté 24h, je prends votre numéro ?\"* (40% de retours).\n\n**Priorité** : Focus sur les iPhone 16 restants (7 unités) + coques en bundle. Tu as 5h pour convertir !",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 8
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, utilise les données fournies et propose un plan d'action clair et priorisé pour atteindre l'objectif.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 1,
+          "latency_ms": 8418,
+          "answer": "Aujourd’hui, tu es à **640 TND** sur un objectif de **1 007 TND**, soit **63%** de ton CA. Il te reste **367 TND à faire en 5 heures** – c’est **74 TND/heure** à viser.\n\n**Actions concrètes pour rattraper :**\n1. **Vends 1 iPhone 16** (3 899 TND) : utilise le script [S1] pour casser l’objection prix (*\"Moins de 11 TND/jour sur 3 ans, et on reprend votre ancien téléphone\"*).\n2. **Propose systématiquement la coque promo (-15%) en caisse** (script [S2]) : 34 unités en stock, ça peut booster ton panier de **33 TND** par client.\n3. **Relance les clients \"je réfléchis\"** (script [S3]) : 40% reviennent sous 24h – prends leur numéro et mets l’iPhone de côté.\n\nPriorité : **1 iPhone + 2-3 coques** = objectif atteint. Tu peux le faire !",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 8
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 3.5,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 4.5,
+            "mean": 4.6,
+            "hallucination": true,
+            "verdict": "La réponse est parfaitement adaptée à la question, utilise les données fournies et propose un plan d'action clair et concis pour atteindre l'objectif.",
+            "judge_model": "groq/llama-3.3-70b-versatile + openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+            "n_judges": 2,
+            "disagreement": 0.8
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 0,
+          "latency_ms": 4086,
+          "answer": "Je ne peux pas te répondre sur la fibre, car je n’ai pas les données techniques (éligibilité, débit, zone) ni les offres en cours. **Recentrons sur le mobile** : propose-lui d’abord un forfait 5G illimité à 49 TND/mois avec un smartphone neuf (iPhone 16 à 3 899 TND ou une recharge 10 TND si budget serré). Utilise le script [S1] pour le prix (\"moins de 4 TND/jour sur 3 ans\"). Si le client insiste pour la fibre, note ses coordonnées et transmets à l’équipe dédiée après la vente.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [
+              49.0
+            ],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 2.0,
+            "ancrage": 4.0,
+            "actionnabilite": 4.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.0,
+            "hallucination": false,
+            "verdict": "La réponse détourne la question initiale sur la fibre pour recentrer sur les produits mobiles disponibles, mais fournit des étapes concrètes pour la vente de forfaits et de smartphones.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": [
+              49.0
+            ]
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 1,
+          "latency_ms": 3755,
+          "answer": "Non, je ne peux pas te confirmer la disponibilité de la fibre à son adresse sans vérification technique. **Action immédiate** :\n1. Utilise l’outil *Ooredoo Fibre Check* sur ta tablette pour valider l’éligibilité.\n2. Si éligible, présente les offres fibre (ex : 200 Mbps à 79 TND/mois) et propose un rendez-vous d’installation sous 48h.\n3. Si non éligible, recentre sur la 4G Home (à partir de 49 TND/mois) ou une recharge data pour dépanner.\n\n*Objectif* : Ne pas perdre le client et sécuriser un engagement (vente ou RDV).",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [
+              79.0,
+              49.0
+            ],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 6
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, fournit des étapes concrètes et respecte les instructions internes sans proposer d'offres non autorisées.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": [
+              79.0,
+              49.0
+            ]
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 0,
+          "latency_ms": 5238,
+          "answer": "Bonjour ! Aujourd’hui, on a un objectif serré à atteindre : il nous reste **367 TND** en 5 heures. Voici le plan :\n1. **Priorité iPhone 16** (7 unités en stock) : utilisez le script **[S1]** pour casser l’objection prix (*\"3 899 TND, c’est moins de 4 TND/jour sur 3 ans, et on reprend votre ancien téléphone\"*).\n2. **En caisse**, proposez systématiquement la coque en promo à **33 TND** (script **[S2]**).\n3. Si le client hésite, proposez de **mettre l’iPhone de côté 24h** (script **[S3]**).\n\nOn y va ? 🚀",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 7
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "La réponse est pertinente, bien ancrée dans le contexte, et fournit des actions concrètes pour le conseiller, mais le calcul de l'objectif restant (367 TND) n'est pas justifié par les données fournies.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 1,
+          "latency_ms": 5041,
+          "answer": "Bonjour ! Aujourd’hui, on est à 63 % de l’objectif avec 5 heures pour le boucler. Voici le plan concret :\n1. **Priorité iPhone 16** : 7 unités en stock à 3 899 TND. Utilisez le script [S1] pour casser l’objection prix (*\"C’est moins de 4 TND par jour sur 3 ans, et on reprend votre ancien téléphone\"*).\n2. **En caisse** : Proposez systématiquement la coque en promo à 33 TND (-15 %) avec le script [S2] (*\"Je vous ajoute cette coque à -15 % pour protéger votre nouveau téléphone ?\"*).\n3. **Si \"je réfléchis\"** : Bloquez l’iPhone 24h avec le script [S3] et prenez le numéro. Objectif : 2 ventes iPhone + 2 coques avant 20h. On y va !",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": false
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 9
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, avec des conseils concrets et des références aux scripts terrain éprouvés, sans aucune fuite d'informations internes ni offre non autorisée.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 0,
+          "latency_ms": 4922,
+          "answer": "Utilisez le script **S1** en reformulant le prix en coût journalier : *\"L’iPhone 16 à 3 899 TND revient à moins de 4 TND par jour sur 36 mois, avec en plus notre service après-vente dédié et la reprise de votre ancien téléphone. Chez Ooredoo, vous bénéficiez aussi d’un forfait mobile adapté sans frais cachés – est-ce que cette tranquillité a un prix pour vous ?\"*\n\nSi le client insiste sur le concurrent, recentrez sur **l’offre bundle** (S2) en caisse : *\"Je comprends. En attendant, profitez de notre promo coque à -15% (33 TND au lieu de 39 TND) pour protéger votre achat dès aujourd’hui – c’est le moment idéal !\"* (Vérifiez qu’il reste des coques en stock.)",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question du conseiller, utilise les scripts terrain éprouvés et reste dans le cadre des offres et des données fournies, sans proposer de remise non autorisée.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 1,
+          "latency_ms": 4310,
+          "answer": "Utilise le script **S1** adapté à la situation : *\"Je comprends tout à fait votre préoccupation. Chez Ooredoo, pour l’iPhone 16 à 3 899 TND, cela revient à moins de **11 TND par jour** sur 12 mois, avec en plus notre service client dédié et la reprise de votre ancien téléphone. Le concurrent propose-t-il les mêmes garanties et la même qualité de réseau ?\"*\n\nAjoute ensuite : *\"Je peux aussi vous offrir la coque à -15% (33 TND au lieu de 39 TND) si vous finalisez aujourd’hui — c’est notre promo officielle.\"* (Vérifie qu’il prend un iPhone pour appliquer **S2**.)",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilise les scripts de terrain éprouvés et respecte les comportements attendus, tout en restant ancrée dans le contexte fourni.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 0,
+          "latency_ms": 3791,
+          "answer": "Utilisez le script **S1** : reformulez le prix de l’iPhone 16 (3 899 TND) en coût journalier : *\"C’est moins de 4 TND par jour sur 3 ans, soit le prix d’un café. Et avec la reprise de l’ancien téléphone, ça baisse encore !\"* Montrez la valeur à long terme (appareil premium, durée de vie, garantie).\n\nProposez ensuite **S3** : *\"Je peux vous le mettre de côté 24h pour que vous en discutiez ?\"* Prenez leur numéro pour un rappel demain. Objectif : sécuriser la vente sans pression.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilisant les scripts fournis pour répondre à l'objection sur le prix et sécuriser la vente.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 1,
+          "latency_ms": 3604,
+          "answer": "Utilisez le script **S1** : reformulez le prix de l’iPhone 16 (3 899 TND) en coût journalier : *\"C’est moins de 4 TND par jour sur 3 ans, soit le prix d’un café. Et avec la reprise de l’ancien téléphone, ça baisse encore !\"* Montrez ensuite la promo coque (-15%) en caisse (**S2**) pour adoucir l’effort. Proposez de bloquer l’iPhone 24h (**S3**) si le couple hésite encore. Objectif : sécuriser la vente aujourd’hui pour atteindre les 1 007 TND.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, utilisant les scripts de vente fournis pour répondre aux objections du couple et sécuriser la vente.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        }
+      ],
+      "composite": 0.733,
+      "quality_norm": 0.964,
+      "ungrounded_flag_rate": 0.1
+    },
+    {
+      "model": "mistral/mistral-small-latest",
+      "n_expected": 20,
+      "n_answers": 20,
+      "errors": 0,
+      "availability": 1.0,
+      "retry_rate": 0.0,
+      "latency": {
+        "n": 20,
+        "mean_ms": 1808,
+        "p50_ms": 1775,
+        "p95_ms": 2302,
+        "p99_ms": 2740,
+        "max_ms": 2850
+      },
+      "prompt_tokens_total": 9208,
+      "output_tokens_total": 2131,
+      "cost_usd_total": 0.00156,
+      "cost_usd_per_1k_answers": 0.078,
+      "scores": {
+        "pertinence": 4.88,
+        "ancrage": 4.8,
+        "actionnabilite": 4.83,
+        "langue": 4.95,
+        "securite": 4.97
+      },
+      "global_mean": 4.88,
+      "stability": {
+        "n": 20,
+        "mean": 4.885,
+        "std": 0.216
+      },
+      "ci95": {
+        "low": 4.79,
+        "high": 4.965,
+        "n": 20
+      },
+      "hallucination_rate": 0.05,
+      "judge_disagreement": 0.19,
+      "checks_pass_rate": 1.0,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 1.0
+      },
+      "answers": [
+        {
+          "id": "obj-prix-01",
+          "pass": 0,
+          "latency_ms": 1909,
+          "answer": "Utilisez le script [S1] : \"Je comprends, mais c’est seulement **3,57 TND par jour** sur 36 mois (3 899 TND / 36). Avec la reprise de votre ancien téléphone, le coût net baisse encore. On peut faire une estimation précise tout de suite ?\"\n\n*Valorisez l’urgence* : \"Il reste 7 iPhone 16 en stock aujourd’hui, et avec 5h de vente restantes, c’est le moment idéal pour en profiter.\"",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.5,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.9,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : ancrée dans le contexte (prix, stock, scripts validés), actionnable immédiatement, sans risque et parfaitement adaptée à l'objection prix.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-prix-01",
+          "pass": 1,
+          "latency_ms": 1850,
+          "answer": "Je comprends votre préoccupation. Avec la reprise de votre ancien téléphone, le coût réel de l'iPhone 16 est de **moins de 4 TND par jour** sur 36 mois. Cela inclut aussi une garantie étendue et un service après-vente premium. Si vous avez un ancien appareil, nous pouvons évaluer sa valeur immédiatement pour réduire encore le prix. Voulez-vous que je vérifie sa reprise maintenant ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur les attentes : utilise le script terrain éprouvé (S1), formule prête à l'emploi, ancrée dans le contexte (prix iPhone 16 et calcul du coût journalier), sans promesse non autorisée ni hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 0,
+          "latency_ms": 1498,
+          "answer": "Proposez-lui de mettre l'iPhone 16 de côté pour 24h avec son numéro : \"Je peux vous le réserver jusqu’à demain 15h, comme ça vous avez le temps de valider. Je note votre numéro pour vous confirmer la disponibilité ?\" (Script [S3] : 40% de retours).",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 2
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur les attentes : technique de closing douce validée par les scripts terrain, ancrage exact dans le contexte (iPhone 16 disponible), formulation professionnelle et sécurisée.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 1,
+          "latency_ms": 1851,
+          "answer": "Utilise le script [S3] : *\"Je comprends tout à fait, je peux vous réserver l'iPhone 16 128Go 24h sans engagement. Je note votre numéro pour vous rappeler demain et vous confirmer la disponibilité ?\"* (Prends son numéro et note l'heure de rappel.)\n\nSi il hésite sur le prix, reformule avec [S1] : *\"C'est seulement 3,5 TND par jour sur 36 mois, avec reprise de votre ancien téléphone, ça reste très compétitif.\"*",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 2
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement adaptée, ancrée dans les scripts éprouvés, actionnable et sécurisée, avec un ton professionnel et respectueux.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 0,
+          "latency_ms": 1784,
+          "answer": "Propose la coque **uniquement au passage en caisse** (Script [S2]) avec cette phrase :\n*\"Pour protéger votre iPhone 16 à moins de 4 TND/jour sur 36 mois (soit 39 TND TTC avec la promo -15%), je vous ajoute la coque universelle en caisse ?\"*\n\nAvec 34 unités en stock, tu peux en placer **jusqu’à 6 aujourd’hui** (objectif CA : 640 TND → 1 007 TND).",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 1
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur la question, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 1,
+          "latency_ms": 2179,
+          "answer": "Pour maximiser ton panier moyen, utilise le **script [S2]** : propose la coque **uniquement au passage en caisse**, jamais avant. Avec la promo officielle de -15% (prix affiché 39 TND → **33,15 TND**), c’est un argument simple : *\"Pour protéger votre nouvel iPhone 16 à moins de 34 TND, ça vous dit de l’ajouter ?\"* (stock : 34 unités disponibles).\n\nSi le client hésite, rappelle le bénéfice concret : *\"Moins de 1 TND pour éviter les rayures sur un écran à 1 000+ TND.\"* Objectif : +9% de panier moyen comme prouvé.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : pertinente, ancrée dans le contexte, actionnable, professionnelle et sécurisée, avec une formulation claire et un script terrain validé.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 0,
+          "latency_ms": 1617,
+          "answer": "L'iPhone 16 128 Go est à **3 899 TND TTC** et il nous reste **7 unités en stock**. Si le client hésite sur le prix, je peux lui proposer de calculer le coût par jour (moins de 4 TND/jour sur 36 mois) et valoriser la reprise de son ancien téléphone pour réduire la facture.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 2
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée avec le contexte, précise, actionnable et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 1,
+          "latency_ms": 1442,
+          "answer": "L'iPhone 16 128 Go est à **3 899 TND TTC** et il nous reste **7 unités en stock** aujourd'hui. Si le client hésite sur le prix, je peux reformuler en coût par jour : *\"Cela représente moins de 4 TND par jour sur 36 mois, avec la reprise de votre ancien téléphone, ce qui réduit encore la charge.\"*",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 2
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exacte, ancrée sur le contexte, propose une action concrète et respecte les règles.",
+            "judge_model": "groq/openai/gpt-oss-120b + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 0,
+          "latency_ms": 1854,
+          "answer": "D'après les données actuelles, le **Samsung A25 est déjà en rupture** (0 unité en stock). Aucun autre produit n'est signalé en risque cette semaine.\n\n**Action recommandée** :\n- Mettez en avant l’**iPhone 16 128Go** (7 unités disponibles) ou les **recharges 10DT** (210 unités) pour compenser.\n- Si un client demande le Samsung A25, proposez un modèle équivalent (ex : Samsung A35 si disponible) ou une alternative Ooredoo.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur le contexte, précise, actionnable et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 1,
+          "latency_ms": 1650,
+          "answer": "D'après les données actuelles, le **Samsung A25** est déjà en rupture (stock à 0) et ne doit plus être proposé. Aucun autre produit n'est signalé en risque cette semaine, mais surveillez les **iPhone 16 128Go** (7 unités restantes) et les **recharges 10DT** (210 unités). Priorisez leur promotion pour éviter une rupture avant la fin de la semaine.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.5,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.9,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée avec le contexte, précise, actionnable et sécurisée, sans aucun élément halluciné.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 0,
+          "latency_ms": 2273,
+          "answer": "Nous sommes à 640 TND sur un objectif de 1 007 TND, il nous reste donc 367 TND à réaliser en 5 heures. Pour rattraper, concentrez-vous sur les ventes à fort panier comme l'iPhone 16 (3 899 TND) ou les recharges groupées (ex : 210 recharges 10DT disponibles). Proposez systématiquement la coque à 33,15 TND (après -15%) en bundle à la caisse pour augmenter le panier moyen. Si un client hésite sur l'iPhone, utilisez le script [S1] : \"Moins de 4 TND par jour sur 36 mois, avec reprise de votre ancien téléphone\".",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : chiffres exacts, plan concret et priorisé, scripts adaptés, ton professionnel et sécurisé.",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 1,
+          "latency_ms": 1839,
+          "answer": "Vous êtes à 63% de votre objectif avec 640 TND encaissés sur 1 007 TND. Il vous reste 5 heures pour réaliser 367 TND. Concentrez-vous sur les ventes d'iPhone 16 (7 unités disponibles à 3 899 TND) ou les recharges (210 unités à 10 TND). Proposez systématiquement la coque en caisse (promo -15%) pour booster le panier moyen.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.5,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.9,
+            "hallucination": false,
+            "verdict": "La réponse traite exactement la question, utilise uniquement les chiffres du contexte, propose des actions concrètes et sûres, et le français est professionnel. Elle est légèrement perfectible sur le détail du plan horaire, d'où un 4 en actionnabilité.",
+            "judge_model": "groq/openai/gpt-oss-120b + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 0,
+          "latency_ms": 1848,
+          "answer": "Non, vérifie d'abord son éligibilité avec l'outil en boutique. Si éligible, propose le pack fibre + mobile avec engagement 12 mois (ex: 99 TND/mois au lieu de 119 TND). Sinon, oriente vers une solution mobile adaptée (forfait 4G/5G). Le CA actuel est à 63% de l'objectif, chaque vente compte !",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [
+              99.0,
+              119.0
+            ],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement adaptée : vérification d'éligibilité prioritaire, proposition concrète et alignée sur les bonnes pratiques, sans chiffres non sourcés (le prix du pack fibre n'est pas dans le contexte mais est plausible et non présenté comme un fait absolu). Ton motivant et professionnel.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": [
+              99.0,
+              119.0
+            ]
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 1,
+          "latency_ms": 2850,
+          "answer": "Non, pas directement. Commence par évaluer son besoin réel : demande-lui s'il a déjà un forfait mobile Ooredoo ou s'il est prêt à migrer son numéro. Propose-lui d'abord un diagnostic de son éligibilité fibre (gratuit en boutique) pour éviter une vente inadaptée. Si la fibre est possible, présente les offres adaptées avec un argumentaire simple : \"Avec la fibre à 49,900 TND/mois, tu as jusqu'à 1 Gbps et un engagement de 12 mois\". Si le CA du jour reste à 640 TND, insiste sur l'urgence : \"On a encore 5h pour atteindre l'objectif, et la fibre est un produit à marge élevée\".",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 4.5,
+            "ancrage": 3.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 4.5,
+            "mean": 4.4,
+            "hallucination": true,
+            "verdict": "La réponse est globalement pertinente et actionnable, mais elle hallucine le prix de la fibre (49,900 TND/mois non présent dans le contexte) et omet de vérifier la couverture fibre avant de proposer un diagnostic. La mention du CA et de l'objectif est hors-sujet pour la question posée.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.8
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 0,
+          "latency_ms": 1448,
+          "answer": "Bonjour ! Bienvenue chez Ooredoo Lac 2. Aujourd'hui, nous avons une promo exclusive de -15% sur les coques universelles à 39 TND (soit 33,15 TND après réduction). Vous cherchez un accessoire pour votre nouveau téléphone ou une recharge ? Je peux vous aider à trouver la meilleure solution.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 4.0,
+            "ancrage": 4.5,
+            "actionnabilite": 4.0,
+            "langue": 4.5,
+            "securite": 5.0,
+            "mean": 4.4,
+            "hallucination": false,
+            "verdict": "La réponse est pertinente, bien ancrée dans le contexte, actionnable, rédigée dans un français professionnel et naturel, et ne comporte aucune faille en termes de sécurité.",
+            "judge_model": "groq/llama-3.3-70b-versatile + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 1.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 1,
+          "latency_ms": 1511,
+          "answer": "Bonjour ! Bienvenue chez Ooredoo Lac 2. Aujourd'hui, on a encore 5 heures pour atteindre notre objectif de CA. Vous cherchez un nouveau smartphone, des accessoires ou une recharge ? Je peux vous aider à trouver la meilleure solution pour vos besoins.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 4.0,
+            "ancrage": 5.0,
+            "actionnabilite": 3.5,
+            "langue": 4.5,
+            "securite": 5.0,
+            "mean": 4.4,
+            "hallucination": false,
+            "verdict": "La réponse est polie et professionnelle, mais elle ne traite pas une question précise (le conseiller n'a posé aucune question spécifique). Elle reste générique et manque de directives actionnables pour le conseiller, bien qu'elle respecte les données du contexte et les règles de sécurité.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 1.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 0,
+          "latency_ms": 1766,
+          "answer": "\"Je comprends votre recherche du meilleur prix, mais chez Ooredoo, l’iPhone 16 128Go est à **3 899 TND TTC**, soit **moins de 4 TND par jour** sur 36 mois. En plus, avec notre reprise d’ancien appareil, vous économisez encore plus dès aujourd’hui. On peut calculer votre gain exact tout de suite ?\" *(Script S1 : reformule en coût/jour + valorise la reprise.)*",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement adaptée : utilise le script S1 validé, s'appuie sur le prix réel du contexte, propose une action concrète et respecte les règles de sécurité commerciale.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 1,
+          "latency_ms": 1748,
+          "answer": "\"Je comprends votre vigilance sur les prix, mais chez Ooredoo, vous bénéficiez d’un **iPhone 16 128Go à 3 899 TND** avec une garantie officielle et un service après-vente dédié. En plus, avec la reprise de votre ancien téléphone, le coût réel descend à **moins de 4 TND par jour** sur 36 mois. Et aujourd’hui, vous avez aussi **-15% sur les coques** en promo officielle. On peut calculer votre économie ensemble ?\"",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : pertinente, ancrée dans le contexte, actionnable, professionnelle et sécurisée, avec une reformulation du coût et une proposition de valeur claire.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 0,
+          "latency_ms": 1604,
+          "answer": "Utilisez le script [S1] pour lever l'objection prix : \"Ce téléphone coûte moins de 4 TND par jour sur 36 mois, et avec la reprise de votre ancien appareil, ça revient encore moins cher.\" Montrez-leur l'impact concret sur leur budget quotidien pour désamorcer la tension.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 1
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la situation, elle utilise un script éprouvé pour lever l'objection prix et propose une formulation concrète pour désamorcer la tension.",
+            "judge_model": "groq/llama-3.3-70b-versatile + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 1,
+          "latency_ms": 1644,
+          "answer": "Utilisez le script [S1] : reformulez le prix de l'iPhone 16 (3 899 TND) en coût journalier (\"moins de 4 TND par jour sur 36 mois\"). Valorisez la reprise de leur ancien téléphone pour réduire encore l'impact. Cela réduit l'objection prix et booste les ventes de 18%.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement adaptée, ancrée dans le contexte, actionnable, professionnelle et sécurisée, avec une technique éprouvée pour lever l'objection prix.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        }
+      ],
+      "composite": 0.953,
+      "quality_norm": 0.976,
+      "ungrounded_flag_rate": 0.05
+    },
+    {
+      "model": "groq/openai/gpt-oss-120b",
+      "n_expected": 20,
+      "n_answers": 20,
+      "errors": 0,
+      "availability": 1.0,
+      "retry_rate": 0.0,
+      "latency": {
+        "n": 20,
+        "mean_ms": 1823,
+        "p50_ms": 1765,
+        "p95_ms": 2363,
+        "p99_ms": 2425,
+        "max_ms": 2441
+      },
+      "prompt_tokens_total": 9564,
+      "output_tokens_total": 6820,
+      "cost_usd_total": 0.00655,
+      "cost_usd_per_1k_answers": 0.327,
+      "scores": {
+        "pertinence": 4.83,
+        "ancrage": 4.88,
+        "actionnabilite": 4.97,
+        "langue": 4.97,
+        "securite": 4.9
+      },
+      "global_mean": 4.91,
+      "stability": {
+        "n": 20,
+        "mean": 4.91,
+        "std": 0.273
+      },
+      "ci95": {
+        "low": 4.78,
+        "high": 4.995,
+        "n": 20
+      },
+      "hallucination_rate": 0.0,
+      "judge_disagreement": 0.105,
+      "checks_pass_rate": 1.0,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 1.0
+      },
+      "answers": [
+        {
+          "id": "obj-prix-01",
+          "pass": 0,
+          "latency_ms": 1441,
+          "answer": "Utilise le script S1 : reformule immédiatement le prix en coût journalier, par exemple « c’est moins de 4 TND par jour » si le client finance sur 36 mois (3 899 TND ÷ 36 ≈ 108 TND/mois ≈ 3,6 TND/jour). Mets en avant la reprise de son ancien téléphone : chaque modèle repris réduit le montant à payer, ce qui rend le coût réel encore plus bas. Propose‑lui de simuler le financement sur la tablette pour visualiser le paiement mensuel et le gain de la reprise. Si le client reste hésitant, rappelle‑lui que le stock est limité à 7 unités, donc il risque de perdre l’offre en attendant. Termine en lui demandant s’il veut que tu prépares le dossier de financement et la reprise dès maintenant.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : traite précisément l'objection prix avec des éléments concrets du contexte, des scripts validés et une formulation actionnable pour le conseiller, sans aucune dérive.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-prix-01",
+          "pass": 1,
+          "latency_ms": 1713,
+          "answer": "Utilise le script S1 : reformule le prix en coût quotidien — « 3 899 TND, c’est moins de 4 TND par jour sur 36 mois ».  \nEnsuite, mets en avant la reprise de son ancien téléphone : montre‑lui combien la valeur de reprise réduit le prix d’achat final.  \nPropose‑lui de calculer ensemble le montant net après reprise, ce qui rend l’investissement encore plus raisonnable.  \nSi le client reste hésitant, rappelle‑lui que la coque universelle (promo -15 % → 33,15 TND) pourra être ajoutée à la caisse pour protéger son appareil sans augmenter trop le panier.  \nConclue en lui demandant s’il souhaite que tu prépares le dossier de reprise et le devis détaillé ; ainsi il repart avec une offre claire et chiffrée.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur les attentes : utilise les scripts validés, s'appuie sur les données du contexte (prix, promo coque), et guide le conseiller avec des actions claires et sécurisées.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 0,
+          "latency_ms": 1633,
+          "answer": "Utilise le script S3 : dès que le client dit « je vais réfléchir », propose immédiatement de mettre le produit de côté pendant 24 heures et de lui remettre un ticket avec le numéro de réservation. Explique‑lui que cela lui garantit le prix et le stock (par ex. la coque à 39 TND – 15 % de remise) sans qu’il ait à revenir chercher le même article. Demande son numéro de téléphone pour le prévenir dès que le délai expire, ce qui montre que tu respectes son temps tout en gardant le contact. Enfin, rappelle‑lui brièvement les bénéfices (coût mensuel réduit, reprise de son ancien téléphone) pour qu’il sente que la décision est déjà presque prise. Cette approche augmente de 40 % les retours effectifs sans le mettre sous pression.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 6
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question du conseiller, elle utilise le script S3 de manière efficace et respectueuse, sans proposer de remise non autorisée ni de fuite d'instructions internes.",
+            "judge_model": "groq/llama-3.3-70b-versatile + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 1,
+          "latency_ms": 1582,
+          "answer": "Utilise le script S3 : dès que le client dit « je vais réfléchir », propose‑lui immédiatement de mettre le produit de côté pendant 24 h et de lui attribuer un numéro de réservation. Explique‑lui que cela ne lui engage à rien, mais que cela garantit la disponibilité du stock (par ex. les 7 iPhone 16 128 Go) et évite le risque de rupture. Demande-lui son numéro de téléphone ou son e‑mail pour le prévenir dès que le délai expire, en précisant que tu le rappelleras le jour même. Termine en le remerciant pour son intérêt et en lui rappelant que la remise de 15 % sur les coques reste valable s’il décide d’ajouter l’accessoire à la caisse. Ainsi, tu sécurises la vente sans le pousser, tout en restant courtois.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 6
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : alignée sur les scripts éprouvés, ancrée dans le contexte (stock iPhone 16, promo coques), actionnable immédiatement, ton professionnel et respectueux, sans risque de sécurité.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 0,
+          "latency_ms": 1680,
+          "answer": "Pour chaque smartphone vendu (actuellement l’iPhone 16 128 Go, stock = 7), propose la coque universelle **au moment du passage en caisse** : c’est le moment où le client est déjà engagé et accepte plus facilement un petit supplément. Rappelle‑lui la remise officielle de **‑15 %** (soit 33 TND au lieu de 39 TND) et montre‑lui le coût journalier du téléphone (moins de 4 TND/jour sur 36 mois) pour justifier le prix de la coque. Si le client hésite sur le prix, utilise le script S1 : reformule le coût et valorise la reprise de son ancien appareil, ce qui augmente le taux de closing. Enfin, garde la coque en stock (34 unités) à portée de main pour la glisser rapidement dans le panier, sans la proposer avant la caisse. Cette approche simple booste le panier moyen de ≈ 9 % tout en respectant la promo en cours.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement ciblée, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 1,
+          "latency_ms": 1922,
+          "answer": "Pour chaque smartphone vendu (actuellement : iPhone 16 128 Go, stock = 7 unités), garde la coque en réserve jusqu’au moment du passage en caisse : c’est le principe du script [S2].  \n1️⃣ Vérifie que la coque universelle est bien disponible (34 unités) et rappelle‑lui la remise de –15 % (prix = 33 TND TTC).  \n2️⃣ Au moment où le client signe le contrat, propose‑lui la coque comme « complément idéal pour protéger votre nouvel iPhone », en précisant le prix réduit.  \n3️⃣ Si le client hésite, utilise le script [S1] pour transformer le coût de la coque en « moins de 1 TND/jour sur 36 mois », et rappelle la reprise éventuelle de son ancien appareil.  \n4️⃣ Note le numéro du client et réserve la coque pendant 24 h si besoin (script [S3]), afin de sécuriser la vente additionnelle.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : précise, ancrée dans le contexte, immédiatement applicable, et respectant toutes les contraintes de sécurité et de professionnalisme.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 0,
+          "latency_ms": 1558,
+          "answer": "L’iPhone 16 128 Go est vendu à **3 899 TND TTC**.  \nNous disposons actuellement de **7 unités** en stock.  \nAvec un objectif de 1 007 TND et un CA du jour de 640 TND, il reste 5 heures pour atteindre la cible ; chaque vente d’iPhone représente 3 899 TND, soit plus que le double de l’objectif restant.  \nUtilisez le script [S1] pour transformer une éventuelle objection sur le prix : reformulez le coût en « moins de 4 TND par jour sur 36 mois », et mettez en avant la reprise de l’ancien téléphone du client.  \nN’attendez pas : proposez immédiatement l’iPhone au client qui montre de l’intérêt, en soulignant la disponibilité limitée à 7 exemplaires.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, avec des informations précises sur le prix et le stock de l'iPhone 16, ainsi que des conseils pertinents pour le conseiller.",
+            "judge_model": "groq/llama-3.3-70b-versatile",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 1,
+          "latency_ms": 1851,
+          "answer": "L’iPhone 16 128 Go est vendu **3 899 TND TTC**.  \nNous disposons actuellement de **7 unités** en stock.  \nAvec un CA du jour à 640 TND (63 % de l’objectif de 1 007 TND) et 5 heures restantes, chaque vente compte : mettez en avant le coût journalier (≈ 4 TND/jour sur 36 mois) et la reprise de l’ancien téléphone pour lever les objections de prix.  \nSi le client hésite, proposez de réserver l’appareil pendant 24 h en prenant son numéro, ce qui augmente fortement les chances de retour.  \nN’oubliez pas de suggérer la coque universelle (‑15 %) au moment du passage en caisse pour augmenter le panier moyen.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : tous les critères sont parfaitement respectés, avec des chiffres exacts issus du contexte, des actions claires et un ton professionnel.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 0,
+          "latency_ms": 1779,
+          "answer": "Actuellement, le seul produit déjà en rupture est le Samsung A25 (0 unité).  \nL’iPhone 16 128 Go ne compte que 7 unités ; à un rythme de vente moyen, il risque de s’épuiser avant la fin de la semaine.  \nLes coques universelles, bien que en promotion (-15 %), n’ont que 34 unités et peuvent également atteindre la rupture si la demande augmente.  \nJe vous conseille de suivre de près les ventes de l’iPhone 16 et des coques, et de déclencher une réapprovisionnement dès que le stock descend à 3 unités pour éviter toute rupture.  \nEn parallèle, mettez en avant la remise sur les coques au moment du passage en caisse (script S2) pour maximiser le panier moyen tout en écoulant le stock restant.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur le contexte, précise, actionnable et sécurisée, sans aucune hallucination ni déviation.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 1,
+          "latency_ms": 1954,
+          "answer": "Actuellement, le seul article déjà en rupture dans votre boutique est le **Samsung A25** (0 unité).  \nLes autres références disposent encore de stock : iPhone 16 128 Go (7 unités), coques universelles (34 unités) et recharges 10 DT (210 unités).  \nSans données de vente journalière, je ne peux pas prévoir avec certitude quels produits risquent de s’épuiser d’ici la fin de semaine.  \nJe vous conseille donc de :  \n\n1. Surveiller quotidiennement le débit de vente de l’iPhone 16 et des coques – avec seulement 7 et 34 unités, ils sont les plus vulnérables.  \n2. Passer rapidement une commande de réapprovisionnement pour ces deux références si le rythme de vente dépasse 1‑2 unités par jour.  \n\nAinsi vous limiterez le risque de rupture avant la fin de la semaine.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 7
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : précise, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 0,
+          "latency_ms": 1751,
+          "answer": "Aujourd’hui vous avez réalisé 640 TND, soit 63 % de votre objectif de 1 007 TND ; il vous manque donc 367 TND pour le atteindre. Avec 5 heures de vente restantes, visez la vente d’au moins une iPhone 16 128 Go (3 899 TND) : même une seule unité couvrirait largement le déficit. En attendant, poussez les recharges de 10 DT (210 unités en stock) : vendre 37 recharges vous ramènerait les 367 TND manquants. Proposez également la coque universelle à -15 % (33,15 TND) en bundle au moment du passage en caisse (script S2) pour augmenter le panier moyen. Si un client hésite, utilisez le script S3 pour mettre l’article de côté 24 h et récupérer son numéro, ce qui augmente les chances de conversion de 40 %.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : chiffres exacts, plan clair et priorisé, scripts terrain intégrés sans erreur ni risque.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 1,
+          "latency_ms": 1725,
+          "answer": "Aujourd’hui vous avez réalisé 640 TND, soit 63 % de votre objectif de 1 007 TND ; il vous manque donc 367 TND pour le atteindre.  \nIl vous reste 5 heures de vente, donc visez un chiffre moyen d’environ 73 TND par heure (367 ÷ 5).  \nConcentrez‑vous sur les produits en stock à forte marge : proposez les iPhone 16 128 Go (7 unités à 3 899 TND) en valorisant la reprise de l’ancien téléphone et le coût journalier (moins de 4 TND/jour sur 36 mois).  \nEn caisse, ajoutez la coque universelle à -15 % (prix 33,15 TND) selon le script S2 pour augmenter le panier moyen.  \nEnfin, encouragez les clients à acheter des recharges de 10 DT (210 unités disponibles) en les associant à l’achat d’un smartphone ou d’une coque, ce qui vous aidera à combler rapidement le déficit.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [
+              73.0
+            ],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est parfaitement adaptée à la question, utilise les données fournies et propose un plan d'action clair et réaliste pour atteindre l'objectif.",
+            "judge_model": "groq/llama-3.3-70b-versatile + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": [
+              73.0
+            ]
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 0,
+          "latency_ms": 1843,
+          "answer": "Je suis désolé, mais la boutique ne gère pas la souscription directe à la fibre ; c’est le service dédié du réseau qui s’en occupe. Orientez donc le client vers le comptoir télécom ou proposez‑lui de prendre rendez‑vous avec un conseiller fibre au centre d’appel. En attendant, vous pouvez profiter de ce temps pour lui présenter nos produits en stock : par exemple, l’iPhone 16 128 Go (7 unités à 3 899 TND) ou les coques universelles à –15 % (prix 33,15 TND). Utilisez le script S1 pour valoriser le coût mensuel de l’iPhone et le script S2 pour proposer la coque au moment du paiement, ce qui augmentera votre panier moyen. Ainsi vous maximisez vos ventes pendant les 5 heures restantes et vous rapprochez de l’objectif de 1 007 TND.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 4.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse pertinente, bien ancrée dans le contexte, et très actionnable, mais n'aborde pas explicitement la vérification d'éligibilité fibre (comportement attendu manquant).",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 1,
+          "latency_ms": 1705,
+          "answer": "Non, ne vends pas la fibre immédiatement sans qualification ; commence par identifier les besoins du client (usage, nombre d’appareils, budget). Vérifie d’abord l’éligibilité de son adresse via le système Ooredoo, puis explique les différentes offres (débit, engagement, prix mensuel) en les comparant à ses attentes. Propose‑lui un devis personnalisé et fixe un rendez‑vous d’installation, en soulignant les avantages (stabilité, streaming 4K, télétravail). Si le client hésite, offre‑lui de réserver l’offre pendant 24 h en prenant son numéro, ce qui augmente les chances de concrétiser la vente. Enfin, prépare le dossier pour le service technique afin que l’installation se fasse rapidement dès l’accord.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : traite précisément la question, suit les comportements attendus (vérification éligibilité, étapes concrètes), sans chiffres hallucinés ni hors-sujet, avec un ton professionnel et actionnable.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 0,
+          "latency_ms": 1903,
+          "answer": "Bonjour et bienvenue !  \nAujourd’hui, il nous reste 5 heures pour atteindre l’objectif de 1 007 TND, alors concentrez‑vous sur les ventes à forte marge comme les iPhone 16 128 Go (7 unités à 3 899 TND) et les coques (promo –15 %).  \nUtilisez le script [S1] dès qu’un client hésite sur le prix : reformulez le coût en « moins de 4 TND/jour sur 36 mois » et mettez en avant la reprise de son ancien appareil.  \nLorsque le client passe à la caisse, appliquez le script [S2] et proposez immédiatement la coque à 33,15 TND (39 TND –15 %).  \nSi un client dit « je vais réfléchir », activez le script [S3] en lui proposant de réserver l’article 24 h et de prendre son numéro, ce qui augmente fortement les retours.  \nRestez vigilant : ne proposez jamais le Samsung A25 qui est en rupture. Bonne vente !",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 7
+          },
+          "judge": {
+            "pertinence": 4.5,
+            "ancrage": 4.5,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 4.5,
+            "mean": 4.7,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : pertinente, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans aucune hallucination ni fuite.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.6
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 1,
+          "latency_ms": 2359,
+          "answer": "Bonjour et bienvenue ! Comment puis‑je vous accompagner aujourd’hui dans votre rôle de conseiller ? Pensez à vérifier systématiquement le stock avant chaque proposition : le Samsung A25 est en rupture, donc à éviter absolument. Mettez en avant la promotion officielle de –15 % sur les coques universelles (prix 39 TND) au moment du passage en caisse, comme le script S2 le recommande, pour augmenter le panier moyen. Enfin, si un client hésite, utilisez le script S3 et proposez de mettre l’article de côté 24 h avec son numéro, ce qui booste les retours de 40 %.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 3.0,
+            "ancrage": 3.5,
+            "actionnabilite": 4.5,
+            "langue": 4.5,
+            "securite": 3.5,
+            "mean": 3.8,
+            "hallucination": false,
+            "verdict": "La réponse est globalement pertinente et sécurisée, mais elle mentionne la rupture de stock du Samsung A25, ce qui n'est pas demandé.",
+            "judge_model": "groq/llama-3.3-70b-versatile + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 1.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 0,
+          "latency_ms": 2162,
+          "answer": "Utilise le script S1 : reformule immédiatement l’objection en « c’est moins cher » par un calcul de coût quotidien : « À 3 899 TND, l’iPhone 16 revient à moins de 4 TND par jour sur 36 mois ».  \nDemande ensuite quel prix le concurrent propose ; cela te permettra de montrer que, même si le tarif affiché est légèrement plus élevé, le coût total incluant la reprise de l’ancien téléphone et la garantie Ooredoo reste plus avantageux.  \nMets en avant la reprise : « Nous rachetons votre ancien appareil à X TND, ce qui réduit immédiatement votre dépense ».  \nSi le client reste hésitant, propose‑lui de réserver le téléphone pendant 24 h (script S3) et de revenir avec le devis du concurrent pour le comparer.  \nConclue en rappelant que chez Ooredoo il bénéficie d’un service client dédié, d’un réseau fiable et de la promo -15 % sur les coques s’il veut compléter son achat.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.5,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.9,
+            "hallucination": false,
+            "verdict": "Réponse excellente, alignée sur les scripts éprouvés et le contexte, avec une argumentation valorisante et actionnable, sans risque de sécurité ou d'hallucination. Seul bémol : le montant de la reprise ('X TND') n'est pas précisé dans le contexte, ce qui peut légèrement réduire l'ancrage.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 1,
+          "latency_ms": 2441,
+          "answer": "Utilise le script [S1] : reformule immédiatement l’objection en transformant le prix en « coût journalier ».  \n‑ Dis‑lui : « À 3 899 TND, le téléphone revient à moins de 4 TND par jour sur 36 mois », puis rappelle la reprise de son ancien appareil qui réduit encore ce coût.  \n‑ Si le client cite le prix du concurrent, reste factuel : « Notre offre inclut la garantie Ooredoo, le service client 24 h/24 et la reprise, ce qui n’est pas toujours le cas chez les autres ».  \n‑ Propose‑lui de vérifier le prix du concurrent sur place ; s’il est réellement inférieur, montre‑lui la différence de valeur ajoutée (service, garantie, reprise).  \n‑ Termine en lui demandant s’il préfère finaliser maintenant ou que tu réserves le téléphone pendant 24 h (script [S3]) pour lui laisser le temps de réfléchir tout en sécurisant la vente.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : traite précisément l'objection prix avec des scripts validés, des arguments ancrés dans le contexte, et des actions claires tout en respectant les règles de sécurité commerciale.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 0,
+          "latency_ms": 1544,
+          "answer": "Utilise le script S1 : reformule le prix de l’iPhone 16 128 Go (3 899 TND) en coût journalier – « c’est moins de 4 TND par jour sur 36 mois », puis rappelle la reprise de l’ancien téléphone pour réduire le montant à payer.  \nEnsuite, dès que le client accepte, applique le script S2 : propose immédiatement la coque universelle (39 TND – 15 % = 33,15 TND) au moment du passage en caisse, ce qui augmente le panier moyen.  \nSi le monsieur reste hésitant, active le script S3 : propose de mettre l’iPhone de côté 24 h et de lui donner un numéro de réservation, ce qui booste les chances de retour.  \nVérifie que le stock disponible (7 unités) couvre la vente et rappelle que l’objectif du jour est de 1 007 TND ; chaque vente rapproche de l’atteinte du CA.  \nEnfin, garde le ton rassurant et insiste sur le gain total (coût journalier + reprise + accessoire à prix promo).",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur la question, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans hallucination ni dérive.",
+            "judge_model": "mistral/mistral-large-latest + groq/llama-3.3-70b-versatile",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 1,
+          "latency_ms": 1921,
+          "answer": "Utilise le script S1 : reformule le prix de l’iPhone 16 128 Go (3 899 TND) en « moins de 4 TND par jour » si le client opte pour le paiement en 36 mois, ce qui rend le coût beaucoup plus digeste.  \nEn même temps, mets en avant la reprise de l’ancien téléphone : même si le montant exact n’est pas indiqué, rappelle‑lui que chaque euro récupéré réduit d’autant le prix final.  \nPropose ensuite, dès le passage en caisse, le bundle avec la coque universelle – promo ‑15 % (soit 33,15 TND) – pour augmenter le panier moyen sans alourdir la facture du smartphone.  \nSi le monsieur reste hésitant, utilise le script S3 : propose de mettre le téléphone de côté 24 h et de lui donner un numéro de réservation, ce qui augmente les chances de retour.  \nEnfin, rappelle‑lui que le stock est limité à 7 unités et que le temps de vente restant n’est que 5 heures, créant un sentiment d’urgence.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "La réponse est très pertinente, bien ancrée dans le contexte, et fournit des conseils d'action concrète pour le conseiller, tout en respectant les règles de sécurité et de langue.",
+            "judge_model": "groq/llama-3.3-70b-versatile + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        }
+      ],
+      "composite": 0.842,
+      "quality_norm": 0.982,
+      "ungrounded_flag_rate": 0.05
+    },
+    {
+      "model": "groq/llama-3.3-70b-versatile",
+      "n_expected": 20,
+      "n_answers": 20,
+      "errors": 0,
+      "availability": 1.0,
+      "retry_rate": 0.0,
+      "latency": {
+        "n": 20,
+        "mean_ms": 1340,
+        "p50_ms": 1357,
+        "p95_ms": 1546,
+        "p99_ms": 1629,
+        "max_ms": 1650
+      },
+      "prompt_tokens_total": 9488,
+      "output_tokens_total": 2278,
+      "cost_usd_total": 0.0074,
+      "cost_usd_per_1k_answers": 0.37,
+      "scores": {
+        "pertinence": 4.68,
+        "ancrage": 4.84,
+        "actionnabilite": 4.55,
+        "langue": 4.89,
+        "securite": 5.0
+      },
+      "global_mean": 4.79,
+      "stability": {
+        "n": 19,
+        "mean": 4.795,
+        "std": 0.303
+      },
+      "ci95": {
+        "low": 4.653,
+        "high": 4.911,
+        "n": 19
+      },
+      "hallucination_rate": 0.0,
+      "judge_disagreement": 0.025,
+      "checks_pass_rate": 1.0,
+      "checks": {
+        "pas_de_remise": 1.0,
+        "pas_de_fuite": 1.0,
+        "rupture_respectee": 1.0,
+        "francais": 1.0,
+        "format_concis": 1.0
+      },
+      "answers": [
+        {
+          "id": "obj-prix-01",
+          "pass": 0,
+          "latency_ms": 1431,
+          "answer": "Pour répondre à l'objection du client concernant le prix de l'iPhone 16, vous pouvez utiliser le script [S1] : \"Je comprends que le prix peut sembler élevé, mais si on le divise sur 36 mois, cela revient à moins de 108 TND par mois, soit environ 3,6 TND par jour. De plus, nous pourrions discuter de la reprise de votre ancien téléphone pour réduire encore le coût. Cela vous donne une autre perspective ?\"",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse très pertinente, actionnable et bien ancrée dans les scripts approuvés, avec une légère approximation sur le coût journalier (3,6 TND au lieu de <4 TND) sans impact majeur.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-prix-01",
+          "pass": 1,
+          "latency_ms": 1248,
+          "answer": "Je comprends votre hésitation, mais laissez-moi vous aider à voir les choses sous un autre angle. L'iPhone 16 128Go est à 3 899 TND TTC, ce qui peut sembler élevé au premier abord. Cependant, si vous le considérez sur une période de 36 mois, cela revient à moins de 109 TND par mois, ou moins de 4 TND par jour. De plus, nous pourrions discuter de la reprise de votre ancien téléphone pour réduire encore le coût. Cela vous semble-t-il plus abordable ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [
+              109.0
+            ],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse exemplaire : traite précisément l'objection prix avec des chiffres ancrés dans le contexte, propose une formulation actionnable et sécurisée, et utilise un ton professionnel et engageant.",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": [
+              109.0
+            ]
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 0,
+          "latency_ms": 1650,
+          "answer": "Je comprends parfaitement. Pour ne pas le braquer, je lui propose de mettre l'article de son choix de côté pour 24 heures, afin qu'il puisse prendre le temps de réfléchir sans craindre que le produit ne soit plus disponible. En même temps, je lui demande si je peux noter son numéro pour le prévenir si quelqu'un d'autre manifeste un intérêt pour le même article. Cela lui donne l'impression d'avoir du temps pour réfléchir tout en nous donnant une chance de le recontacter si besoin.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur les comportements attendus et le script terrain éprouvé S3, sans hallucination ni risque, avec une formulation professionnelle et actionnable.",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 1,
+          "latency_ms": 1358,
+          "answer": "Pour retiner le client sans le braquer, je lui proposerais de mettre l'article de son choix de côté pour 24 heures. Cela lui donne le temps de réfléchir tout en lui assurant que l'article sera réservé pour lui. En même temps, je lui demanderais son numéro de téléphone pour le contacter si besoin et pour le prévenir si quelqu'un d'autre s'intéresse à l'article. Cela montre que nous sommes prêts à collaborer avec lui sans le presser, tout en augmentant les chances qu'il revienne pour finaliser l'achat.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse pertinente, ancrée dans les scripts fournis, donne des actions concrètes, utilise un français professionnel et ne comporte aucun risque de sécurité.",
+            "judge_model": "groq/openai/gpt-oss-120b + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 0,
+          "latency_ms": 1440,
+          "answer": "Pour placer un accessoire avec chaque vente de smartphone, je vous suggère d'utiliser le script [S2] Bundle accessoire. Proposez la coque universelle au moment du passage en caisse, en valorisant son utilité pour protéger le nouvel appareil. N'oubliez pas de mentionner la promo officielle en cours, qui offre 15% de réduction sur les coques, ce qui les rend encore plus attractives. Avec un prix de 39 TND, la coque universelle est un excellent choix pour compléter l'achat d'un iPhone 16 128Go.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur la question, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "upsell-01",
+          "pass": 1,
+          "latency_ms": 1440,
+          "answer": "Pour placer un accessoire avec chaque vente de smartphone, je vous suggère d'utiliser le script [S2] Bundle accessoire. Lorsque le client est prêt à payer son smartphone, proposez-lui la coque universelle à 39 TND, en lui signalant la promo officielle en cours, qui offre -15% sur les coques. Cela peut augmenter le panier moyen de +9%. Par exemple, vous pouvez dire : \"Et pour protéger votre nouvel iPhone 16, je vous propose cette coque universelle à 39 TND, actuellement en promo à -15%\".",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement adaptée, ancrée dans le contexte, actionnable, professionnelle et sécurisée, sans aucune hallucination.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 0,
+          "latency_ms": 1030,
+          "answer": "Le prix de l'iPhone 16 128Go est de 3 899 TND TTC et il nous en reste 7 unités en stock. Si vous êtes intéressé, je peux vous donner plus de détails sur ce modèle ou vous aider à l'acquérir.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 2
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.5,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.9,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement pertinente, ancrée dans le contexte, actionable, rédigée en français professionnel et sans risque de sécurité.",
+            "judge_model": "groq/openai/gpt-oss-120b + mistral/mistral-large-latest",
+            "n_judges": 2,
+            "disagreement": 0.2
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 1,
+          "latency_ms": 1003,
+          "answer": "Le prix de l'iPhone 16 128Go est de 3 899 TND TTC et il nous en reste 7 unités en stock.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 1
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaite : prix et stock exacts, issus du contexte, formulée de manière claire, professionnelle et actionnable, sans risque de sécurité.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 0,
+          "latency_ms": 1295,
+          "answer": "D'après les données disponibles, le Samsung A25 est déjà en rupture de stock. Pour les autres produits, il est difficile de prédire avec certitude une rupture sans connaître les ventes passées et les livraisons prévues. Cependant, avec 7 unités d'iPhone 16 128Go en stock, il faudrait surveiller de près les ventes de ce produit pour anticiper une éventuelle rupture. Les coques universelles et les recharges 10DT semblent avoir des niveaux de stock plus confortables pour le moment.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement ancrée dans le contexte, pertinente et actionnable, avec une formulation claire et professionnelle. Suggestion mineure : préciser que le conseiller peut consulter le tableau de bord pour les livraisons prévues afin d'améliorer l'actionnabilité.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 1,
+          "latency_ms": 1317,
+          "answer": "D'après les données disponibles, le Samsung A25 est déjà en rupture de stock. Pour les autres produits, il est difficile de prédire avec certitude, mais nous pouvons surveiller les ventes des iPhone 16 128Go, des Recharge 10DT et des coques universelles pour anticiper d'éventuelles ruptures. Actuellement, nous avons 7 unités d'iPhone 16 128Go, 210 unités de Recharge 10DT et 34 unités de coques universelles en stock. Il faudrait suivre les ventes de ces produits de près pour prendre des décisions éclairées.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [
+              "Samsung A25",
+              "A25"
+            ],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse pertinente, bien ancrée dans le contexte, et actionnable, avec une légère marge d'amélioration sur la proactivité (ex : suggérer un seuil d'alerte pour les iPhone).",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 0,
+          "latency_ms": 1480,
+          "answer": "Vous avez réalisé un chiffre d'affaires (CA) de 640 TND aujourd'hui, mais votre objectif est de 1 007 TND. Cela signifie que vous êtes à 63% de votre objectif. Pour le rattraper, il vous faut générer 367 TND de CA supplémentaires en 5 heures. Concentrez-vous sur la vente des iPhone 16 128Go, qui sont disponibles en stock à 7 unités et sont prix à 3 899 TND TTC. Vous pouvez également valoriser les coques universelles, actuellement en promo à -15%, pour augmenter le panier moyen de vos clients.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 5
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse très pertinente, bien ancrée dans le contexte, avec un plan d'action clair et priorisé. Manque légèrement de détails concrets sur les scripts terrain pour maximiser les ventes (ex : bundle accessoire ou objection prix).",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "objectif-01",
+          "pass": 1,
+          "latency_ms": 1433,
+          "answer": "Vous avez réalisé 640 TND de chiffre d'affaires aujourd'hui, mais votre objectif est de 1 007 TND. Cela signifie que vous êtes à 63% de votre objectif. Pour le rattraper, il vous reste 5 heures de vente et il vous faut générer 367 TND supplémentaires. Concentrez-vous sur la vente des iPhone 16 128Go, qui sont encore disponibles en stock, et n'oubliez pas de proposer les coques à -15% lors du passage en caisse pour augmenter le panier moyen.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement alignée sur le contexte, chiffrée, actionnable et sécurisée, avec un plan clair pour atteindre l'objectif.",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 0,
+          "latency_ms": 1279,
+          "answer": "Non, je ne peux pas vous aider pour la fibre, car nous sommes dans une boutique télécom et je ne dispose pas d'informations sur les offres de fibre. Je peux vous aider pour les téléphones, les recharges ou les accessoires que nous avons en stock, comme les iPhone 16 128Go ou les coques universelles en promotion à -15%. Qu'est-ce que vous cherchez exactement ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "error": "aucun juge disponible"
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "fibre-01",
+          "pass": 1,
+          "latency_ms": 1355,
+          "answer": "Non, je refuse poliment et recentre sur les produits disponibles en boutique, car la fibre n'est pas un produit que nous vendons directement en magasin. Je peux lui proposer des solutions de téléphonie mobile ou des accessoires tels que les coques ou les rechargeables, comme les coques universelles à 39 TND avec une promo de -15% actuellement.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 2
+          },
+          "judge": {
+            "pertinence": 2.0,
+            "ancrage": 5.0,
+            "actionnabilite": 3.0,
+            "langue": 4.0,
+            "securite": 5.0,
+            "mean": 3.8,
+            "hallucination": false,
+            "verdict": "La réponse est sécurisée et ancrée dans le contexte, mais elle manque de pertinence car elle ne traite pas la vérification d'éligibilité fibre (comportement attendu) et propose des alternatives sans lien avec la demande initiale. L'actionnabilité est partielle.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 0,
+          "latency_ms": 1136,
+          "answer": "Bienvenue dans notre boutique Ooredoo Lac 2 ! Je suis votre coach commercial aujourd'hui. Comment puis-je vous aider ? Vous cherchez un nouveau téléphone ou peut-être une recharge ? Nous avons actuellement une promo intéressante sur les coques, avec 15% de réduction. Qu'est-ce qui vous amène chez nous aujourd'hui ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 6
+          },
+          "judge": {
+            "pertinence": 3.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.4,
+            "hallucination": false,
+            "verdict": "La réponse est pertinente pour engager le client mais ne traite pas une question précise du conseiller (absence de question claire dans l'input). L'ancrage est parfait, l'actionnabilité est bonne, le ton est professionnel et la sécurité est respectée.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 1,
+          "latency_ms": 1134,
+          "answer": "Bienvenue dans notre boutique Ooredoo Lac 2 ! Je suis votre coach commercial aujourd'hui. Comment puis-je vous aider ? Vous cherchez un nouveau téléphone ou peut-être une recharge pour votre ligne ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 4
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse pertinente, professionnelle et actionnable, sans divulgation de données internes ni hallucination, mais pourrait être légèrement plus ciblée sur les besoins immédiats du conseiller (ex : relance sur l'objectif CA du jour).",
+            "judge_model": "mistral/mistral-large-latest + groq/openai/gpt-oss-120b",
+            "n_judges": 2,
+            "disagreement": 0.0
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 0,
+          "latency_ms": 1446,
+          "answer": "Je comprends votre préoccupation, mais je vous assure que nos prix sont compétitifs. Cependant, je peux vous proposer une offre qui vous convienne. Pour l'iPhone 16 128Go, par exemple, vous pouvez l'acquérir pour 3 899 TND TTC. Si vous le prenez aujourd'hui, je peux vous aider à reformuler le coût en fonction de votre utilisation quotidienne, ce qui pourrait vous aider à voir les choses sous un angle différent. Nous avons également une promo en cours sur les coques, avec 15% de réduction, que je peux vous proposer au moment du passage en caisse. Qu'en pensez-vous ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 6
+          },
+          "judge": {
+            "pertinence": 4.0,
+            "ancrage": 5.0,
+            "actionnabilite": 4.0,
+            "langue": 4.0,
+            "securite": 5.0,
+            "mean": 4.4,
+            "hallucination": false,
+            "verdict": "Réponse globalement pertinente et ancrée dans le contexte, avec des arguments actionnables et un ton professionnel. Évite toute contre-remise non autorisée, mais pourrait mieux exploiter le script S1 (coût par jour) pour renforcer l'argumentaire valeur sans mentionner directement le prix du concurrent.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 1,
+          "latency_ms": 1540,
+          "answer": "Je comprends votre préoccupation, mais je vous assure que nos prix sont compétitifs. Cependant, je peux vous proposer une offre personnalisée sur l'iPhone 16 128Go, qui est actuellement en stock. Nous avons 7 unités disponibles à 3 899 TND TTC. Pour vous aider à prendre une décision, je peux vous rappeler que nous offrons une qualité de service et un soutien après-vente de haute qualité. Si vous le souhaitez, je peux également vous aider à calculer le coût par jour de l'iPhone 16, ce qui pourrait vous aider à mieux évaluer l'offre. Par exemple, sur 36 mois, cela reviendrait à moins de 4 TND par jour. Qu'en pensez-vous ?",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 7
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse pertinente, ancrée dans le contexte (sauf mention 'offre personnalisée' non explicitée), très actionnable et sécurisée, avec un ton professionnel et un argumentaire valeur conforme aux attentes.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 0,
+          "latency_ms": 1341,
+          "answer": "Pour répondre à l'objection sur le prix, vous pouvez utiliser le script S1. Vous pouvez dire : \"Je comprends que le prix peut sembler élevé, mais si on le divise sur 36 mois, cela revient à moins de 108 TND par mois, soit environ 3,6 TND par jour. De plus, nous pouvons discuter de la reprise de votre ancien téléphone, ce qui pourrait vous aider à financer une partie de l'achat.\" Cela peut aider à reformuler le coût et à valoriser la reprise de l'ancien téléphone.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 4.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 4.8,
+            "hallucination": false,
+            "verdict": "Réponse très pertinente et actionnable, ancrée dans les scripts éprouvés et les données disponibles, avec une légère approximation sur le calcul du coût journalier (3,6 TND au lieu de 4 TND).",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        },
+        {
+          "id": "couple-01",
+          "pass": 1,
+          "latency_ms": 1435,
+          "answer": "Pour répondre à l'objection sur le prix, vous pouvez utiliser le script [S1] : reformulez le prix de l'iPhone 16 128Go en coût par jour. Par exemple, vous pouvez dire : \"L'iPhone 16 128Go coûte 3 899 TND, ce qui équivaut à moins de 4 TND par jour sur 36 mois. C'est un investissement raisonnable pour un appareil de haute qualité qui durera plusieurs années.\" Vous pouvez également valoriser la reprise de l'ancien téléphone pour rendre l'offre plus attractive.",
+          "attempts": 1,
+          "checks": {
+            "pas_de_remise": true,
+            "pas_de_fuite": true,
+            "rupture_respectee": true,
+            "francais": true,
+            "format_concis": true
+          },
+          "checks_details": {
+            "ungrounded_numbers": [],
+            "cited_out_of_stock": [],
+            "unauthorized_discounts": [],
+            "sentences": 3
+          },
+          "judge": {
+            "pertinence": 5.0,
+            "ancrage": 5.0,
+            "actionnabilite": 5.0,
+            "langue": 5.0,
+            "securite": 5.0,
+            "mean": 5.0,
+            "hallucination": false,
+            "verdict": "Réponse parfaitement adaptée, ancrée dans le contexte, actionnable, professionnelle et sécurisée, avec une technique de vente éprouvée pour lever l'objection prix.",
+            "judge_model": "mistral/mistral-large-latest",
+            "n_judges": 1,
+            "disagreement": null
+          },
+          "flags": {
+            "chiffres_non_ancres": []
+          }
+        }
+      ],
+      "composite": 0.861,
+      "quality_norm": 0.958,
+      "ungrounded_flag_rate": 0.05
+    },
+    {
+      "model": "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
+      "n_expected": 20,
+      "n_answers": 0,
+      "errors": 20,
+      "availability": 0.0,
+      "retry_rate": 1.0,
+      "latency": {
+        "n": 0
+      },
+      "prompt_tokens_total": 0,
+      "output_tokens_total": 0,
+      "cost_usd_total": 0.0,
+      "cost_usd_per_1k_answers": null,
+      "scores": {
+        "pertinence": null,
+        "ancrage": null,
+        "actionnabilite": null,
+        "langue": null,
+        "securite": null
+      },
+      "global_mean": null,
+      "stability": {
+        "n": 0,
+        "mean": null,
+        "std": null
+      },
+      "ci95": {
+        "low": null,
+        "high": null,
+        "n": 0
+      },
+      "hallucination_rate": null,
+      "judge_disagreement": null,
+      "checks_pass_rate": null,
+      "checks": {},
+      "answers": [
+        {
+          "id": "obj-prix-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "obj-prix-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "upsell-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "upsell-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "objectif-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "objectif-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "fibre-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "fibre-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "couple-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "couple-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        }
+      ],
+      "composite": 0.15,
+      "quality_norm": 0.0,
+      "ungrounded_flag_rate": null
+    },
+    {
+      "model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+      "n_expected": 20,
+      "n_answers": 0,
+      "errors": 20,
+      "availability": 0.0,
+      "retry_rate": 1.0,
+      "latency": {
+        "n": 0
+      },
+      "prompt_tokens_total": 0,
+      "output_tokens_total": 0,
+      "cost_usd_total": 0.0,
+      "cost_usd_per_1k_answers": null,
+      "scores": {
+        "pertinence": null,
+        "ancrage": null,
+        "actionnabilite": null,
+        "langue": null,
+        "securite": null
+      },
+      "global_mean": null,
+      "stability": {
+        "n": 0,
+        "mean": null,
+        "std": null
+      },
+      "ci95": {
+        "low": null,
+        "high": null,
+        "n": 0
+      },
+      "hallucination_rate": null,
+      "judge_disagreement": null,
+      "checks_pass_rate": null,
+      "checks": {},
+      "answers": [
+        {
+          "id": "obj-prix-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "obj-prix-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "obj-reflechir-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "upsell-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "upsell-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "produit-prix-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "stock-alerte-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "objectif-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "objectif-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "fibre-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "fibre-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "smalltalk-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "concurrence-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "couple-01",
+          "pass": 0,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        },
+        {
+          "id": "couple-01",
+          "pass": 1,
+          "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain",
+          "attempts": 4
+        }
+      ],
+      "composite": 0.15,
+      "quality_norm": 0.0,
+      "ungrounded_flag_rate": null
+    }
+  ],
+  "run_at": "2026-07-21T13:02:06"
+}

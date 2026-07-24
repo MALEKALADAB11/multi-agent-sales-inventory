@@ -141,6 +141,29 @@ class SyncPurchaseOrderRepo:
             else:
                 po["waiting_days"] = None
 
+            # Retard / avance de livraison :
+            #  - BC reçu   → écart réel persisté (ecart_livraison_jours, migration 0010)
+            #  - BC en vol → écart projeté (ETA dépassée = retard couru à ce jour)
+            # Convention partagée : >0 retard, <0 avance, 0 à temps.
+            delivered = po.get("date_livraison_reelle")
+            if delivered:
+                delta = po.get("ecart_livraison_jours")
+                if delta is None and eta:
+                    d_date = delivered.date() if isinstance(delivered, _dt) else delivered
+                    delta = (d_date - (eta.date() if isinstance(eta, _dt) else eta)).days
+                po["delivery_delay_days"] = delta
+                if delta is None:
+                    po["delivery_status"] = None
+                else:
+                    po["delivery_status"] = ("EN_RETARD" if delta > 0
+                                             else "EN_AVANCE" if delta < 0 else "A_TEMPS")
+            elif eta_days is not None and po.get("statut") not in ("RECU", "ANNULE"):
+                po["delivery_delay_days"] = -eta_days if eta_days < 0 else 0
+                po["delivery_status"] = "EN_RETARD" if eta_days < 0 else "A_TEMPS"
+            else:
+                po["delivery_delay_days"] = None
+                po["delivery_status"] = None
+
             # Prédiction : la rupture arrive-t-elle avant la livraison ?
             terminal = po.get("statut") in ("RECU", "ANNULE")
             if not terminal and eta_days is not None and days_to_stockout < 999:
@@ -347,7 +370,6 @@ class SyncPurchaseOrderRepo:
     @staticmethod
     def create_suggestion_from_recommendation(
         recommendation_id: str,
-        agent_run_id: Optional[str] = None,
     ) -> Optional[dict]:
         """
         Auto-creates a SUGGERE purchase order straight from a *pending*
@@ -415,21 +437,24 @@ class SyncPurchaseOrderRepo:
                 total_cost = qty * float(unit_cost)
                 lead_days  = (sourcing or {}).get("lead_time_days") or row["lead_time_days"] or 14
 
+                # NB : ne pas écrire agent_decision_id — c'est un uuid, alors que
+                # l'agent ne dispose que d'un agent_run_id entier. Le lien vers la
+                # décision passe par recommendation_id, qui porte la FK.
                 cur.execute("""
                     INSERT INTO supply.purchase_orders
                         (sku, supplier_id, store_id, quantite_commandee,
                          prix_unitaire_ht, montant_total_ht, statut, source,
-                         urgency, confidence, agent_decision_id,
+                         urgency, confidence,
                          date_livraison_prevue, recommendation_id)
                     VALUES
                         (%s, %s, %s, %s, %s, %s, 'SUGGERE', 'AGENT',
-                         %s, %s, %s,
+                         %s, %s,
                          CURRENT_DATE + (%s || ' days')::interval, %s)
                     RETURNING *
                 """, (
                     row["sku"], supplier_id, row["store_id"], qty,
                     unit_cost, total_cost,
-                    row["urgency"], row["confidence"], agent_run_id,
+                    row["urgency"], row["confidence"],
                     lead_days, recommendation_id,
                 ))
                 created = dict(cur.fetchone())
@@ -542,12 +567,18 @@ class SyncPurchaseOrderRepo:
                 if new_statut in _TERMINAL_RECEIVED:
                     received_qty = quantite_recue if quantite_recue is not None else int(row["quantite_commandee"])
 
+                    # Écart de livraison persisté à la réception :
+                    # >0 = retard, <0 = avance, 0 = à temps.
                     cur.execute("""
                         UPDATE supply.purchase_orders SET
                             statut                = %s,
                             quantite_recue        = quantite_recue + %s,
                             date_livraison_reelle = CURRENT_DATE,
                             delai_reel_jours      = CURRENT_DATE - date_commande::date,
+                            ecart_livraison_jours = CASE WHEN date_livraison_prevue IS NOT NULL
+                                                         THEN CURRENT_DATE - date_livraison_prevue END,
+                            livraison_conforme    = CASE WHEN date_livraison_prevue IS NOT NULL
+                                                         THEN CURRENT_DATE <= date_livraison_prevue END,
                             updated_at            = NOW()
                         WHERE po_id = %s
                         RETURNING *
@@ -583,10 +614,18 @@ class SyncPurchaseOrderRepo:
                             stock_after, str(po_id),
                         ))
                 else:
-                    cur.execute("""
+                    # Jalons du cycle de vie : la date de soumission sert de
+                    # base au délai d'auto-confirmation 24h (po_auto_confirm).
+                    milestone = ""
+                    if new_statut == "SOUMIS":
+                        milestone = ", date_soumission = NOW()"
+                    elif new_statut == "CONFIRME":
+                        milestone = ", date_confirmation = NOW(), confirmed_auto = FALSE"
+                    cur.execute(f"""
                         UPDATE supply.purchase_orders SET
                             statut     = %s,
                             updated_at = NOW()
+                            {milestone}
                         WHERE po_id = %s
                         RETURNING *
                     """, (new_statut, po_id))
@@ -602,5 +641,48 @@ class SyncPurchaseOrderRepo:
             conn.rollback()
             logger.warning("SyncPurchaseOrderRepo.update_status(%s, %s): %s", po_id, new_statut, exc)
             return None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def auto_confirm_stale_soumis(max_age_hours: int = 24) -> list[dict]:
+        """
+        SOUMIS -> CONFIRME automatique : tout BC resté en SOUMIS plus de
+        max_age_hours sans action humaine est confirmé d'office (pas de
+        fournisseur dans la boucle pour répondre — le silence vaut accord).
+        Transition déjà licite dans ALLOWED_TRANSITIONS ; confirmed_auto=TRUE
+        et la note d'audit distinguent ce chemin d'une confirmation humaine.
+
+        Appelée périodiquement par po_auto_confirm.auto_confirm_loop.
+        Retourne les BC confirmés (liste vide si rien à faire — jamais raise).
+        """
+        conn = SyncPurchaseOrderRepo._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # COALESCE : les BC soumis avant la migration 0010 n'ont pas
+                # toujours de date_soumission — updated_at (dernière transition)
+                # est alors la meilleure base.
+                cur.execute("""
+                    UPDATE supply.purchase_orders SET
+                        statut            = 'CONFIRME',
+                        date_confirmation = NOW(),
+                        confirmed_auto    = TRUE,
+                        notes             = COALESCE(notes || E'\n', '')
+                                            || '[AUTO] Confirmé automatiquement après '
+                                            || %s || 'h en SOUMIS sans action humaine ('
+                                            || to_char(NOW(), 'YYYY-MM-DD HH24:MI') || ')',
+                        updated_at        = NOW()
+                    WHERE statut = 'SOUMIS'
+                      AND COALESCE(date_soumission, updated_at)
+                          <= NOW() - (%s || ' hours')::interval
+                    RETURNING *
+                """, (max_age_hours, max_age_hours))
+                rows = [dict(r) for r in cur.fetchall()]
+            conn.commit()
+            return rows
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("SyncPurchaseOrderRepo.auto_confirm_stale_soumis: %s", exc)
+            return []
         finally:
             conn.close()
