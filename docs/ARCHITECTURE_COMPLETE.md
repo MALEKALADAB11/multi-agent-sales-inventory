@@ -286,7 +286,7 @@ analyste/stratège, événements guardrail, le tout diffusé au frontend.
 
 ### 6.2 Agent Analyste v4 (Sales) — l'expert en séries temporelles
 
-*Fichiers : `agents/analyst/ts_engine.py`, `ts_node.py`, `react_analyst.py`, `react_tools.py`.*
+*Fichiers : `agents/analyst/ts_engine.py`, `ts_node.py`, `nodes.py`, `prompts.py`, `tools.py`.*
 
 **Rôle.** Produire un diagnostic chiffré et des prévisions fiables sur les ventes d'un magasin :
 où en est le chiffre d'affaires par rapport à l'objectif, comment va finir la journée, quelles
@@ -317,10 +317,10 @@ avec bornes, taux d'atteinte.
 **Replis.** Si la série est trop courte ou l'ajustement échoue, un repli linéaire
 (`_linear_fallback`) prend le relais, puis en dernier recours une agrégation SQL simple.
 
-**Mode ReAct.** Pour les questions ad hoc, une variante ReAct (`react_analyst.py`) donne au LLM
-quatre outils d'analyse qu'il peut invoquer en raisonnant : `detect_anomalies`,
-`ts_decomposition` (décomposition tendance/saisonnalité/résidu), `forecast_multi_horizon` et
-`product_velocity` (vitesse d'écoulement par produit).
+**Pas de mode ReAct.** Une variante ReAct a existé (`react_analyst.py`, `react_tools.py`) mais
+n'a jamais été câblée dans le graphe et a été supprimée : le moteur déterministe produit les
+mêmes signaux en moins d'une seconde, sans variance de sortie ni coût de tokens. Le LLM
+n'intervient plus que pour reformuler le résumé, et seulement si `ANALYST_LLM_SUMMARY=1`.
 
 **Entrées / sorties.** En entrée : identifiant magasin, heure courante, historique de ventes. En
 sortie : prévision de fin de journée avec intervalle, écart à l'objectif, anomalies horaires,

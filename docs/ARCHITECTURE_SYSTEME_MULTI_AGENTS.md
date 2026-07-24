@@ -59,7 +59,7 @@ Données POS / stocks / contexte externe (météo, fériés, événements)
 | **Milvus** | Base vectorielle RAG — 200+ scripts de vente Ooredoo indexés ; fallback corpus local (CSV) si Milvus indisponible |
 | **Redis** | Trois usages : (a) cache LRU stratégies et caches applicatifs, (b) bus d'alertes Pub/Sub, (c) State Bus en Streams (`cycle_state:{store}`, `events:{store}`, `inventory_snapshot:{store}`, `feedback:{store}`) |
 | **APIs externes** | Météo (réelle, géolocalisée par boutique), jours fériés tunisiens, événements locaux |
-| **Forecast** | TimesFM (préchargé au démarrage) + moteur time-series maison (Holt ~4,4 % d'erreur, benchmark ≥ Prophet) + fallback SQL ; Chronos désactivé (DLL torch) |
+| **Forecast** | Modèle global XGBoost entraîné sur 151 boutiques (WAPE 33,4 %) → repli AutoETS → Holt-Winters saisonnier (46,3 %) → moyenne → linéaire ; Chronos désactivé (DLL torch) |
 
 ### 2.3 Points d'entrée (FastAPI + WebSockets)
 
@@ -76,18 +76,18 @@ Données POS / stocks / contexte externe (météo, fériés, événements)
 
 Tous les agents sales partagent le même état LangGraph `SalesAgentState` (TypedDict à champs optionnels) qui circule de nœud en nœud.
 
-### 3.1 Agent Analyste — diagnostic de performance (architecture ReAct)
+### 3.1 Agent Analyste — diagnostic de performance (moteur déterministe)
 
 **Rôle.** Mesurer en continu la performance de la boutique par rapport à ses objectifs et qualifier l'urgence.
 
-**Graphe.** `receive_pos → validate_data → load_memory → react_analyst → build_strategy_query → save_memory`. Le nœud central `react_analyst` est un véritable agent ReAct (boucle Raisonner/Agir) qui a remplacé six nœuds statiques.
+**Graphe.** `receive_pos → validate_data → load_memory → ts_analyst → compare_with_memory → build_strategy_query → save_memory`. Le nœud central `ts_analyst` appelle `ts_engine.analyze_store()`, un moteur statistique déterministe qui s'exécute en moins d'une seconde. **Aucun LLM n'est sur le chemin critique** : le mode ReAct qui l'a précédé a été supprimé, sa boucle Raisonner/Agir coûtant plusieurs secondes pour un résultat moins stable.
 
 **Entrées.**
 - Transactions POS du jour (`sales.transactions_rt`) : CA, panier moyen, nombre de tickets.
 - Objectif journalier (`sales.objectifs`, fallback : moyenne historique 30 jours).
 - Mémoire des analyses précédentes (comparaison inter-cycles).
 
-**Outils à disposition du nœud ReAct.** Prévision TimesFM/fallback SQL, `detect_anomalies`, `ts_decomposition` (tendance/saisonnalité), `forecast_multi_horizon`, `product_velocity` — quatre outils time-series robustes ; accès inventaire possible via le client MCP.
+**Moteur de calcul.** `ts_engine.analyze_store()` enchaîne : prévision journalière (cascade AutoETS → Holt-Winters saisonnier période 7 → moyenne → linéaire), déroulé intraday pondéré, ledger horaire attendu/réel avec z-score, faisabilité et score d'urgence composite. Le backtest WAPE rolling-origin sur 28 jours accompagne chaque prévision.
 
 **Traitement.** Calcule l'écart objectif/réalisé (`gap_pct`, `gap_amount`), projette le CA de fin de journée (`forecast_eod`), détecte anomalies et catégories sous-performantes, qualifie l'urgence (LOW → CRITICAL avec score 0–1), identifie la tendance intraday (accélération/stable/décélération).
 

@@ -22,7 +22,7 @@ d'autres, entouré de nœuds déterministes de collecte, de calcul, de validatio
 ### 1. Agent Analyste (Sales)
 
 *Fichiers : `app/sales/coaching/agents/analyst/agent.py` (graphe), `ts_engine.py` (moteur de
-calcul), `ts_node.py` (nœud d'analyse), `react_analyst.py` (mode outillé).*
+calcul), `ts_node.py` (nœud d'analyse), `prompts.py` (résumé LLM optionnel).*
 
 **Mission** : produire le diagnostic chiffré des ventes du magasin — où en est le chiffre
 d'affaires, comment finira la journée, quelles heures sont anormales.
@@ -58,9 +58,9 @@ Le déroulement est le suivant :
 7. **`save_memory`** — persistance de l'analyse pour le cycle suivant.
 
 **État** : `SalesAgentState` (TypedDict partagé par les agents sales).
-**Mode complémentaire** : `react_analyst.py` expose une variante ReAct où le LLM raisonne avec
-quatre outils invocables (`detect_anomalies`, `ts_decomposition`, `forecast_multi_horizon`,
-`product_velocity`) pour les questions ad hoc.
+**Place du LLM** : aucune, sur le chemin critique. Un résumé rédigé peut être activé via
+`ANALYST_LLM_SUMMARY=1` (timeout 8 s) ; il reformule les chiffres sans jamais les recalculer, et
+le résumé statistique reprend la main au moindre incident.
 
 ---
 
