@@ -137,6 +137,40 @@ def push_models(summary: dict) -> int:
     return n
 
 
+def push_ragas(summary: dict) -> int:
+    """Un cas RAGAS = une trace `eval-ragas` ; chaque métrique = un score
+    `eval/ragas/<metrique>` (déjà normalisé [0,1] par RAGAS). Plus une trace résumé."""
+    lf = get_langfuse()
+    if not lf:
+        return 0
+    run_id = _run_id(summary)
+    n = 0
+    for row in summary.get("details", []):
+        scores = {f"ragas/{name}": v for name, v in (row.get("scores") or {}).items()
+                  if v is not None}
+        _push_case(
+            lf, "ragas", run_id,
+            case_id=row["id"],
+            inp={"question_id": row["id"], "domain": row.get("domain")},
+            out={"answer": (row.get("answer") or "")[:_TRUNC],
+                 "n_contexts": row.get("n_contexts"),
+                 "rag_relevant": row.get("rag_relevant")},
+            metadata={"domain": row.get("domain"), "n_contexts": row.get("n_contexts"),
+                      "judge_model": summary.get("judge_model"),
+                      "embed_model": summary.get("embed_model")},
+            scores=scores,
+        )
+        n += 1
+    _push_summary(lf, "ragas", run_id, {
+        "judge_model": summary.get("judge_model"),
+        "embed_model": summary.get("embed_model"),
+        "n_cases": summary.get("n_cases"),
+        **{name: val for name, val in (summary.get("means") or {}).items()},
+    })
+    lf.flush()
+    return n
+
+
 def push_aggregate(suite: str, summary: dict) -> int:
     """Suites sans cas LLM individuels (guardrail, rag) : une trace résumé."""
     lf = get_langfuse()
@@ -162,7 +196,9 @@ def _push_summary(lf, suite: str, run_id: str, metrics: dict) -> None:
         output=metrics,
     )
     for name in ("accuracy", "hit_rate", "mrr", "abstention_rate",
-                 "success_rate", "checks_pass_rate", "hallucination_rate"):
+                 "success_rate", "checks_pass_rate", "hallucination_rate",
+                 "faithfulness", "answer_relevancy",
+                 "llm_context_precision_without_reference", "context_recall"):
         value = metrics.get(name)
         if isinstance(value, (int, float)):
             lf.score(trace_id=trace_id, name=f"eval/{suite}/{name}", value=round(value, 3))
@@ -177,6 +213,7 @@ _PUSHERS = {
     "model_benchmark": push_models,
     "guardrail":       lambda s: push_aggregate("guardrail", s),
     "rag_retrieval":   lambda s: push_aggregate("rag", s),
+    "ragas":           push_ragas,
 }
 
 

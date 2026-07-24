@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,10 +99,17 @@ class ChatResult:
     prompt_tokens: int = 0
     output_tokens: int = 0
     error:         str = ""
+    attempts:      int = 1     # nombre d'essais consommés (retries inclus)
+    retried:       bool = False
 
     @property
     def ok(self) -> bool:
         return not self.error and bool(self.text.strip())
+
+
+# Statuts qui valent un nouvel essai : quota momentané ou incident côté provider.
+# 4xx autres (clé invalide, modèle inconnu) sont définitifs — inutile d'insister.
+_RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 def chat(
@@ -113,8 +121,64 @@ def chat(
     max_tokens: int = 700,
     timeout: float = 60.0,
     response_json: bool = False,
+    max_retries: int = 0,
+    backoff: float = 2.0,
 ) -> ChatResult:
-    """Un appel chat/completions, latence bout-en-bout mesurée. Ne lève jamais."""
+    """Un appel chat/completions, latence bout-en-bout mesurée. Ne lève jamais.
+
+    `max_retries` > 0 : réessaie sur 429/5xx avec backoff exponentiel (et respect
+    de `Retry-After` s'il est renvoyé). La latence retournée est celle du seul
+    essai gagnant — les attentes de backoff ne polluent pas la mesure.
+    """
+    attempt = 0
+    result: ChatResult | None = None
+    while attempt <= max_retries:
+        result = _chat_once(provider, model, messages, temperature=temperature,
+                            max_tokens=max_tokens, timeout=timeout,
+                            response_json=response_json)
+        result.attempts = attempt + 1
+        result.retried = attempt > 0
+        if result.ok or not _is_retryable(result.error):
+            return result
+        attempt += 1
+        if attempt <= max_retries:
+            time.sleep(_retry_after(result.error, backoff * (2 ** (attempt - 1))))
+    return result  # type: ignore[return-value]
+
+
+def _is_retryable(error: str) -> bool:
+    if not error:
+        return False
+    if error.startswith("HTTP "):
+        try:
+            return int(error.split()[1].rstrip(":")) in _RETRYABLE
+        except (IndexError, ValueError):
+            return False
+    # httpx.ReadTimeout, ConnectError… : transitoires côté réseau
+    return any(k in error for k in ("Timeout", "ConnectError", "RemoteProtocolError"))
+
+
+def _retry_after(error: str, default: float) -> float:
+    """Certains providers renvoient le délai d'attente dans le corps du 429."""
+    m = re.search(r'"retry[_-]?after"\s*:\s*"?([0-9.]+)', error, re.I)
+    if m:
+        try:
+            return min(float(m.group(1)), 30.0)
+        except ValueError:
+            pass
+    return min(default, 30.0)
+
+
+def _chat_once(
+    provider: Provider,
+    model: str,
+    messages: list[dict],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int = 700,
+    timeout: float = 60.0,
+    response_json: bool = False,
+) -> ChatResult:
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,

@@ -1,0 +1,53 @@
+{
+  "description": "Jeu d'évaluation RAGAS de la chaîne RAG (retriever réel + génération ancrée). Chaque cas : une requête conseiller + une réponse de référence idéale (reference) servant au context_recall. Les requêtes hors-sujet du golden set sont exclues : les métriques RAGAS présupposent un contexte pertinent à évaluer.",
+  "cases": [
+    {
+      "id": "ragas-vente-prix",
+      "domain": "sales_script",
+      "question": "Le client trouve que c'est trop cher, comment je réponds à son objection prix ?",
+      "reference": "Traiter l'objection prix sans remise non autorisée : reformuler la valeur, étaler le coût (coût par jour, facilité de paiement), proposer une reprise de l'ancien appareil, et donner une phrase prête à dire au client."
+    },
+    {
+      "id": "ragas-vente-hesitation",
+      "domain": "sales_script",
+      "question": "Le client hésite entre deux téléphones et n'arrive pas à choisir, je fais quoi ?",
+      "reference": "Aider au choix par un questionnement sur l'usage réel (photo, jeu, budget), comparer sur 2-3 critères décisifs, puis fermer en douceur sur le modèle le mieux adapté sans presser."
+    },
+    {
+      "id": "ragas-vente-upsell",
+      "domain": "sales_script",
+      "question": "Comment je place un accessoire avec chaque vente de smartphone ?",
+      "reference": "Proposer l'accessoire au bon moment (juste après l'accord sur le téléphone), en bundle logique (protection écran, coque, chargeur), avec une formulation qui le présente comme la suite naturelle de l'achat."
+    },
+    {
+      "id": "ragas-stock-moq",
+      "domain": "inventory_playbook",
+      "question": "Quelle quantité commander quand le besoin prévu est sous le MOQ du fournisseur ?",
+      "reference": "Arbitrer entre respecter le MOQ (commander au minimum imposé) et le coût de portage : commander le MOQ si la rotation absorbe le surplus sur un horizon raisonnable, sinon regrouper avec d'autres références ou négocier."
+    },
+    {
+      "id": "ragas-stock-dormant",
+      "domain": "inventory_playbook",
+      "question": "J'ai du stock dormant depuis plusieurs mois, quelle est la marche à suivre ?",
+      "reference": "Écouler le surstock dormant : identifier la cause, activer des leviers d'écoulement (mise en avant, bundle, transfert inter-boutiques), et ajuster le réapprovisionnement pour ne pas réempiler."
+    },
+    {
+      "id": "ragas-stock-lead",
+      "domain": "inventory_playbook",
+      "question": "Le fournisseur livre avec des délais irréguliers, comment je m'en protège ?",
+      "reference": "Se protéger d'un lead time irrégulier par un stock de sécurité dimensionné sur la variabilité du délai, avancer le point de recommande, et suivre la fiabilité du fournisseur."
+    },
+    {
+      "id": "ragas-produit-prix",
+      "domain": "product",
+      "question": "Combien coûte l'iPhone 16 Pro ?",
+      "reference": "Donner le prix exact issu de la fiche produit du catalogue (en TND), sans l'inventer : si le prix figure dans le contexte, le citer ; sinon dire honnêtement qu'il faut vérifier."
+    },
+    {
+      "id": "ragas-cross-rupture",
+      "domain": "inventory_playbook",
+      "question": "Le Galaxy S25 est en rupture, qu'est-ce que je propose au client ?",
+      "reference": "Face à la rupture, proposer un produit substitut disponible de gamme équivalente, expliquer le délai de réassort, et éventuellement prendre les coordonnées pour rappeler à l'arrivée."
+    }
+  ]
+}

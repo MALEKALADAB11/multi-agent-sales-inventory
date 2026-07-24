@@ -22,9 +22,9 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 
 | Métrique | Valeur | Lecture |
 |---|---|---|
-| hit@3 | 0.0% | le bon domaine est dans le top-k |
-| MRR | 0.0 | rang moyen du premier bon document |
-| Token recall | 0.0% | le contenu attendu est retrouvé |
+| hit@3 | 100.0% | le bon domaine est dans le top-k |
+| MRR | 0.955 | rang moyen du premier bon document |
+| Token recall | 100.0% | le contenu attendu est retrouvé |
 | Pureté | 100.0% | aucun contenu interdit remonté |
 | Abstention | 100.0% | sait dire « rien de pertinent » (anti-hallucination) |
 
@@ -47,27 +47,36 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 
 ## 4. Benchmark comparatif des modèles
 
-Protocole : 10 questions × 1 passage(s), prompt et contexte figés, juge LLM croisé (jamais le modèle évalué).
+Protocole : 10 questions × 2 passage(s), prompt et contexte figés, panel de 2 juge(s) LLM distincts (jamais le modèle évalué), 3 réessais sur 429/5xx.
 
-| Rang | Modèle | Score /5 | Hallucination | p50 | p95 |
-|---|---|---|---|---|---|
-| 1 | mistral/mistral-large-latest | 5.0 | 0.0% | 4247 ms | 5127 ms |
-| 2 | mistral/mistral-small-latest | 4.98 | 0.0% | 1887 ms | 3153 ms |
-| 3 | groq/openai/gpt-oss-120b | 4.84 | 0.0% | 1836 ms | 2527 ms |
-| 4 | openrouter/nvidia/nemotron-3-super-120b-a12b:free | 4.67 | 33.3% | 2864 ms | 4961 ms |
-| 5 | groq/llama-3.3-70b-versatile | 4.64 | 0.0% | 1506 ms | 1735 ms |
-| 6 | openrouter/nvidia/nemotron-3-nano-30b-a3b:free | 4.58 | 10.0% | 2030 ms | 4611 ms |
+Qualité mesurée sur les **10/10 questions communes** à tous les modèles (comparaison appariée — sinon un modèle rate-limité serait noté sur un sous-ensemble plus favorable).
 
-Critères détaillés par modèle :
+| Rang | Modèle | Composite | Qualité /5 | IC 95% | Dispo | Checks | Halluc. | p50 | $/1k rép. |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | mistral/mistral-small-latest | 0.953 | 4.88 | 4.79–4.965 | 100.0% | 100.0% | 5.0% | 1775 ms | 0.078 |
+| 2 | groq/llama-3.3-70b-versatile | 0.861 | 4.79 | 4.653–4.911 | 100.0% | 100.0% | 0.0% | 1357 ms | 0.37 |
+| 3 | groq/openai/gpt-oss-120b | 0.842 | 4.91 | 4.78–4.995 | 100.0% | 100.0% | 0.0% | 1765 ms | 0.327 |
+| 4 | mistral/mistral-large-latest | 0.733 | 4.92 | 4.795–4.99 | 100.0% | 98.0% | 5.0% | 4545 ms | 1.951 |
+| 5 | openrouter/nvidia/nemotron-3-nano-30b-a3b:free | 0.15 | — | — | 0.0% | — | — | — | — |
+| 6 | openrouter/nvidia/nemotron-3-super-120b-a12b:free | 0.15 | — | — | 0.0% | — | — | — | — |
 
-| Modèle | pertinence | ancrage | actionnabilite | langue | securite |
-|---|---|---|---|---|---|
-| mistral/mistral-large-latest | 5.0 | 5.0 | 5.0 | 5.0 | 5.0 |
-| mistral/mistral-small-latest | 5.0 | 5.0 | 4.9 | 5.0 | 5.0 |
-| groq/openai/gpt-oss-120b | 4.5 | 4.9 | 4.9 | 4.9 | 5.0 |
-| openrouter/nvidia/nemotron-3-super-120b-a12b:free | 5.0 | 4.0 | 4.33 | 5.0 | 5.0 |
-| groq/llama-3.3-70b-versatile | 4.33 | 5.0 | 4.11 | 4.78 | 5.0 |
-| openrouter/nvidia/nemotron-3-nano-30b-a3b:free | 4.6 | 4.3 | 4.5 | 4.8 | 4.7 |
+Score composite = 50% qualite + 20% fiabilite + 15% latence + 15% cout (qualité pondérée par les contrôles déterministes).
+
+**Écarts non concluants** (IC 95% chevauchants — à traiter comme ex æquo) :
+- mistral/mistral-large-latest ≈ groq/openai/gpt-oss-120b ≈ mistral/mistral-small-latest ≈ groq/llama-3.3-70b-versatile
+
+Critères du juge (0–5), contrôles déterministes et signaux :
+
+| Modèle | pertinence | ancrage | actionnabilite | langue | securite | remise | rupture | concision | chiffres à relire | stabilité σ | désaccord juges |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| mistral/mistral-small-latest | 4.88 | 4.8 | 4.83 | 4.95 | 4.97 | 100.0% | 100.0% | 100.0% | 5.0% | 0.216 | 0.19 |
+| groq/llama-3.3-70b-versatile | 4.68 | 4.84 | 4.55 | 4.89 | 5.0 | 100.0% | 100.0% | 100.0% | 5.0% | 0.303 | 0.025 |
+| groq/openai/gpt-oss-120b | 4.83 | 4.88 | 4.97 | 4.97 | 4.9 | 100.0% | 100.0% | 100.0% | 5.0% | 0.273 | 0.105 |
+| mistral/mistral-large-latest | 4.85 | 4.83 | 4.95 | 4.97 | 4.97 | 100.0% | 100.0% | 90.0% | 10.0% | 0.237 | 0.091 |
+| openrouter/nvidia/nemotron-3-nano-30b-a3b:free | — | — | — | — | — | — | — | — | — | None | None |
+| openrouter/nvidia/nemotron-3-super-120b-a12b:free | — | — | — | — | — | — | — | — | — | None | None |
+
+_« Chiffres à relire » n'est pas une faute : le contrôle d'ancrage signale tout nombre non dérivable en une opération du contexte figé — il attrape un prix inventé comme un calcul légitime en deux temps (367 ÷ 5 h). Il est publié hors score ; le critère `ancrage` du juge tranche le qualitatif._
 
 ---
 _Méthodologie : checks déterministes exécutés en local ; scores qualitatifs par LLM-as-judge (température 0, grille 0–5, JSON strict) avec exclusion du modèle évalué du rôle de juge. Retrieval mesuré par propriétés (domaine, tokens, abstention) plutôt que par doc_id figé, le corpus étant vivant._

@@ -60,6 +60,26 @@ def build() -> str:
             "",
         ]
 
+    rg = _load("ragas")
+    if rg and not rg.get("error"):
+        means = rg.get("means", {})
+        _labels = {
+            "faithfulness": "Faithfulness — la réponse ne dit rien hors des contextes",
+            "answer_relevancy": "Answer relevancy — la réponse traite bien la question",
+            "llm_context_precision_without_reference": "Context precision — contextes remontés utiles",
+            "context_recall": "Context recall — contextes couvrant la référence",
+        }
+        lines += [
+            "## 2bis. RAG — RAGAS (métriques officielles)", "",
+            f"Chaîne retriever + génération ancrée, juge `{rg.get('judge_model', '?')}`, "
+            f"embeddings `{rg.get('embed_model') or '—'}`, sur {rg.get('n_cases', '?')} cas.", "",
+            "| Métrique RAGAS | Score /1 | Lecture |", "|---|---|---|",
+        ]
+        for name in rg.get("metrics", []):
+            val = means.get(name)
+            lines.append(f"| {name} | {val if val is not None else '—'} | {_labels.get(name, '')} |")
+        lines.append("")
+
     c = _load("coach_e2e")
     if c:
         lat = c.get("latency", {})
@@ -82,24 +102,60 @@ def build() -> str:
 
     m = _load("model_benchmark")
     if m:
+        w = m.get("weights", {})
         lines += [
             "## 4. Benchmark comparatif des modèles", "",
-            f"Protocole : {m['n_questions']} questions × {m['repeat']} passage(s), "
-            "prompt et contexte figés, juge LLM croisé (jamais le modèle évalué).", "",
-            "| Rang | Modèle | Score /5 | Hallucination | p50 | p95 |",
-            "|---|---|---|---|---|---|",
+            f"Protocole : {m['n_questions']} questions × {m.get('repeat', 1)} passage(s), "
+            f"prompt et contexte figés, panel de {m.get('n_judges', 1)} juge(s) LLM "
+            "distincts (jamais le modèle évalué), "
+            f"{m.get('retries', 0)} réessais sur 429/5xx.", "",
+            f"Qualité mesurée sur les **{m.get('n_paired_questions', '?')}/"
+            f"{m['n_questions']} questions communes** à tous les modèles "
+            "(comparaison appariée — sinon un modèle rate-limité serait noté sur "
+            "un sous-ensemble plus favorable).", "",
+            "| Rang | Modèle | Composite | Qualité /5 | IC 95% | Dispo | Checks | Halluc. | p50 | $/1k rép. |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for i, r in enumerate(m["ranking"], 1):
+            ci = r.get("ci95") or {}
+            ci_txt = (f"{ci.get('low')}–{ci.get('high')}"
+                      if ci.get("low") is not None else "—")
+            def _v(x, suffix=""):
+                return f"{x}{suffix}" if x is not None else "—"
             lines.append(
-                f"| {i} | {r['model']} | {r['global_mean']} | "
-                f"{_pct(r['hallucination_rate'])} | {r['p50_ms']} ms | {r['p95_ms']} ms |")
-        lines += ["", "Critères détaillés par modèle :", "",
-                  "| Modèle | " + " | ".join(CRITERIA) + " |",
-                  "|---|" + "---|" * len(CRITERIA)]
+                f"| {i} | {r['model']} | {_v(r.get('composite'))} | {_v(r['global_mean'])} | "
+                f"{ci_txt} | {_pct(r.get('availability'))} | "
+                f"{_pct(r.get('checks_pass_rate'))} | {_pct(r['hallucination_rate'])} | "
+                f"{_v(r['p50_ms'], ' ms')} | {_v(r.get('cost_usd_per_1k_answers'))} |")
+        if w:
+            lines += ["", "Score composite = "
+                      + " + ".join(f"{v:.0%} {k}" for k, v in w.items())
+                      + " (qualité pondérée par les contrôles déterministes)."]
+        groups = m.get("tie_groups") or []
+        if any(len(g) > 1 for g in groups):
+            lines += ["", "**Écarts non concluants** (IC 95% chevauchants — "
+                      "à traiter comme ex æquo) :"]
+            lines += [f"- {' ≈ '.join(g)}" for g in groups if len(g) > 1]
+        lines += ["", "Critères du juge (0–5), contrôles déterministes et signaux :", "",
+                  "| Modèle | " + " | ".join(CRITERIA)
+                  + " | remise | rupture | concision | chiffres à relire | stabilité σ | désaccord juges |",
+                  "|---|" + "---|" * (len(CRITERIA) + 6)]
         for r in m["ranking"]:
-            lines.append("| " + r["model"] + " | "
-                         + " | ".join(str(r["scores"].get(crit, "—")) for crit in CRITERIA) + " |")
-        lines.append("")
+            ch = r.get("checks", {})
+            lines.append(
+                "| " + r["model"] + " | "
+                + " | ".join(str(r["scores"].get(crit) if r["scores"].get(crit) is not None
+                                 else "—") for crit in CRITERIA)
+                + f" | {_pct(ch.get('pas_de_remise'))} | {_pct(ch.get('rupture_respectee'))}"
+                + f" | {_pct(ch.get('format_concis'))} | {_pct(r.get('ungrounded_flag_rate'))}"
+                + f" | {r.get('stability_std', '—')}"
+                + f" | {r.get('judge_disagreement', '—')} |")
+        lines += ["",
+                  "_« Chiffres à relire » n'est pas une faute : le contrôle d'ancrage "
+                  "signale tout nombre non dérivable en une opération du contexte figé — "
+                  "il attrape un prix inventé comme un calcul légitime en deux temps "
+                  "(367 ÷ 5 h). Il est publié hors score ; le critère `ancrage` du juge "
+                  "tranche le qualitatif._", ""]
 
     lines += [
         "---",

@@ -81,8 +81,14 @@ def judge_answer(
     context: str = "",
     expected_behaviors: list[str] | None = None,
     avoid_model: str = "",
+    skip_models: tuple[str, ...] = (),
+    max_retries: int = 0,
 ) -> Judgment:
-    """Évalue une réponse. Essaie chaque juge disponible jusqu'à un JSON valide."""
+    """Évalue une réponse. Essaie chaque juge disponible jusqu'à un JSON valide.
+
+    `skip_models` écarte des juges déjà utilisés sur la même réponse : c'est ce
+    qui permet de constituer un panel de juges distincts (cf. `judge_panel`).
+    """
     user = (
         f"QUESTION du conseiller :\n{question}\n\n"
         f"CONTEXTE disponible côté système :\n{context.strip() or '(aucun contexte fourni)'}\n\n"
@@ -95,8 +101,11 @@ def judge_answer(
 
     last_err = "aucun juge disponible (clés API manquantes)"
     for provider, model in _judge_candidates(avoid_model):
+        if f"{provider.name}/{model}" in skip_models or model in skip_models:
+            continue
         result: ChatResult = chat(provider, model, messages,
-                                  temperature=0.0, max_tokens=400, response_json=True)
+                                  temperature=0.0, max_tokens=400, response_json=True,
+                                  max_retries=max_retries)
         if not result.ok:
             last_err = result.error
             continue
@@ -115,3 +124,43 @@ def judge_answer(
             judge_model=f"{provider.name}/{model}",
         )
     return Judgment({}, False, "", "", error=last_err)
+
+
+def judge_panel(
+    question: str,
+    answer: str,
+    *,
+    context: str = "",
+    expected_behaviors: list[str] | None = None,
+    avoid_model: str = "",
+    n_judges: int = 2,
+    max_retries: int = 0,
+) -> list[Judgment]:
+    """Fait noter la même réponse par `n_judges` juges DISTINCTS.
+
+    Un juge unique est un point de mesure unique : ses biais (verbosité, style,
+    provider) passent entiers dans le classement. Deux juges de providers
+    différents permettent de moyenner et surtout de mesurer leur désaccord —
+    un écart élevé signale un score peu fiable, pas un modèle mauvais.
+    """
+    used: list[str] = []
+    panel: list[Judgment] = []
+    for _ in range(max(1, n_judges)):
+        j = judge_answer(question, answer, context=context,
+                         expected_behaviors=expected_behaviors,
+                         avoid_model=avoid_model, skip_models=tuple(used),
+                         max_retries=max_retries)
+        if not j.ok:
+            break
+        panel.append(j)
+        used.append(j.judge_model)
+    return panel
+
+
+def panel_disagreement(panel: list[Judgment]) -> float | None:
+    """Écart absolu moyen entre juges sur la note globale (0 = accord parfait)."""
+    means = [j.mean for j in panel if j.ok]
+    if len(means) < 2:
+        return None
+    pairs = [(a, b) for i, a in enumerate(means) for b in means[i + 1:]]
+    return round(sum(abs(a - b) for a, b in pairs) / len(pairs), 3)

@@ -101,6 +101,52 @@ def percentile(values: list[float], pct: float) -> float:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (idx - lo)
 
 
+def mean_std(values: list[float]) -> dict:
+    """Moyenne et écart-type d'échantillon (n-1) — la dispersion vaut la moyenne."""
+    n = len(values)
+    if n == 0:
+        return {"n": 0, "mean": None, "std": None}
+    mean = sum(values) / n
+    if n == 1:
+        return {"n": 1, "mean": round(mean, 3), "std": 0.0}
+    var = sum((v - mean) ** 2 for v in values) / (n - 1)
+    return {"n": n, "mean": round(mean, 3), "std": round(math.sqrt(var), 3)}
+
+
+def bootstrap_ci(values: list[float], *, confidence: float = 0.95,
+                 iterations: int = 2000, seed: int = 20260721) -> dict:
+    """Intervalle de confiance de la moyenne par bootstrap (rééchantillonnage).
+
+    Sur 10 questions, une moyenne nue n'autorise aucune conclusion : deux modèles
+    à 4,84 et 4,64 peuvent être indiscernables. L'IC dit lesquels le sont —
+    et le bootstrap ne suppose pas la normalité, contrairement à un t de Student
+    sur des notes bornées 0–5.
+    """
+    import random
+    n = len(values)
+    if n == 0:
+        return {"low": None, "high": None, "n": 0}
+    if n == 1:
+        return {"low": round(values[0], 3), "high": round(values[0], 3), "n": 1}
+    rng = random.Random(seed)
+    means = []
+    for _ in range(iterations):
+        means.append(sum(rng.choice(values) for _ in range(n)) / n)
+    means.sort()
+    alpha = (1 - confidence) / 2
+    lo = means[int(alpha * iterations)]
+    hi = means[min(int((1 - alpha) * iterations), iterations - 1)]
+    return {"low": round(lo, 3), "high": round(hi, 3), "n": n}
+
+
+def overlaps(ci_a: dict, ci_b: dict) -> bool:
+    """Deux IC qui se chevauchent = écart non concluant au niveau de confiance."""
+    if not all(ci_a.get(k) is not None for k in ("low", "high")) or \
+       not all(ci_b.get(k) is not None for k in ("low", "high")):
+        return True
+    return ci_a["low"] <= ci_b["high"] and ci_b["low"] <= ci_a["high"]
+
+
 def latency_summary(values_ms: list[float]) -> dict:
     if not values_ms:
         return {"n": 0}
