@@ -100,7 +100,7 @@ except ImportError:
 # ── Observabilité complète des graphes ────────────────────────────────────────
 # Un CallbackHandler LangChain par cycle (créé depuis la trace racine) est
 # enregistré ici puis passé à CHAQUE ainvoke de sous-graphe : tous les nodes
-# LangGraph (receive_pos, react_analyst, rag_search, generate_strategy,
+# LangGraph (receive_pos, ts_analyst, rag_search, generate_strategy,
 # self_critique, …) ET les appels LLM LangChain (modèle, prompts, latence)
 # apparaissent imbriqués sous la trace du cycle dans Langfuse.
 _CYCLE_HANDLERS: dict = {}
