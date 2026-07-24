@@ -10,6 +10,15 @@ stock avant/après et le sale_id en référence croisée.
 Convention existante respectée : quantite négative pour une sortie,
 reference_type='VENTE' (cf. lignes seed du journal).
 
+Nom de fonction qualifié `public.` (fix 2026-07-24) : 0001_baseline.sql est un
+export pg_dump, il commence par set_config('search_path','',false) — le `false`
+rend le reset valable pour toute la session, pas seulement la transaction.
+Alembic enchaîne toutes les révisions sur UNE connexion, donc à partir de 0002
+le search_path est vide et un CREATE FUNCTION non qualifié échoue en
+InvalidSchemaName ("no schema has been selected to create in"). Invisible tant
+qu'on applique les révisions une par une (nouvelle connexion à chaque appel),
+fatal sur un `alembic upgrade head` depuis une base neuve.
+
 Revision ID: 0009
 Revises: 0008
 """
@@ -23,7 +32,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("""
-        CREATE OR REPLACE FUNCTION sync_stock_on_sale() RETURNS trigger AS $fn$
+        CREATE OR REPLACE FUNCTION public.sync_stock_on_sale() RETURNS trigger AS $fn$
         DECLARE
             v_daily_avg FLOAT;
             v_avant     INT;
@@ -78,7 +87,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Restaure le corps 0001 : décrément seul, sans journalisation.
     op.execute("""
-        CREATE OR REPLACE FUNCTION sync_stock_on_sale() RETURNS trigger AS $fn$
+        CREATE OR REPLACE FUNCTION public.sync_stock_on_sale() RETURNS trigger AS $fn$
         DECLARE v_daily_avg FLOAT;
         BEGIN
             SELECT COALESCE(AVG(daily_qty), 0) INTO v_daily_avg
