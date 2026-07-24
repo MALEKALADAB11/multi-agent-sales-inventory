@@ -183,6 +183,7 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
                     FROM inventory.sales_history
                     WHERE sku = %s AND store_id = %s AND quantity_sold > 0
                       AND NOT COALESCE(is_promo, FALSE)
+                      AND month_num IS NOT NULL
                     GROUP BY month_num
                 ),
                 by_event_q AS (
@@ -220,8 +221,12 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
             by_event: dict = {}
             by_season: dict = {}
             by_dow: dict = {}
+            # `key` NULL = colonne de calendrier non renseignée sur la ligne
+            # (~3% de sales_history). Sans ce garde-fou, un seul mois NULL levait
+            # un TypeError sur int(key) et faisait retomber TOUT le profil
+            # saisonnier — tous SKU, tous magasins — sur le fallback à zéro.
             for dim, key, avg_qty, n in cur.fetchall():
-                if avg_qty is None:
+                if avg_qty is None or key is None:
                     continue
                 factor = round(float(avg_qty) / avg_base, 3)
                 if dim == "month":
@@ -247,9 +252,16 @@ def get_seasonal_demand_profile(sku: int, store_id: str, category: str = None) -
                 "source":           "postgresql_3years",
             }
     except Exception as e:
-        logger.warning(f"[PG_LOADER] seasonal profile error: {e}")
+        # exc_info : un « int() argument ... NoneType » sans pile a coûté une
+        # demi-journée de recherche — la ligne fautive vaut la verbosité.
+        logger.warning("[PG_LOADER] seasonal profile error (sku=%s store=%s): %s",
+                       sku, store_id, e, exc_info=True)
+        try:
+            sku_out = int(sku)
+        except (TypeError, ValueError):
+            sku_out = sku  # ne jamais lever depuis le chemin de repli
         return {
-            "sku": int(sku), "baseline_demand": 0, "demand_std": 0,
+            "sku": sku_out, "baseline_demand": 0, "demand_std": 0,
             "n_data_years": 0, "by_month": {}, "by_event_type": {},
             "by_season": {}, "by_dow": {}, "trend_6m_pct": 0,
             "source": "error",

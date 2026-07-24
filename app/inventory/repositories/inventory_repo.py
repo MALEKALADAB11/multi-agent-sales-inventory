@@ -12,6 +12,7 @@ Usage from any agent or service:
 import os
 import json
 import logging
+import threading
 from datetime import date, datetime
 from typing import Optional
 from pathlib import Path
@@ -688,13 +689,13 @@ class InventoryRepo:
 # This thin psycopg2 wrapper exposes exactly what those files need.
 #
 # Same .env variables as the async InventoryRepo above.
-# Opens/closes one connection per call — acceptable because calls happen
-# once per SKU per batch run, not in a tight loop.
+# Les connexions viennent d'un pool : voir _get_sync_pool() plus bas.
 # =============================================================================
 
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
     _PSYCOPG2_OK = True
 except ImportError:
     _PSYCOPG2_OK = False
@@ -702,6 +703,68 @@ except ImportError:
         "psycopg2 not installed — SyncInventoryRepo disabled. "
         "Run: pip install psycopg2-binary"
     )
+
+
+# ── Pool de connexions synchrones ────────────────────────────────────────────
+# _conn() ouvrait une connexion neuve a chaque appel. L'hypothese d'origine
+# (« un appel par SKU, jamais en boucle serree ») est fausse des que le batch
+# inventory tourne : 8 workers x 143 SKUs x plusieurs requetes chacun, soit des
+# milliers de handshakes TCP+auth vers Postgres. Mesure sur store I63 : 1,2 s
+# pour un SKU analyse seul, contre ~11,7 s effectifs par SKU en batch — un
+# parallelisme 10x contre-productif, purement de la contention de connexion.
+#
+# _conn() renvoie desormais un wrapper dont .close() rend la connexion au pool,
+# pour que les ~27 sites d'appel en `finally: conn.close()` restent corrects
+# sans modification.
+
+_SYNC_POOL = None
+_SYNC_POOL_LOCK = threading.Lock()
+_SYNC_POOL_MAX = int(os.getenv("INVENTORY_SYNC_POOL_MAX", "32"))
+
+
+class _PooledConn:
+    """Delegue tout a la connexion psycopg2, sauf close() qui la rend au pool."""
+
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def __getattr__(self, name):
+        # Appele uniquement pour les attributs absents de l'instance :
+        # _pool/_conn restent servis normalement.
+        return getattr(self._conn, name)
+
+    def close(self):
+        if self._conn is None:
+            return                      # close() idempotent
+        conn, self._conn = self._conn, None
+        try:
+            # putconn rollback tout seul si une transaction est restee ouverte,
+            # et jette la connexion si le lien serveur est perdu.
+            self._pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _get_sync_pool():
+    """Pool process-wide, cree a la premiere utilisation."""
+    global _SYNC_POOL
+    if _SYNC_POOL is not None:
+        return _SYNC_POOL
+    with _SYNC_POOL_LOCK:
+        if _SYNC_POOL is None:
+            from app.core.config import config
+            _SYNC_POOL = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1, maxconn=_SYNC_POOL_MAX,
+                host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
+                user=config.DB_USER, password=config.DB_PASSWORD,
+            )
+            logger.info("[SyncInventoryRepo] pool de connexions cree (max=%d)",
+                        _SYNC_POOL_MAX)
+    return _SYNC_POOL
 
 
 class SyncInventoryRepo:
@@ -713,17 +776,26 @@ class SyncInventoryRepo:
 
     @staticmethod
     def _conn():
+        """Connexion du pool. L'appelant la libere via conn.close()."""
         if not _PSYCOPG2_OK:
             return None
         try:
-            from app.core.config import config
-            return psycopg2.connect(
-                host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
-                user=config.DB_USER, password=config.DB_PASSWORD,
-            )
+            pool = _get_sync_pool()
+            return _PooledConn(pool, pool.getconn())
         except Exception as exc:
-            logger.warning("SyncInventoryRepo: DB connection failed: %s", exc)
-            return None
+            # getconn() leve PoolError quand les maxconn sont toutes prises (il
+            # n'attend pas). On retombe alors sur une connexion directe : c'est
+            # le comportement d'avant le pool, jamais pire.
+            logger.warning("SyncInventoryRepo: pool indisponible (%s) — connexion directe", exc)
+            try:
+                from app.core.config import config
+                return psycopg2.connect(
+                    host=config.DB_HOST, port=config.DB_PORT, dbname=config.DB_NAME,
+                    user=config.DB_USER, password=config.DB_PASSWORD,
+                )
+            except Exception as exc2:
+                logger.warning("SyncInventoryRepo: DB connection failed: %s", exc2)
+                return None
 
     # ── Reads ─────────────────────────────────────────────────────────────────
     @staticmethod

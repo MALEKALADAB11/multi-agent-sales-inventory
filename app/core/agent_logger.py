@@ -513,14 +513,6 @@ def enrich_rag_from_cycle(
                 })
             if data:
                 client.insert(collection_name="coaching_scripts",data=data)
-                conn2 = _get_conn()
-                with conn2.cursor() as cur:
-                    cur.execute(
-                        "UPDATE coaching_scripts SET embedded=TRUE WHERE id=ANY(%s)",
-                        (pg_ids,)
-                    )
-                conn2.commit()
-                conn2.close()
                 logger.info(
                     f"[AGENT_LOGGER] RAG enrichi: +{len(data)} scripts "
                     f"(cycle {cycle_id[-8:]})"

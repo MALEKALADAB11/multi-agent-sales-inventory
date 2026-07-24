@@ -14,15 +14,21 @@ def set_orchestrator(orc: CycleOrchestrator, trg: CronTrigger):
 
 
 @router.post("/trigger")
-async def trigger_cycle(store_id: str = "store-lac2"):
-    """Déclenche un cycle manuellement."""
-    result = await _trigger.fire_now("manual")
+async def trigger_cycle(store_id: str | None = None):
+    """
+    Déclenche un cycle manuellement sur la boutique demandée.
+
+    `store_id` est désormais transmis à l'orchestrateur — l'ancienne version
+    l'acceptait mais lançait toujours la boutique par défaut.
+    """
+    result = await _trigger.fire_now("manual", store_id=store_id)
     return {
+        "store_id":       store_id or getattr(_trigger, "store_id", None),
         "cycle_id":       result.get("cycle_id"),
         "niveau_urgence": result.get("niveau_urgence"),
         "ecart_objectif": result.get("ecart_objectif"),
         "forecast_eod":   result.get("forecast_eod"),
-        "duration_ms":    result["metrics"].get("total_ms")
+        "duration_ms":    (result.get("metrics") or {}).get("total_ms"),
     }
 
 

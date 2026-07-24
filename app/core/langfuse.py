@@ -69,6 +69,51 @@ def _host_reachable(host: str, timeout: float = 1.0) -> bool:
         return False
 
 
+def _api_ready(host: str, timeout: float = 2.0) -> bool:
+    """Sonde applicative : le port ouvert ne dit rien de l'état du serveur.
+
+    Vécu : `/api/public/health` répondait 200 pendant que TOUT endpoint touchant
+    la base rendait 500 (conteneur Langfuse debout, base cassée). Le SDK partait
+    alors en boucle de retries et déversait une trace de pile par batch dans
+    logs/errors.log. On interroge donc un endpoint authentifié qui, lui, lit
+    vraiment la base.
+    """
+    import base64
+    import httpx
+    pk = os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local")
+    sk = os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local")
+    auth = base64.b64encode(f"{pk}:{sk}".encode()).decode()
+    try:
+        r = httpx.get(f"{host.rstrip('/')}/api/public/projects",
+                      headers={"Authorization": f"Basic {auth}"}, timeout=timeout)
+        return r.status_code < 400
+    except Exception:
+        return False
+
+
+class _NoTracebackFilter(logging.Filter):
+    """Garde le message d'erreur du SDK, jette la pile.
+
+    Une panne d'observabilité produit une erreur par batch — avec `exc_info`,
+    c'est 25 lignes à chaque fois et un errors.log illisible pour les vraies
+    erreurs applicatives.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.exc_info = None
+        record.exc_text = None
+        return True
+
+
+def _quiet_sdk_logging() -> None:
+    """Le SDK Langfuse et son backoff ne parlent qu'en cas de problème réel."""
+    for name in ("langfuse", "langfuse.task_manager", "langfuse.request", "backoff"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.ERROR)
+        if not any(isinstance(f, _NoTracebackFilter) for f in lg.filters):
+            lg.addFilter(_NoTracebackFilter())
+
+
 def get_langfuse():
     """Retourne l'instance Langfuse singleton, ou None si indisponible."""
     global _lf, _lf_checked
@@ -86,6 +131,12 @@ def get_langfuse():
         logger.warning("Langfuse injoignable (%s) — tracing desactive pour ce process", host)
         return None
 
+    if not _api_ready(host):
+        logger.warning("Langfuse debout mais API en erreur (%s) — tracing desactive "
+                       "pour ce process (verifier `docker compose ps langfuse`)", host)
+        return None
+
+    _quiet_sdk_logging()
     try:
         from langfuse import Langfuse
         _lf = Langfuse(

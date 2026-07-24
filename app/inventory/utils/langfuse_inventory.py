@@ -31,17 +31,21 @@ _lf_instance = None
 
 
 def _get_lf():
+    """Singleton Langfuse partage avec app.core.langfuse.
+
+    Ce module instanciait son propre client sans verifier LANGFUSE_ENABLED ni
+    la joignabilite de l'hote. Comme le pipeline inventory trace un SKU a la
+    fois, un Langfuse eteint produisait une trace par SKU dont l'uploader
+    retentait en boucle (« error uploading: WinError 10061 ») : ~40 s de temps
+    mort sur un batch de 143 SKUs. get_langfuse() sonde l'hote une seule fois
+    par process et renvoie None s'il est injoignable.
+    """
     global _lf_instance
     if _lf_instance is not None:
         return _lf_instance
     try:
-        from langfuse import Langfuse
-        _lf_instance = Langfuse(
-            public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-pfe-local"),
-            secret_key=os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-pfe-local"),
-            host=os.getenv("LANGFUSE_HOST", "http://localhost:3001"),
-            timeout=10,  # jamais de socket sans timeout dans le chemin de requête
-        )
+        from app.core.langfuse import get_langfuse
+        _lf_instance = get_langfuse()
         return _lf_instance
     except Exception as exc:
         logger.debug("Langfuse unavailable: %s", exc)

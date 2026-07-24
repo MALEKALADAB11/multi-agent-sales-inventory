@@ -702,6 +702,11 @@ def _to_inventory_item(
         "stockMin":         stock.get("stock_min") or metrics.get("reorder_point", 0),
         "stockMax":         stock.get("stock_max") or (metrics.get("reorder_point", 0) * 2),
         "demandForecast24h": round(avg_daily),
+        # Provenance de la prévision de demande (pipeline demand sensing) :
+        # "demand_sensing_db" = baseline MSTL + correction XGBoost lue en DB,
+        # "live_ts_engine" = TS engine calculé à la volée, "fallback_flat" sinon.
+        "forecastSource":   forecast.get("forecast_source", "unknown"),
+        "forecastEngine":   forecast.get("forecast_engine"),
         "coverageRatio":    coverage_ratio,
         "riskLevel":        risk_level,
         "riskScore":        risk_score,
@@ -1177,6 +1182,46 @@ def get_summary(
     """Summary only — benefits from the same store cache."""
     payload = analyze_store(store_id, business_objective, page=1, page_size=0)
     return payload["summary"]
+
+
+@router.get("/forecast/{store_id}/{sku}")
+def get_demand_forecast(
+    store_id: str,
+    sku: str,
+    days: int = Query(default=14, ge=1, le=30),
+) -> Dict[str, Any]:
+    """
+    Série de prévision de demande jour par jour pour un SKU (pipeline demand
+    sensing) : baseline MSTL 30 j + correction XGBoost 7 j quand elle existe.
+    `predicted` = COALESCE(corrected, baseline) — la valeur que les agents
+    utilisent réellement.
+    """
+    from app.inventory.tools.internal.stock_tools import get_forecast_data
+
+    def _num(v):
+        return None if v is None or pd.isna(v) else _json_safe(v)
+
+    df = get_forecast_data(sku, store_id, days=days)
+    points = []
+    corrected_count = 0
+    for row in df.itertuples(index=False):
+        corrected = _num(getattr(row, "corrected_demand", None))
+        if corrected is not None:
+            corrected_count += 1
+        points.append({
+            "date":      row.date.date().isoformat() if hasattr(row.date, "date") else str(row.date),
+            "predicted": _num(row.predicted_demand),
+            "baseline":  _num(getattr(row, "baseline_demand", None)),
+            "corrected": corrected,
+        })
+    return {
+        "sku":            sku,
+        "store_id":       store_id,
+        "points":         points,
+        "correctedDays":  corrected_count,
+        "model":          "baseline_mstl_v1 + sensing_model_v1" if corrected_count else "baseline_mstl_v1",
+        "source":         "inventory.demand_forecast",
+    }
 
 
 @router.delete("/cache")
