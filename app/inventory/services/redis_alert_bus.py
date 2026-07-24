@@ -28,12 +28,24 @@ import asyncio
 import json
 import logging
 import os
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 # ── Singleton Redis client ─────────────────────────────────────────────────────
+#
+# IMPORTANT: _redis_client / _redis_available are only ever touched from the
+# single persistent background event loop set up below (_ensure_background_loop).
+# They used to be reset and rebuilt by a fresh thread+loop on every single
+# dispatch_alerts_sync() call — with 30-50 alert-worthy SKUs dispatched
+# concurrently from the orchestrator's worker threads, that meant many
+# concurrently-spawned event loops racing to reset/rebuild the SAME global
+# client, producing "attached to a different loop" errors, connections torn
+# down after their owning loop was already closed, and dispatch calls
+# stalling for up to the full 15s join() timeout each. Routing every call
+# through one long-lived loop removes the race entirely.
 
 _redis_client = None
 _redis_available: bool = False
@@ -78,10 +90,62 @@ async def _get_redis():
 
 
 def _reset_client() -> None:
-    """Réinitialise le client (tests unitaires)."""
+    """Réinitialise le client (tests unitaires uniquement — ne pas appeler en prod,
+    voir _ensure_background_loop pour le fonctionnement en production)."""
     global _redis_client, _redis_available
     _redis_client    = None
     _redis_available = False
+
+
+# ── Persistent background event loop ───────────────────────────────────────────
+#
+# One loop, one thread, started lazily on first use and kept alive for the
+# life of the process. _get_redis() / publish_alert() / etc. always run on
+# THIS loop's thread, so _redis_client is never touched by two loops at
+# once — no more races. Callers on other threads (orchestrator workers)
+# hand off work via asyncio.run_coroutine_threadsafe() instead of each
+# spinning up their own loop.
+
+import threading as _threading
+
+_bg_loop:   Optional[asyncio.AbstractEventLoop] = None
+_bg_thread: Optional[_threading.Thread] = None
+_bg_lock = _threading.Lock()
+
+
+def _ensure_background_loop() -> asyncio.AbstractEventLoop:
+    """Démarre (une seule fois) le loop d'arrière-plan singleton et le retourne."""
+    global _bg_loop, _bg_thread
+
+    if _bg_loop is not None:
+        return _bg_loop
+
+    with _bg_lock:
+        if _bg_loop is not None:
+            return _bg_loop
+
+        ready = _threading.Event()
+
+        def _run_loop() -> None:
+            global _bg_loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            _bg_loop = loop
+            ready.set()
+            try:
+                loop.run_forever()
+            finally:
+                loop.close()
+
+        _bg_thread = _threading.Thread(
+            target=_run_loop, daemon=True, name="alertbus-loop"
+        )
+        _bg_thread.start()
+
+        if not ready.wait(timeout=5):
+            logger.error("[AlertBus] background loop failed to start in time")
+
+        return _bg_loop
 
 
 # ── Publish ────────────────────────────────────────────────────────────────────
@@ -244,38 +308,30 @@ def dispatch_alerts_sync(
     """
     Version synchrone de dispatch_inventory_alerts.
 
-    Crée une boucle asyncio temporaire si nécessaire.
-    Utilise l'event loop existant si disponible (ex: FastAPI).
+    Exécutée depuis les workers du pipeline (threads sans event loop).
+    Schedule le dispatch sur LE loop d'arrière-plan partagé et persistant
+    (voir _ensure_background_loop) au lieu de créer sa propre boucle+thread
+    à chaque appel.
+
+    Historique : la version précédente créait un thread + une boucle asyncio
+    ENTIÈREMENT NOUVELLE à chaque appel, et réinitialisait le client Redis
+    global au début/à la fin de chacune. Avec 30-50 SKUs alert-worthy
+    dispatchés quasi simultanément par les workers de l'orchestrateur, on
+    avait autant de boucles concurrentes qui se marchaient dessus sur LE
+    MÊME client global — d'où les erreurs "attached to a different loop",
+    les connexions fermées après la fermeture de leur boucle propriétaire,
+    et des dispatches qui restaient bloqués jusqu'au timeout de join(15s)
+    à chaque fois. Un seul loop persistant élimine la course.
+
+    Non-bloquant au-delà de 15s : le pipeline ne dépend jamais de Redis.
     """
-    # Exécuté depuis les workers du pipeline (threads sans event loop).
-    # Chaque dispatch crée SA boucle et SON client Redis, fermé avant la fin
-    # de la boucle : un client global réutilisé entre plusieurs asyncio.run()
-    # laissait des connexions orphelines et loop.close() pendait indéfiniment
-    # sous Windows (pipeline bloqué). L'attente est bornée : le pipeline ne
-    # dépend jamais de Redis.
-    import threading
-
-    def _run() -> None:
-        async def _dispatch_and_close() -> None:
-            _reset_client()  # client lié à CETTE boucle
-            try:
-                await dispatch_inventory_alerts(decisions, store_id)
-            finally:
-                global _redis_client
-                client = _redis_client
-                if client is not None:
-                    try:
-                        await client.aclose()
-                    except Exception:
-                        pass
-                _reset_client()  # aucun client orphelin inter-boucles
-        try:
-            asyncio.run(_dispatch_and_close())
-        except Exception as exc:
-            logger.warning("[AlertBus] dispatch_alerts_sync: %s", exc)
-
-    t = threading.Thread(target=_run, daemon=True, name="alertbus-dispatch")
-    t.start()
-    t.join(timeout=15)
-    if t.is_alive():
+    try:
+        loop = _ensure_background_loop()
+        future = asyncio.run_coroutine_threadsafe(
+            dispatch_inventory_alerts(decisions, store_id), loop
+        )
+        future.result(timeout=15)
+    except FutureTimeoutError:
         logger.warning("[AlertBus] dispatch >15s — le pipeline continue sans attendre")
+    except Exception as exc:
+        logger.warning("[AlertBus] dispatch_alerts_sync: %s", exc)

@@ -9,6 +9,7 @@ avec un message actionnable.
 
 import logging
 import os
+from pathlib import Path
 
 import psycopg2
 
@@ -44,7 +45,7 @@ def _expected_head() -> str | None:
     try:
         from alembic.config import Config
         from alembic.script import ScriptDirectory
-        cfg = Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+        cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
         return ScriptDirectory.from_config(cfg).get_current_head()
     except Exception as e:
         logger.warning("[SCHEMA] Impossible de lire le head Alembic : %s", e)

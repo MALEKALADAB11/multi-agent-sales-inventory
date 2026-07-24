@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import numpy as np
 from datetime import datetime, date, timedelta
@@ -51,7 +52,8 @@ class TimesFMTools:
         hour_current:  int
     ) -> dict:
         if self.loaded:
-            return self._prophet_forecast_eod(
+            return await asyncio.to_thread(
+                self._prophet_forecast_eod,
                 ca_realized, sales_history, hour_current
             )
         return self._statistical_forecast(ca_realized, hour_current)

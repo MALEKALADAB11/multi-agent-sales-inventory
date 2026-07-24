@@ -38,7 +38,7 @@ WEATHER_CODES = {
 }
 
 _weather_cache: dict = {}
-_weather_cache_time: float = 0.0
+_weather_cache_time: dict = {}
 _WEATHER_TTL = 300
 
 
@@ -69,7 +69,8 @@ async def fetch_weather(store_id: str) -> dict:
     import time
     global _weather_cache, _weather_cache_time
     now = time.time()
-    if _weather_cache.get(store_id) and (now - _weather_cache_time) < _WEATHER_TTL:
+    cached_at = _weather_cache_time.get(store_id, 0.0)
+    if store_id in _weather_cache and (now - cached_at) < _WEATHER_TTL:
         return _weather_cache[store_id]
 
     coords = await _fetch_store_coords(store_id)
@@ -118,7 +119,7 @@ async def fetch_weather(store_id: str) -> dict:
             }
             result = {"current": dict(current), "hourly": hourly, "summary": summary}
             _weather_cache[store_id] = result
-            _weather_cache_time = now
+            _weather_cache_time[store_id] = now
             logger.info(f"[STRATEGE] Météo {coords['city']}: {w['icon']} | effet={w['effect']:+.0%}")
             return result
     except Exception as e:
@@ -138,9 +139,22 @@ async def fetch_weather(store_id: str) -> dict:
 
 # ── Jours fériés Nager.Date ────────────────────────────────────────────────────
 
+_holidays_cache: dict = {}
+_holidays_cache_time: dict = {}
+_HOLIDAYS_TTL = 6 * 3600  # holiday lists for a given year practically never change intraday
+
+
 async def fetch_holidays(year: int = None) -> dict:
+    import time
+    global _holidays_cache, _holidays_cache_time
     if year is None:
         year = datetime.now().year
+
+    now = time.time()
+    cached_at = _holidays_cache_time.get(year, 0.0)
+    if year in _holidays_cache and (now - cached_at) < _HOLIDAYS_TTL:
+        return _holidays_cache[year]
+
     today = date.today()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -163,9 +177,14 @@ async def fetch_holidays(year: int = None) -> dict:
                     "date":       str(hdate),
                     "days_until": days_until,
                 }
-        return {"is_holiday_today": is_today, "today_holiday": today_hol, "next_holiday": next_hol}
+        result = {"is_holiday_today": is_today, "today_holiday": today_hol, "next_holiday": next_hol}
+        _holidays_cache[year] = result
+        _holidays_cache_time[year] = now
+        return result
     except Exception as e:
         logger.warning(f"[STRATEGE] Holidays API failed: {e}")
+        # Don't cache the fallback — retry on the next call instead of being
+        # stuck with "no holidays" for 6h if this was just a transient blip.
         return {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}
 
 

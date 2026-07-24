@@ -28,7 +28,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE = os.getenv("SMOKE_BASE_URL", "http://localhost:8000")
 WS_BASE = BASE.replace("http://", "ws://").replace("https://", "wss://")
-STORE = os.getenv("SMOKE_STORE", "I63")
+STORE = os.getenv("SMOKE_STORE", "I14")
 ADVISOR = os.getenv("SMOKE_ADVISOR", "adv-zi")
 USERNAME = os.getenv("SMOKE_USER", "managermenzah")
 PASSWORD = os.getenv("SMOKE_PASSWORD", "admin123")

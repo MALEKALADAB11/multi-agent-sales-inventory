@@ -1604,13 +1604,24 @@ class SyncInventoryRepo:
         alert_id:            Optional[int] = None,
     ) -> Optional[str]:
         """
-        Insert one row into inventory.recommendations.
+        Insert or refresh one row in inventory.recommendations.
         Only called for ORDER / EXPEDITE actions — HOLD / MONITOR produce no row.
 
         Chaîne causale : si alert_id n'est pas fourni, la recommandation est
         rattachée automatiquement à l'alerte 'pending' la plus récente du même
         (sku, store) — c'est elle qui a déclenché la décision.
-        Returns the UUID string of the inserted row, or None on failure.
+
+        There's a partial unique index (uq_reco_pending_sku_store) enforcing
+        at most one 'pending' recommendation per (sku, store_id). Previously
+        this was a plain INSERT, so once a SKU had a pending recommendation,
+        every later cycle's attempt to save an updated one just hit the
+        unique-violation, logged a warning, and silently did nothing —
+        meaning recommendations never refreshed until a human approved or
+        rejected the existing pending row. This is now an UPSERT: a repeat
+        run for the same still-pending SKU updates the existing row (fresh
+        quantity/confidence/urgency/agent_run_id) instead of erroring.
+
+        Returns the UUID string of the inserted/updated row, or None on failure.
         """
         conn = SyncInventoryRepo._conn()
         if conn is None:
@@ -1627,6 +1638,16 @@ class SyncInventoryRepo:
                                           WHERE a.sku = %s AND a.store_id = %s
                                             AND a.status = 'pending'
                                           ORDER BY a.created_at DESC LIMIT 1)))
+                    ON CONFLICT (sku, store_id) WHERE status = 'pending'
+                    DO UPDATE SET
+                        agent_run_id         = EXCLUDED.agent_run_id,
+                        recommendation_type  = EXCLUDED.recommendation_type,
+                        recommendation_text  = EXCLUDED.recommendation_text,
+                        suggested_quantity   = EXCLUDED.suggested_quantity,
+                        confidence            = EXCLUDED.confidence,
+                        urgency               = EXCLUDED.urgency,
+                        alert_id              = COALESCE(EXCLUDED.alert_id,
+                                                           inventory.recommendations.alert_id)
                     RETURNING id
                 """, (
                     sku, store_id,

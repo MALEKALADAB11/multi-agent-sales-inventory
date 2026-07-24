@@ -10,6 +10,7 @@ stock-history snapshot.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import asyncio
 from typing import Any, Dict, List, Optional
@@ -52,7 +53,17 @@ def _json_safe(obj: Any) -> Any:
 #   - pipeline duration (fewer SKUs = faster)
 #   - alert count (fewer ghost products = fewer phantom criticals)
 # Set to 0 to disable the cap (process all SKUs).
-DEMO_SKU_CAP = 0
+#
+# NOTE: this was previously 0 (uncapped). With `fast=True` already using a
+# non-LLM orchestrator, the dominant cost of GET /store/{store_id} is simply
+# "per-SKU pipeline work x SKU count" (DB round-trips + Langfuse spans per
+# SKU across nested ThreadPoolExecutors). For stores with hundreds/thousands
+# of SKUs this alone can blow past any HTTP timeout and, at high enough
+# thread concurrency, starve the event loop's GIL time badly enough that
+# unrelated WebSocket handshakes time out too. Capping bounds worst-case
+# latency regardless of store size. Raise this (or pass force_refresh with a
+# dedicated "full" endpoint) if you need the complete, uncapped view.
+DEMO_SKU_CAP = int(os.getenv("INVENTORY_SKU_CAP", "80"))
 
 # Per-store pipeline lock — only one pipeline run per store at a time.
 # Concurrent callers (WS + HTTP poll) block here and share the result.
@@ -142,7 +153,7 @@ async def _push_update_to_store(store_id: str) -> None:
             payload = await loop.run_in_executor(
                 None,
                 lambda obj=business_objective: analyze_store(
-                    store_id, obj, force_refresh=True, fast=True
+                    store_id, obj, force_refresh=False, fast=True
                 ),
             )
 
@@ -175,12 +186,25 @@ async def _push_update_to_store(store_id: str) -> None:
 
 
 def invalidate_store(store_id: str, sku: str = None, new_stock: float = None) -> None:
-    keys_to_drop = [k for k in _store_cache if k.startswith(f"{store_id}::")]
-    for k in keys_to_drop:
-        del _store_cache[k]
-
-    if keys_to_drop:
-        logger.info("invalidate_store(%s): dropped %d cache entries", store_id, len(keys_to_drop))
+    if sku is None or new_stock is None:
+        keys_to_drop = [k for k in _store_cache if k.startswith(f"{store_id}::")]
+        for k in keys_to_drop:
+            del _store_cache[k]
+        if keys_to_drop:
+            logger.info("invalidate_store(%s): dropped %d cache entries", store_id, len(keys_to_drop))
+    else:
+        patched = 0
+        for k, entry in _store_cache.items():
+            if not k.startswith(f"{store_id}::"):
+                continue
+            for item in entry["data"].get("items", []):
+                if item.get("sku") == sku:
+                    item["stock"] = new_stock
+                    patched += 1
+                    break
+        if patched:
+            logger.info("invalidate_store(%s): patched sku=%s stock=%s in %d cache entr%s",
+                         store_id, sku, new_stock, patched, "y" if patched == 1 else "ies")
 
     try:
         loop = asyncio.get_event_loop()
@@ -532,7 +556,14 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
 def get_orchestrator():
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = create_orchestrator(use_llm=False)  # Force LLM enabled
+        # NOTE: use_llm=False here — despite the historical comment this used
+        # to carry ("Force LLM enabled"), this orchestrator is NOT using an
+        # LLM. It is currently identical to get_orchestrator_fast() below.
+        # fast=True/False on GET /store/{store_id} therefore has NO effect on
+        # speed today. If you want a genuinely LLM-backed "slow" path for
+        # single-SKU analysis (POST /analyze), change this to use_llm=True —
+        # but note that will add real LLM latency to that endpoint.
+        _orchestrator = create_orchestrator(use_llm=False)
     return _orchestrator
 
 
@@ -1038,25 +1069,36 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
     }
 
 
-@router.get("/store/{store_id}")
 def analyze_store(
     store_id: str,
-    business_objective: str = Query(default="balanced"),
-    force_refresh: bool = Query(default=False),
-    fast: bool = False,
-    # ── Pagination ────────────────────────────────────────────────────────
-    # page     : 1-based page index
-    # page_size: items per page (0 = return all, use with care on 4 000 SKUs)
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=100, ge=0, le=500),
+    business_objective: str = "balanced",
+    force_refresh: bool = False,
+    fast: bool = True,
+    page: int = 1,
+    page_size: int = 100,
+    blocking: bool = True,
 ) -> Dict[str, Any]:
     """
     Full store analysis with result caching and pagination.
 
-    With 100+ SKUs the pipeline can take 15-20 s on first call.
-    Subsequent calls within CACHE_TTL (20 min) are instant.
-    force_refresh=True always re-runs the pipeline.
+    With 100+ SKUs the pipeline can take minutes on first call (see
+    DEMO_SKU_CAP / orchestrator comments for why). Subsequent calls within
+    CACHE_TTL are instant. force_refresh=True always re-runs the pipeline.
     fast=True uses the rule-based orchestrator (no LLM) for WS broadcasts.
+
+    blocking controls what happens when another caller is already running
+    the pipeline for this store+objective:
+      - blocking=True  (trusted background callers: prewarm, WS push,
+        summary endpoint) waits for the in-flight run and reuses its result.
+        This preserves the original behavior for callers that are already
+        off the request/response path.
+      - blocking=False (the public HTTP route) never waits — it returns
+        immediately with the last cached payload (marked "stale"/"computing")
+        or a minimal "computing" placeholder if there's no cache yet at all.
+        This is what stops a pile of concurrent frontend polls from each
+        parking a worker thread for the full multi-minute pipeline run,
+        which is what was starving unrelated requests (openapi.json, WS
+        handshakes) under load.
 
     Pagination:
       GET /store/I63?page=1&page_size=100   → first 100 SKUs
@@ -1070,24 +1112,61 @@ def analyze_store(
             return _paginate(cached, page, page_size)
 
     # Acquire per-store lock so only ONE pipeline runs at a time.
-    # Concurrent callers (WS background task + HTTP poll) will block here
-    # and then immediately get the cache result once the first run completes.
     lock = _get_store_lock(f"{store_id}::{business_objective}")
-    with lock:
-        # Re-check cache inside the lock — another thread may have populated it
+
+    if blocking:
+        lock.acquire()
+    else:
+        acquired = lock.acquire(blocking=False)
+        if not acquired:
+            # Someone else (cron cycle, WS push, another HTTP poll) is already
+            # running this pipeline. Don't block a worker thread waiting on
+            # it — hand back whatever we have and let the frontend re-poll.
+            stale_entry = _store_cache.get(_cache_key(store_id, business_objective))
+            if stale_entry is not None:
+                payload = dict(stale_entry["data"])
+                payload["status"] = "computing"
+                payload["stale"] = True
+                payload["stale_age_seconds"] = int(time.time() - stale_entry["ts"])
+                logger.info(
+                    "Pipeline busy for %s — returning stale cache (age %ds)",
+                    store_id, payload["stale_age_seconds"],
+                )
+                return _paginate(payload, page, page_size)
+            logger.info("Pipeline busy for %s — no cache yet, returning placeholder", store_id)
+            return {
+                "store_id":           store_id,
+                "business_objective": business_objective,
+                "status":             "computing",
+                "total_skus":         0,
+                "items":              [],
+                "alerts":             [],
+                "summary":            {},
+                "message":            "First analysis in progress — retry in a few seconds.",
+            }
+
+    try:
+        # Re-check cache now that we hold the lock — another thread may have populated it
         cached = _get_cached(store_id, business_objective)
-        if cached is not None:
+        if cached is not None and not force_refresh:
             logger.info("Cache populated by concurrent run for %s — reusing", store_id)
             return _paginate(cached, page, page_size)
 
         skus = _resolve_skus_for_store(store_id)
 
         orchestrator = get_orchestrator_fast() if fast else get_orchestrator()
+        _pipeline_t0 = time.time()
         logger.info(
             "Running pipeline for %s (%d SKUs) [fast=%s, objective=%s]...",
             store_id, len(skus), fast, business_objective,
         )
         results = orchestrator.analyze_batch(skus, store_id, business_objective)
+        _pipeline_ms = int((time.time() - _pipeline_t0) * 1000)
+        logger.info(
+            "Pipeline finished for %s in %dms (%d SKUs, %.1fms/SKU avg)",
+            store_id, _pipeline_ms, len(skus),
+            _pipeline_ms / max(len(skus), 1),
+        )
         results = _enrich_with_product_master(results)
 
         # ── Pre-fetch stock for all SKUs in ONE DB query ──────────────────
@@ -1132,6 +1211,34 @@ def analyze_store(
 
         _set_cache(store_id, business_objective, payload)
         return _paginate(payload, page, page_size)
+    finally:
+        lock.release()
+
+
+@router.get("/store/{store_id}")
+def get_store_inventory(
+    store_id: str,
+    business_objective: str = Query(default="balanced"),
+    force_refresh: bool = Query(default=False),
+    fast: bool = Query(default=True),
+    # ── Pagination ────────────────────────────────────────────────────────
+    # page     : 1-based page index
+    # page_size: items per page (0 = return all, use with care on 4 000 SKUs)
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=0, le=500),
+) -> Dict[str, Any]:
+    """
+    HTTP entrypoint for store inventory. Thin wrapper around analyze_store()
+    with blocking=False: if a pipeline run is already in flight for this
+    store+objective (cron cycle, WS push, another poll), this returns
+    immediately with the last cached payload (flagged "stale"/"computing")
+    instead of parking a worker thread for the multi-minute pipeline run.
+    Poll again in a few seconds — check `status` in the response.
+    """
+    return analyze_store(
+        store_id, business_objective, force_refresh=force_refresh,
+        fast=fast, page=page, page_size=page_size, blocking=False,
+    )
 
 
 def _paginate(payload: Dict[str, Any], page: int, page_size: int) -> Dict[str, Any]:

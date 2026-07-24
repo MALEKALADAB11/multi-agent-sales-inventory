@@ -51,6 +51,8 @@ _lf = None
 def get_langfuse():
     """Retourne l'instance Langfuse singleton, ou None si indisponible."""
     global _lf
+    if os.getenv("LANGFUSE_ENABLED", "false").lower() != "true":
+        return None
     if _lf is not None:
         return _lf
     try:

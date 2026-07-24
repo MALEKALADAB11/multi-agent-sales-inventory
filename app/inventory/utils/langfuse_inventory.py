@@ -32,6 +32,8 @@ _lf_instance = None
 
 def _get_lf():
     global _lf_instance
+    if os.getenv("LANGFUSE_ENABLED", "false").lower() != "true":
+        return None
     if _lf_instance is not None:
         return _lf_instance
     try:

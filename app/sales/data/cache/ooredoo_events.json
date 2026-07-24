@@ -3,72 +3,71 @@
   "events": [
     {
       "title": "HONOR",
-      "type": "promotion",
-      "category": "promotion",
+      "type": "tarif",
+      "category": "internet",
       "price": "999,00 DT",
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-18T12:15:20.309298"
+      "date": "2026-07-24T09:58:07.458007"
     },
     {
       "title": "[Go Back]",
       "type": "tarif",
-      "category": "internet",
+      "category": "mobile",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-18T12:15:29.737715"
+      "date": "2026-07-24T09:58:48.890889"
     }
   ],
   "active": [
     {
       "title": "HONOR",
-      "type": "promotion",
-      "category": "promotion",
+      "type": "tarif",
+      "category": "internet",
       "price": "999,00 DT",
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-18T12:15:20.309298"
+      "date": "2026-07-24T09:58:07.458007"
     },
     {
       "title": "[Go Back]",
       "type": "tarif",
-      "category": "internet",
+      "category": "mobile",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-18T12:15:29.737715"
+      "date": "2026-07-24T09:58:48.890889"
     }
   ],
-  "promotions": [
+  "promotions": [],
+  "new_offers": [],
+  "tarifs": [
     {
       "title": "HONOR",
-      "type": "promotion",
-      "category": "promotion",
+      "type": "tarif",
+      "category": "internet",
       "price": "999,00 DT",
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-18T12:15:20.309298"
-    }
-  ],
-  "new_offers": [],
-  "tarifs": [
+      "date": "2026-07-24T09:58:07.458007"
+    },
     {
       "title": "[Go Back]",
       "type": "tarif",
-      "category": "internet",
+      "category": "mobile",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-18T12:15:29.737715"
+      "date": "2026-07-24T09:58:48.890889"
     }
   ],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-18T12:15:35.543715"
+  "fetched_at": "2026-07-24T09:59:29.914167"
 }

@@ -1,6 +1,7 @@
 """
 forecast.py — Router FastAPI forecast 100% PostgreSQL.
 """
+import asyncio
 from fastapi import APIRouter
 from datetime import datetime
 from app.core.config import DEFAULT_STORE_ID
@@ -55,12 +56,18 @@ async def get_eod_forecast(store_id: str):
 
     # Utiliser Prophet si EOD = 0
     if eod == 0 or ca == 0:
-        prophet_forecast = await _timefm.forecast_eod(
-            store_id      = cd,
-            ca_realized   = ca,
-            sales_history = {},
-            hour_current  = datetime.now().hour
-        )
+        if _timefm.loaded:
+            prophet_forecast = await asyncio.to_thread(
+                _timefm._prophet_forecast_eod,
+                ca,
+                {},
+                datetime.now().hour
+            )
+        else:
+            prophet_forecast = _timefm._statistical_forecast(
+                ca,
+                datetime.now().hour
+            )
         eod    = prophet_forecast.get("eod", 0)
         ci     = {
             "low":  prophet_forecast.get("ci_low", 0),

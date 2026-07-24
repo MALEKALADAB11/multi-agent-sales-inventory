@@ -243,6 +243,38 @@ async def startup_event():
 
     await _warmup_sales_data(DEFAULT_STORE_ID)
 
+    # ── Inventory cache pre-warm (background, non-blocking) ───────────────
+    # Populates the /api/inventory/store/{store_id} result cache for
+    # DEFAULT_STORE_ID so the first user to open the inventory page doesn't
+    # pay the full pipeline cost. Runs in a worker thread via asyncio.to_thread
+    # so it never blocks the event loop (and therefore never blocks WS
+    # handshakes) while it runs.
+    #
+    # NOTE: this only pre-warms DEFAULT_STORE_ID and only helps until the
+    # cache TTL expires (CACHE_TTL = 3600s in app/inventory/api/routes.py).
+    # It does NOT bound how long a cold run takes for a *different* store —
+    # that's controlled by DEMO_SKU_CAP in routes.py.
+    def _prewarm_inventory():
+        try:
+            from app.inventory.api.routes import analyze_store
+            t0 = time.time()
+            analyze_store(
+                DEFAULT_STORE_ID,
+                business_objective="balanced",
+                force_refresh=False,
+                fast=True,
+                page=1,
+                page_size=0,
+            )
+            logger.info(
+                "✅ Inventory cache pre-warmed for store %s (%.1fs)",
+                DEFAULT_STORE_ID, time.time() - t0,
+            )
+        except Exception as e:
+            logger.warning("⚠️ Inventory cache pre-warm failed: %s", e)
+
+    asyncio.create_task(asyncio.to_thread(_prewarm_inventory))
+
     timefm = TimesFMTools(model_path="./models/timefm")
     await timefm.load_model()
     app.state.timefm = timefm
