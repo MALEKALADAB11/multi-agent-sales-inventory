@@ -1,7 +1,7 @@
 """
 ts_node.py — Node LangGraph de l'Analyste temps réel (déterministe).
 ====================================================================
-Remplace node_react_analyst : plus aucune boucle LLM dans le chemin critique.
+Aucune boucle LLM dans le chemin critique (l'ancien node ReAct a été supprimé).
 Le moteur ts_engine fait 100% du travail analytique (< 1s) :
   forecast EOD (Holt-Winters saisonnier + déroulé intraday), détection de gap
   horaire, prévision heures suivantes + demain, urgence, faisabilité.
@@ -20,6 +20,7 @@ from app.core.config import DEFAULT_STORE_ID
 from app.sales.core.state import SalesAgentState
 from app.sales.data.postgres_provider import normalize_store_id
 from .ts_engine import analyze_store
+from .prompts import ANALYST_SUMMARY_SYSTEM_PROMPT, build_summary_prompt
 from .nodes import AgentLogger, _cycle_id, _store_id, _get_or_create_trace, _lf_span
 
 logger = logging.getLogger(__name__)
@@ -41,20 +42,9 @@ async def _maybe_enrich_summary(analysis: dict) -> str:
             base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             temperature=0.1, num_predict=200, num_ctx=2048,
         )
-        gaps = ", ".join(
-            f"{e['hour']}h {e['deviation_pct']:+.0f}%" for e in analysis.get("hourly_gaps", [])[:4]
-        ) or "aucun"
-        prompt = (
-            f"Analyse Ooredoo {analysis['store_id']} à {analysis['analysis_hour']}h : "
-            f"CA {analysis['current_ca']:.0f}/{analysis['daily_target']:.0f} TND, "
-            f"EOD prévu {analysis['eod_forecast']:.0f} TND (MAPE {analysis['mape_backtest']}%), "
-            f"gap {analysis['gap_pct']}%, tendance {analysis['trend_signal']}, "
-            f"heures en retard : {gaps}, faisabilité {analysis['feasibility']}. "
-            f"Rédige un résumé analyste en 2 phrases françaises, factuel, orienté action."
-        )
         resp = await asyncio.wait_for(
-            llm.ainvoke([SystemMessage(content="Tu es analyste retail senior."),
-                         HumanMessage(content=prompt)]),
+            llm.ainvoke([SystemMessage(content=ANALYST_SUMMARY_SYSTEM_PROMPT),
+                         HumanMessage(content=build_summary_prompt(analysis))]),
             timeout=LLM_SUMMARY_TIMEOUT,
         )
         text = (resp.content or "").strip()
@@ -152,6 +142,7 @@ async def node_ts_analysis(state: SalesAgentState) -> dict:
         "trend_signal":    analysis.get("trend_signal", "UNKNOWN"),
         "hourly_gaps":     analysis.get("hourly_gaps", []),
         "next_hours_forecast": analysis.get("next_hours", []),
+        "target_hit_hour": analysis.get("target_hit_hour"),
         "feasibility":     analysis.get("feasibility", "UNKNOWN"),
         # Compat anciens consommateurs
         "analysis_features": {
@@ -169,6 +160,7 @@ async def node_ts_analysis(state: SalesAgentState) -> dict:
 
 def _linear_fallback(sid: str, pos_data: dict) -> dict:
     """Dernier recours si PostgreSQL est injoignable : extrapolation simple."""
+    from .ts_engine import _sanitize_analysis
     ca = float(pos_data.get("current_revenue", 0) or 0)
     target = float(pos_data.get("daily_target", 1007) or 1007)
     now_h = datetime.now().hour
@@ -178,7 +170,9 @@ def _linear_fallback(sid: str, pos_data: dict) -> dict:
     gap = round(max(0.0, target - eod), 2)
     gap_pct = round(gap / target * 100, 1) if target > 0 else 0.0
     urgency = "HIGH" if gap_pct > 30 else "MEDIUM" if gap_pct > 15 else "LOW"
-    return {
+    # Même garde-fou que le chemin nominal : le mode dégradé ne doit pas être
+    # une porte de sortie pour des valeurs non bornées.
+    return _sanitize_analysis({
         "store_id": sid, "business_date": None, "analysis_hour": now_h,
         "current_ca": ca, "daily_target": target,
         "attainment_pct": round(ca / target * 100, 1) if target > 0 else 0,
@@ -192,10 +186,10 @@ def _linear_fallback(sid: str, pos_data: dict) -> dict:
         "hours_remaining": hours_left, "ca_per_hour_needed": None,
         "catchup_capacity": 0.0, "feasibility": "UNKNOWN",
         "hourly_ledger": [], "hourly_gaps": [], "nb_alert_hours": 0,
-        "trend_signal": "UNKNOWN", "next_hours": [],
+        "trend_signal": "UNKNOWN", "next_hours": [], "target_hit_hour": None,
         "urgency_level": urgency, "urgency_score": min(1.0, gap_pct / 50),
         "summary": (
             f"[Mode dégradé] CA {ca:.0f}/{target:.0f} TND. "
             f"EOD estimé {eod:.0f} TND (extrapolation linéaire). Gap {gap_pct:.1f}%."
         ),
-    }
+    })

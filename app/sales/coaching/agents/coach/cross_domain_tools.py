@@ -25,6 +25,25 @@ from app.core.db import acquire
 logger = logging.getLogger(__name__)
 
 
+def _run_sync(coro):
+    """Exécute une coroutine depuis un contexte sync.
+
+    asyncio.run ferme proprement la boucle (tâches annulées, générateurs
+    async fermés) — contrairement à get_event_loop().run_until_complete qui
+    laisse des futures internes asyncpg non récupérées à la sortie du process
+    (« Future exception was never retrieved » / WinError 10054). Si une boucle
+    tourne déjà dans ce thread (appel depuis le serveur), on bascule sur un
+    thread dédié car on ne peut pas bloquer la boucle courante.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+
 # ── Outil 1 — get_sales_context ─────────────────────────────────────────────
 
 async def get_sales_context(store_id: str, advisor_id: str = "") -> Dict[str, Any]:
@@ -242,7 +261,7 @@ def get_demand_forecast_batch(skus: List[str], store_id: str, days: int = 7) -> 
                     for r in rows if r["avg_demand"] is not None
                 }
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] get_demand_forecast_batch: %s", e)
         return {}
@@ -344,7 +363,7 @@ def retrieve_advisor_history(advisor_id: str, store_id: str) -> Dict[str, Any]:
                     }
                 return {"advisor_id": advisor_id, "strong": {}, "weak": {}, "acceptance": 0.5}
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] retrieve_advisor_history: %s", e)
         return {"advisor_id": advisor_id, "strong": {}, "weak": {}, "acceptance": 0.5}
@@ -386,7 +405,7 @@ def check_promotions(sku: str, store_id: str) -> Dict[str, Any]:
                     }
                 return {"has_promo": False}
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] check_promotions: %s", e)
         return {"has_promo": False}
@@ -617,7 +636,7 @@ def get_realtime_kpis(store_id: str) -> Dict[str, Any]:
                     "ca_heure":  float(row["ca_heure"] or 0),
                 }
 
-        return asyncio.get_event_loop().run_until_complete(_fetch())
+        return _run_sync(_fetch())
     except Exception as e:
         logger.debug("[CoachTools] get_realtime_kpis: %s", e)
         return {"store_id": store_id, "nb_tx": 0, "panier_moy": 0, "ca_heure": 0}

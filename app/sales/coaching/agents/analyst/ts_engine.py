@@ -21,12 +21,16 @@ Pipeline statistique :
   6. Urgence composite déterministe + faisabilité du rattrapage.
 
 Moteurs : statsforecast AutoETS si installé, sinon Holt-Winters numpy interne
-(benchmark Sprint 11 : Holt MAPE 4.4% ≥ Prophet sur ces données).
+(benchmark Sprint 11 : Holt ≥ Prophet sur ces données). Depuis 2026-07-22, un
+modèle global entraîné (app/sales/forecasting) occupe le rang 0 de la cascade :
+WAPE 33,4 % contre 46,3 % pour Holt-Winters, mesuré à un jour sur 151 boutiques
+× 168 jours (evals/results/SALES_FORECAST_REPORT.md).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -135,11 +139,63 @@ def _backtest_mape(y: np.ndarray, period: int, params: dict, test_len: int = 28)
     return round(min(abs_err / tot_actual * 100, 60.0), 1)
 
 
-def forecast_daily_series(values: list[float], horizon: int = 2) -> dict:
+def _try_global_model(values: list[float], horizon: int,
+                      last_date, store_id: str | None) -> dict | None:
+    """
+    Rang 0 de la cascade : le modèle global entraîné hors ligne.
+
+    Retourne `None` — et non une exception — dès que quoi que ce soit manque
+    (modèle absent du disque, historique trop court, boutique inconnue). Le
+    prévisionniste statistique prend alors le relais sans que l'appelant ait à
+    le savoir : c'est le principe de dégradation gracieuse du système.
+    """
+    if last_date is None:
+        return None
+    try:
+        from app.sales.forecasting.global_model import get_global_forecaster
+    except Exception:
+        return None
+
+    model = get_global_forecaster()
+    if model is None:
+        return None
+
+    points, lows, highs = [], [], []
+    for h in range(1, horizon + 1):
+        out = model.forecast(values, last_date, horizon=h, store_id=store_id)
+        if out is None:
+            return None
+        points.append(out["forecast"])
+        lows.append(out["ci_low"] if out["ci_low"] is not None else out["forecast"] * 0.8)
+        highs.append(out["ci_high"] if out["ci_high"] is not None else out["forecast"] * 1.2)
+
+    wape = float(model.metadata.metrics.get("backtest_wape") or 0) or None
+    return {
+        "forecast": points,
+        "ci_low":   lows,
+        "ci_high":  highs,
+        # WAPE mesuré en backtest sur l'ensemble du panel, pas ré-estimé ici :
+        # le modèle est figé, sa précision l'est aussi.
+        "mape_backtest": round(wape, 1) if wape else 12.0,
+        "engine": f"global_xgb_{model.metadata.version}",
+        "params": {"best_iteration": model.metadata.best_iteration},
+    }
+
+
+def forecast_daily_series(values: list[float], horizon: int = 2,
+                          last_date=None, store_id: str | None = None) -> dict:
     """
     Prévision journalière avec le meilleur moteur disponible.
-    Retourne forecast[horizon], intervalle 80%, MAPE backtesté, moteur utilisé.
+    Retourne forecast[horizon], intervalle 80%, WAPE backtesté, moteur utilisé.
+
+    Cascade : modèle global entraîné → AutoETS → Holt-Winters saisonnier →
+    moyenne. `last_date` et `store_id` ne servent qu'au premier rang ; sans eux
+    le comportement est strictement celui d'avant l'introduction du modèle.
     """
+    global_fc = _try_global_model(values, horizon, last_date, store_id)
+    if global_fc is not None:
+        return global_fc
+
     y = np.nan_to_num(np.asarray(values, dtype=float), nan=0.0)
     n = len(y)
     if n < 21:  # < 3 semaines : pas assez pour la saisonnalité hebdo
@@ -262,17 +318,30 @@ async def _fetch_hourly_profile(conn, sid: str, ref_date: date, dow: int,
     }
 
 
-async def _fetch_today_hourly(conn, sid: str, ref_date: date) -> dict[int, float]:
-    """CA réel par heure aujourd'hui (transactions batch + temps réel)."""
+async def _fetch_today_hourly(conn, sid: str, ref_date: date,
+                              max_hour: int | None = None) -> dict[int, float]:
+    """
+    CA réel par heure aujourd'hui (transactions batch + temps réel).
+
+    `max_hour` borne la lecture aux heures **déjà écoulées**. Cette borne n'est
+    pas cosmétique : `sales.transactions` peut contenir la journée entière —
+    données rejouées, import de fin de journée, ou jeu simulé. Sans elle,
+    `current_ca` intègre des heures qui ne se sont pas produites, puis le
+    déroulé intraday divise ce total par la part écoulée : à 14 h, une journée
+    complète lue en entier ressort en prévision de fin de journée au double du
+    réel. C'est la source des prévisions aberrantes observées le 2026-07-22.
+    """
     rows = await conn.fetch("""
         SELECT heure, SUM(lig_ttc) AS ca_h FROM (
             SELECT heure, lig_ttc FROM sales.transactions
             WHERE store_id = $1 AND date_only = $2
+              AND ($3::int IS NULL OR heure <= $3)
             UNION ALL
             SELECT heure, lig_ttc FROM sales.transactions_rt
             WHERE store_id = $1 AND date_only = $2
+              AND ($3::int IS NULL OR heure <= $3)
         ) c GROUP BY heure ORDER BY heure
-    """, sid, ref_date)
+    """, sid, ref_date, max_hour)
     return {int(r["heure"]): float(r["ca_h"] or 0) for r in rows}
 
 
@@ -327,36 +396,77 @@ async def analyze_store(store_id: str, current_hour: Optional[int] = None) -> di
         daily_target = await _get_daily_target(conn, sid, ref_date)
         daily_series = await _fetch_daily_series(conn, sid, ref_date)
         profile      = await _fetch_hourly_profile(conn, sid, ref_date, dow)
-        today_hourly = await _fetch_today_hourly(conn, sid, ref_date)
+        # Bornée à l'heure courante : le CA « réalisé » ne peut pas contenir
+        # d'heures à venir, même si la table les porte déjà.
+        today_hourly = await _fetch_today_hourly(conn, sid, ref_date, max_hour=now_h)
 
         current_ca = round(sum(today_hourly.values()), 2)
         share      = profile["share"]
 
         # ── Modèle journalier : prévision aujourd'hui (baseline) + demain ────
-        daily_fc = forecast_daily_series(daily_series, horizon=2)
+        # `daily_series` s'arrête la veille de ref_date (cf. _fetch_daily_series),
+        # donc la dernière observation date de ref_date - 1 jour.
+        daily_fc = forecast_daily_series(
+            daily_series, horizon=2,
+            last_date=ref_date - timedelta(days=1), store_id=sid,
+        )
         eod_model     = float(daily_fc["forecast"][0])
         tomorrow_fc   = float(daily_fc["forecast"][1])
         mape          = float(daily_fc["mape_backtest"])
 
-        # ── Déroulé intraday : projection depuis le réalisé ──────────────────
-        pct_elapsed = _cum_share(share, now_h)
-        eod_unfold  = current_ca / pct_elapsed if current_ca > 0 else eod_model
+        # ── Déroulé intraday robuste ─────────────────────────────────────────
+        # La projection naïve `CA réalisé / part écoulée` est très sensible à une
+        # heure exceptionnelle : une seule vente de terminal à 900 TND sur une
+        # heure qui en fait habituellement 120 projette la journée au triple, et
+        # le vendeur reçoit une prévision qu'aucun rythme réel ne justifie.
+        #
+        # On estime donc le rythme du jour par la MÉDIANE des ratios
+        # réalisé/attendu heure par heure — insensible à un point aberrant — et
+        # on ne projette que les heures qui restent. Le CA déjà encaissé, lui,
+        # est acquis et n'est jamais extrapolé.
+        pct_elapsed  = _cum_share(share, now_h)
+        baseline_day = max(eod_model, daily_target, 1.0)
 
-        # Pondération dynamique : tôt le matin on croit le modèle,
-        # en fin de journée on croit le déroulé réel.
+        elapsed_ratios = [
+            today_hourly.get(h, 0.0) / (baseline_day * share.get(h, 0.0))
+            for h in range(STORE_OPEN_HOUR, min(now_h, STORE_CLOSE_HOUR) + 1)
+            if baseline_day * share.get(h, 0.0) > 1.0
+        ]
+        if elapsed_ratios:
+            # Bornes larges : on corrige l'aberration, on n'aplatit pas un
+            # vrai jour exceptionnel.
+            day_ratio = float(np.clip(np.median(elapsed_ratios), 0.2, 3.0))
+        else:
+            day_ratio = 1.0
+
+        remaining_share = max(0.0, sum(
+            share.get(h, 0.0) for h in range(now_h + 1, STORE_CLOSE_HOUR + 1)))
+
+        # La pondération porte sur le RESTE À FAIRE, pas sur le total.
+        #
+        # Mélanger deux totaux conduit à une absurdité dès que la boutique
+        # dépasse la prévision du modèle : à 14 h avec 1 375 TND encaissés et un
+        # modèle à 884, pondérer les totaux tire la prévision sous le réalisé et
+        # n'attribue plus que quelques dizaines de TND aux six heures restantes.
+        # En pondérant les restes, un modèle déjà dépassé contribue simplement
+        # zéro — il ne peut plus soustraire ce qui est encaissé.
+        remaining_model  = max(0.0, eod_model - current_ca)
+        remaining_unfold = baseline_day * remaining_share * day_ratio
+
         w_unfold = min(0.9, pct_elapsed) if current_ca > 0 else 0.0
-        eod_blend = round(w_unfold * eod_unfold + (1 - w_unfold) * eod_model, 2)
-        eod_blend = max(eod_blend, current_ca)  # l'EOD ne peut pas être < au réalisé
+        remaining = w_unfold * remaining_unfold + (1 - w_unfold) * remaining_model
+
+        eod_unfold = current_ca + remaining_unfold      # exposé pour le diagnostic
+        eod_blend  = round(current_ca + remaining, 2)   # ≥ current_ca par construction
 
         ci_half = eod_blend * (mape / 100.0) * (1.0 - 0.5 * pct_elapsed) * 1.282
         ci_low  = round(max(current_ca, eod_blend - ci_half), 2)
         ci_high = round(eod_blend + ci_half, 2)
 
         # ── Ledger horaire : attendu vs réel, heure par heure ───────────────
-        # Trajectoire de référence = max(modèle, objectif) : une heure est
-        # "en retard" si elle ne suit pas le plan du jour, même quand
-        # l'historique récent est faible.
-        baseline_day = max(eod_model, daily_target, 1.0)
+        # Trajectoire de référence = max(modèle, objectif), déjà calculée plus
+        # haut : une heure est "en retard" si elle ne suit pas le plan du jour,
+        # même quand l'historique récent est faible.
         ledger: list[dict] = []
         for h in range(STORE_OPEN_HOUR, min(now_h, STORE_CLOSE_HOUR) + 1):
             expected = round(baseline_day * share.get(h, 0.0), 2)
@@ -377,14 +487,38 @@ async def analyze_store(store_id: str, current_hour: Optional[int] = None) -> di
         gap_hours = [e for e in ledger if e["status"] in ("WATCH", "ALERT")]
         trend     = _trend_signal(ledger)
 
-        # ── Prochaines heures (h+1 … h+3) : attendu ajusté au rythme du jour ─
-        day_ratio = eod_blend / baseline_day if baseline_day > 0 else 1.0
-        next_hours = [
-            {"hour": h,
-             "expected_ca": round(baseline_day * share.get(h, 0.0) * day_ratio, 2),
-             "share_pct":   round(share.get(h, 0.0) * 100, 1)}
-            for h in range(now_h + 1, min(now_h + 4, STORE_CLOSE_HOUR + 1))
-        ]
+        # ── Prévision horaire temps réel — toutes les heures restantes ───────
+        # Le reste à réaliser (EOD prévu − CA déjà encaissé) est réparti sur les
+        # heures restantes au prorata du profil intraday de ce jour de semaine.
+        # La répartition est normalisée par la part restante, ce qui garantit
+        # par construction : CA réalisé + Σ prévisions horaires = EOD prévu.
+        # Sans cette normalisation, la courbe affichée au vendeur ne
+        # convergerait pas vers le chiffre annoncé — incohérence immédiatement
+        # visible sur le dashboard.
+        remaining_hours = list(range(now_h + 1, STORE_CLOSE_HOUR + 1))
+        remaining_share = sum(share.get(h, 0.0) for h in remaining_hours)
+        remaining_ca = max(0.0, eod_blend - current_ca)
+
+        next_hours = []
+        cumulative = current_ca
+        target_hit_hour = None
+        for h in remaining_hours:
+            if remaining_share > 1e-6:
+                expected_h = remaining_ca * share.get(h, 0.0) / remaining_share
+            else:
+                expected_h = remaining_ca / max(1, len(remaining_hours))
+            cumulative += expected_h
+            if target_hit_hour is None and daily_target > 0 and cumulative >= daily_target:
+                target_hit_hour = h
+            next_hours.append({
+                "hour":          h,
+                "expected_ca":   round(expected_h, 2),
+                "cumulative_ca": round(cumulative, 2),
+                "share_pct":     round(share.get(h, 0.0) * 100, 1),
+                # Dispersion historique de cette heure : le vendeur doit voir
+                # qu'une heure creuse est prévisible et une heure de pic non.
+                "std_ca":        round(float(profile.get("std", {}).get(h, 0.0) or 0.0), 2),
+            })
 
         # ── Gap vs objectif + faisabilité ────────────────────────────────────
         gap_eod    = round(max(0.0, daily_target - eod_blend), 2)
@@ -437,7 +571,7 @@ async def analyze_store(store_id: str, current_hour: Optional[int] = None) -> di
             daily_fc["engine"], hours_left,
         )
 
-        return {
+        return _sanitize_analysis({
             "store_id":       sid,
             "business_date":  str(ref_date),
             "analysis_hour":  now_h,
@@ -471,16 +605,126 @@ async def analyze_store(store_id: str, current_hour: Optional[int] = None) -> di
             "nb_alert_hours": len([e for e in ledger if e["status"] == "ALERT"]),
             "trend_signal":   trend,
             "next_hours":     next_hours,
+            # Heure à laquelle la trajectoire prévue franchit l'objectif —
+            # `None` si l'objectif n'est pas atteint avant la fermeture.
+            "target_hit_hour": target_hit_hour,
             # Urgence
             "urgency_level":  urgency_level,
             "urgency_score":  urgency_score,
             "summary":        summary,
-        }
+        })
     finally:
         try:
             await conn.close()
         except Exception:
             pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Garde-fou de sortie — invariants garantis avant diffusion
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FEASIBILITY_SET = {"ACHIEVED", "ACHIEVABLE", "CHALLENGING", "VERY_HARD", "CLOSED", "UNKNOWN"}
+_URGENCY_SET     = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+_TREND_SET       = {"ACCELERATING", "STABLE", "DECELERATING", "UNKNOWN"}
+
+
+def _finite(x, default: float = 0.0) -> float:
+    """Tout nombre non fini (NaN, ±inf, None, non convertible) devient `default`."""
+    try:
+        v = float(x)
+        return v if math.isfinite(v) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _sanitize_analysis(a: dict) -> dict:
+    """
+    Dernier rempart avant que l'analyse ne parte vers l'API et le vendeur.
+
+    Le moteur est déterministe, mais ses entrées ne le sont pas : objectif nul,
+    profil horaire vide, série corrompue, division limite. Un seul NaN ou un gap
+    à 3000 % suffit à casser le dashboard ou à afficher une urgence absurde.
+
+    Cette fonction n'invente aucune valeur métier — elle borne, elle nettoie, et
+    elle rétablit les invariants d'affichage. Elle ne lève jamais : en cas de
+    dict inattendu, elle renvoie ce qu'elle peut. C'est ce qui permet à tout le
+    reste de la chaîne de supposer une sortie propre.
+    """
+    if not isinstance(a, dict) or a.get("error"):
+        return a
+
+    try:
+        target = max(0.0, _finite(a.get("daily_target")))
+        ca     = max(0.0, _finite(a.get("current_ca")))
+
+        # EOD : fini, jamais sous le CA déjà encaissé (un réalisé ne se reprend pas).
+        eod = _finite(a.get("eod_forecast"), ca)
+        eod = max(eod, ca)
+        a["current_ca"]   = round(ca, 2)
+        a["daily_target"] = round(target, 2)
+        a["eod_forecast"] = round(eod, 2)
+
+        # Intervalle : ordonné et englobant le point.
+        lo = _finite(a.get("eod_ci_low"), eod)
+        hi = _finite(a.get("eod_ci_high"), eod)
+        a["eod_ci_low"]  = round(min(lo, hi, eod), 2)
+        a["eod_ci_high"] = round(max(lo, hi, eod), 2)
+
+        # Grandeurs relatives, chacune dans son domaine.
+        a["gap_eod"]        = round(max(0.0, target - eod), 2)
+        a["gap_pct"]        = round(min(100.0, max(0.0, a["gap_eod"] / target * 100)), 1) if target > 0 else 0.0
+        a["coverage_pct"]   = round(min(150.0, max(0.0, eod / target * 100)), 1) if target > 0 else 0.0
+        a["attainment_pct"] = round(max(0.0, ca / target * 100), 1) if target > 0 else 0.0
+        a["urgency_score"]  = round(min(1.0, max(0.0, _finite(a.get("urgency_score")))), 3)
+        a["mape_backtest"]  = round(min(100.0, max(0.0, _finite(a.get("mape_backtest"), 15.0))), 1)
+        a["tomorrow_forecast"] = round(max(0.0, _finite(a.get("tomorrow_forecast"))), 2)
+
+        # Champs énumérés : toute valeur hors référentiel retombe sur un défaut sûr.
+        if a.get("feasibility")   not in _FEASIBILITY_SET: a["feasibility"]   = "UNKNOWN"
+        if a.get("urgency_level") not in _URGENCY_SET:     a["urgency_level"] = "MEDIUM"
+        if a.get("trend_signal")  not in _TREND_SET:       a["trend_signal"]  = "UNKNOWN"
+
+        # Invariant d'affichage : CA réalisé + Σ prévisions horaires = EOD.
+        # C'est la propriété que le dashboard trace ; on la rétablit par
+        # renormalisation plutôt que de faire confiance au calcul amont.
+        nh = a.get("next_hours") or []
+        clean_hours, running = [], ca
+        raw = [(h, max(0.0, _finite(x.get("expected_ca")))) for h, x in
+               ((x.get("hour"), x) for x in nh) if h is not None]
+        total_raw = sum(v for _, v in raw)
+        remaining = max(0.0, eod - ca)
+        scale = (remaining / total_raw) if total_raw > 1e-6 else 0.0
+        for x in nh:
+            exp = max(0.0, _finite(x.get("expected_ca"))) * scale if scale else (
+                remaining / max(1, len(nh)))
+            running += exp
+            clean_hours.append({
+                **x,
+                "expected_ca":   round(exp, 2),
+                "cumulative_ca": round(running, 2),
+                "share_pct":     round(max(0.0, _finite(x.get("share_pct"))), 1),
+                "std_ca":        round(max(0.0, _finite(x.get("std_ca"))), 2),
+            })
+        a["next_hours"] = clean_hours
+
+        # target_hit_hour recalculé sur la trajectoire nettoyée.
+        hit = None
+        if target > 0:
+            run = ca
+            if run >= target:
+                hit = a.get("analysis_hour")
+            else:
+                for x in clean_hours:
+                    run = x["cumulative_ca"]
+                    if run >= target:
+                        hit = x["hour"]
+                        break
+        a["target_hit_hour"] = hit
+        return a
+    except Exception as e:
+        logger.warning("[TS-ENGINE] sanitize a échoué (%s) — sortie brute conservée", e)
+        return a
 
 
 def _build_summary(ca, target, eod, ci_low, ci_high, gap_pct, attainment,

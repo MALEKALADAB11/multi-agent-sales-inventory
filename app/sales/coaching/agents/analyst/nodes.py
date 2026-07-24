@@ -2,18 +2,17 @@
 nodes.py — Agent Analyste LangGraph + Langfuse Observabilité
 =============================================================
 Source de données : 100% PostgreSQL.
-Chaque node trace via Langfuse : input/output, latence ms, erreurs, LLM calls, scores qualité.
+Chaque node trace via Langfuse : input/output, latence ms, erreurs, scores qualité.
+
+Ne contient plus que les 6 nodes d'ingestion/mémoire du graphe v4. Tout le calcul
+analytique vit dans ts_engine.py, appelé par le node ts_analyst (ts_node.py) :
+aucun LLM n'est instancié ici.
 """
 
-import json
 import logging
 import os
-import sys
 import time
 from datetime import datetime
-
-from langchain_ollama import ChatOllama
-from langchain_core.messages import HumanMessage, SystemMessage
 
 try:
     from app.core.agent_logger import AgentLogger
@@ -32,7 +31,6 @@ from app.sales.core.config import get_config
 from app.sales.core.state import SalesAgentState
 from app.sales.data.postgres_provider import get_data_provider, normalize_store_id
 from app.core.config import DEFAULT_STORE_ID
-from .prompts import ANALYST_USER_PROMPT, get_analyst_system_prompt
 from .tools import (
     load_analyst_memory,
     save_analyst_memory,
@@ -42,10 +40,6 @@ from .tools import (
 
 logger = logging.getLogger(__name__)
 config = get_config()
-
-OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
-
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -123,16 +117,6 @@ def _update_metrics(state: dict, key: str, value) -> dict:
     metrics[key] = value
     metrics["nodes_executed"] = int(metrics.get("nodes_executed", 0)) + 1
     return metrics
-
-def get_llm() -> ChatOllama:
-    return ChatOllama(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_URL,
-        temperature=0.1,
-        num_predict=350,
-        num_ctx=2048,
-    )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NODE 1 — receive_pos  (CSV en priorité, PostgreSQL en fallback)
@@ -327,200 +311,7 @@ async def node_load_memory(state: SalesAgentState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 4 — feature_engineering
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def node_feature_engineering(state: SalesAgentState) -> dict:
-    cid    = _cycle_id(state)
-    sid    = _store_id(state)
-    log    = AgentLogger("analyste", cid, sid)
-    log_id = log.node_start("feature_engineering", state)
-    t0     = time.time()
-    trace  = _get_or_create_trace(state)
-
-    pos_data    = state.get("pos_data")    or {}
-    pos_history = state.get("pos_history") or []
-
-    current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-    daily_target    = float(pos_data.get("daily_target",    0) or 0)
-    nb_tx           = int(  pos_data.get("nb_transactions_today", len(pos_history)) or 0)
-    avg_ticket      = round(current_revenue / max(nb_tx, 1), 2)
-    hourly_ca       = pos_data.get("hourly_ca", {})
-
-    hours_sorted = sorted(int(h) for h in hourly_ca.keys())
-    hourly_trend = [{"hour": h, "revenue": round(hourly_ca.get(h, 0), 2)} for h in hours_sorted]
-
-    by_cat: dict[str, float]  = {}
-    by_prod: dict[str, float] = {}
-    by_agent: dict[str, float] = {}
-
-    for tx in pos_history:
-        rev  = float(tx.get("revenue", tx.get("revenue_tnd", 0)) or 0)
-        cat  = tx.get("product_category", "Autre")
-        prod = tx.get("product_name",     tx.get("product_code", "Inconnu"))
-        agt  = tx.get("agent_name",       tx.get("agent_id",     "Inconnu"))
-        if rev > 0:
-            by_cat[cat]   = by_cat.get(cat,   0) + rev
-            by_prod[prod] = by_prod.get(prod, 0) + rev
-            by_agent[agt] = by_agent.get(agt,  0) + rev
-
-    top_categories = sorted(
-        [{"category": k, "revenue": round(v, 2), "pct": round(v / max(current_revenue, 1) * 100, 1)}
-         for k, v in by_cat.items()],
-        key=lambda x: -x["revenue"]
-    )[:5]
-
-    top_products = sorted(
-        [{"product": k, "revenue": round(v, 2)} for k, v in by_prod.items()],
-        key=lambda x: -x["revenue"]
-    )[:5]
-
-    top_advisors = sorted(
-        [{"advisor": k, "revenue": round(v, 2),
-          "pct": round(v / max(current_revenue, 1) * 100, 1)}
-         for k, v in by_agent.items()],
-        key=lambda x: -x["revenue"]
-    )[:4]
-
-    features = {
-        "nb_transactions":  nb_tx,
-        "avg_ticket":       avg_ticket,
-        "hourly_trend":     hourly_trend,
-        "top_categories":   top_categories,
-        "top_products":     top_products,
-        "top_advisors":     top_advisors,
-        "conversion_rate":  round(nb_tx / max(nb_tx + 5, 1) * 100, 1),
-        "ca_live":          float(pos_data.get("ca_live", 0) or 0),
-        "ca_historique":    float(pos_data.get("ca_historique", current_revenue) or 0),
-        "business_date":    pos_data.get("business_date"),
-        "sim_date":         pos_data.get("sim_date"),
-        "source":           pos_data.get("source", "unknown"),
-    }
-
-    duration = (time.time() - t0) * 1000
-    output   = {**state, "analysis_features": features}
-
-    _lf_span(trace, "feature_engineering",
-        input_data  = {"nb_tx": nb_tx, "ca": current_revenue},
-        output_data = {
-            "avg_ticket":      avg_ticket,
-            "nb_categories":   len(top_categories),
-            "top_cat":         top_categories[0]["category"] if top_categories else "N/A",
-            "top_advisor_rev": top_advisors[0]["revenue"] if top_advisors else 0,
-        },
-        latency_ms = duration,
-    )
-
-    log.node_done("feature_engineering", log_id, output, duration, features)
-    logger.info(f"[ANALYST] Node feature_engineering — TX={nb_tx} | panier={avg_ticket} TND")
-    return {**output, "metrics": _update_metrics(state, "analyste_feature_ms", round(duration))}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NODE 5 — compute_gap
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def node_compute_gap(state: SalesAgentState) -> dict:
-    cid    = _cycle_id(state)
-    sid    = _store_id(state)
-    log    = AgentLogger("analyste", cid, sid)
-    log_id = log.node_start("compute_gap", state)
-    t0     = time.time()
-    trace  = _get_or_create_trace(state)
-
-    pos_data        = state.get("pos_data") or {}
-    current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-    daily_target    = float(pos_data.get("daily_target",    0) or 0)
-    if daily_target <= 0:
-        daily_target = 1007.0
-
-    gap_amount     = max(0.0, daily_target - current_revenue)
-    gap_percentage = round(gap_amount / daily_target * 100, 2) if daily_target > 0 else 0.0
-    attainment_pct = round(current_revenue / daily_target * 100, 1) if daily_target > 0 else 0.0
-
-    duration = (time.time() - t0) * 1000
-    output   = {**state, "gap_objectif": gap_percentage,
-                "gap_amount": gap_amount, "attainment": attainment_pct}
-
-    _lf_span(trace, "compute_gap",
-        input_data  = {"ca": current_revenue, "target": daily_target},
-        output_data = {"gap_pct": gap_percentage, "gap_tnd": gap_amount,
-                       "attainment": attainment_pct},
-        latency_ms  = duration,
-    )
-
-    log.node_done("compute_gap", log_id, output, duration,
-                  {"gap_pct": gap_percentage, "gap_amount": gap_amount})
-    logger.info(f"[ANALYST] Node compute_gap — Gap={gap_percentage:.1f}% "
-                f"({gap_amount:.0f} TND) | CA={current_revenue:.0f}/{daily_target:.0f}")
-    return {**output, "metrics": _update_metrics(state, "analyste_gap_ms", round(duration))}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NODE 6 — call_timesfm  (CSV en priorité, PostgreSQL en fallback)
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def node_call_timesfm(state: SalesAgentState) -> dict:
-    cid    = _cycle_id(state)
-    sid    = _store_id(state)
-    log    = AgentLogger("analyste", cid, sid)
-    log_id = log.node_start("call_timesfm", state)
-    t0     = time.time()
-    trace  = _get_or_create_trace(state)
-
-    pos_data    = state.get("pos_data") or {}
-    gap_amount  = float(state.get("gap_amount", 0) or 0)
-    prediction  = None
-    source_used = "postgresql_forecast"
-
-    # ── PostgreSQL (source unique) ────────────────────────────────────────────
-    try:
-        provider    = get_data_provider()
-        prediction  = await provider.fetch_timesfm_prediction(sid)
-    except Exception as e_pg:
-        prediction  = {
-            "forecast_end_of_day":     0,
-            "forecast_end_of_day_tnd": 0,
-            "confidence_interval":     {"low": 0, "high": 0},
-            "mape":                    99.0,
-            "source":                  "fallback",
-        }
-        source_used = "fallback"
-        logger.warning(f"[ANALYST] forecast PG fallback — {e_pg}")
-
-    forecast_eod    = float(prediction.get("forecast_end_of_day", 0) or 0)
-    mape            = float(prediction.get("mape", 14.3) or 14.3)
-    current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-
-    if gap_amount > 0:
-        coverage = round(min(100.0, ((forecast_eod - current_revenue) / gap_amount) * 100), 1)
-    elif forecast_eod >= float(pos_data.get("daily_target", 1007) or 1007):
-        coverage = 100.0
-    else:
-        coverage = 0.0
-
-    duration = (time.time() - t0) * 1000
-    output   = {**state, "timesfm_prediction": prediction,
-                "forecast_eod": forecast_eod, "coverage": coverage}
-
-    _lf_span(trace, "call_timesfm",
-        input_data  = {"store_id": sid, "ca": current_revenue,
-                       "gap_amount": gap_amount, "source": source_used},
-        output_data = {"forecast_eod": forecast_eod, "mape": mape, "coverage": coverage},
-        latency_ms  = duration,
-        metadata    = {"source": source_used, "mape": mape},
-    )
-
-    log.node_done("call_timesfm", log_id, output, duration,
-                  {"forecast_eod": forecast_eod, "mape": mape,
-                   "coverage": coverage, "source": source_used})
-    logger.info(f"[ANALYST] Node call_timesfm — EOD={forecast_eod:.0f} TND | "
-                f"MAPE={mape:.1f}% | couverture={coverage:.1f}% | source={source_used}")
-    return {**output, "metrics": _update_metrics(state, "analyste_timesfm_ms", round(duration))}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NODE 7 — compare_with_memory
+# NODE 4 — compare_with_memory
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_compare_with_memory(state: SalesAgentState) -> dict:
@@ -559,258 +350,7 @@ async def node_compare_with_memory(state: SalesAgentState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 8 — detect_urgency
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def node_detect_urgency(state: SalesAgentState) -> dict:
-    cid    = _cycle_id(state)
-    sid    = _store_id(state)
-    log    = AgentLogger("analyste", cid, sid)
-    log_id = log.node_start("detect_urgency", state)
-    t0     = time.time()
-    trace  = _get_or_create_trace(state)
-
-    pos_data  = state.get("pos_data")          or {}
-    features  = state.get("analysis_features") or {}
-    gap_pct         = float(state.get("gap_objectif", 0) or 0)
-    coverage        = float(state.get("coverage",      0) or 0)
-    forecast_eod    = float(state.get("forecast_eod",  0) or 0)
-    current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-    daily_target    = float(pos_data.get("daily_target", 0) or 0)
-    nb_tx           = int(  features.get("nb_transactions", 0) or 0)
-    avg_ticket      = float(features.get("avg_ticket",      0) or 0)
-    current_hour    = datetime.now().hour
-    hours_remaining = max(0, 20 - current_hour)
-
-    time_pressure    = min(1.0, max(0.0, (current_hour - 8) / 12))
-    gap_score        = min(1.0, gap_pct / 60.0)
-    coverage_penalty = max(0.0, (100 - coverage) / 100) * 0.25
-
-    activity_risk = 0.0
-    if current_hour >= 10 and nb_tx <= 2:   activity_risk = 0.15
-    elif current_hour >= 12 and nb_tx <= 5: activity_risk = 0.10
-    ticket_risk = 0.10 if (avg_ticket > 0 and avg_ticket < 30 and gap_pct > 10) else 0.0
-
-    urgency_score = min(1.0,
-        gap_score * 0.40 + time_pressure * 0.25
-        + coverage_penalty + activity_risk + ticket_risk
-    )
-
-    if pos_data.get("data_status") == "unavailable":
-        urgency_level = "CRITICAL"
-        urgency_score = 1.0
-    elif gap_pct > 45 and coverage < 70:
-        urgency_level = "CRITICAL"
-    elif gap_pct > 30 and coverage < 85:
-        urgency_level = "HIGH"
-    elif gap_pct > 15 or hours_remaining < 3:
-        urgency_level = "MEDIUM"
-    else:
-        urgency_level = "LOW"
-
-    if hours_remaining < 2 and gap_pct > 10:
-        urgency_level = "HIGH" if urgency_level != "CRITICAL" else "CRITICAL"
-        urgency_score = max(urgency_score, 0.85)
-
-    urgency_score = round(urgency_score, 3)
-    duration      = (time.time() - t0) * 1000
-    output        = {**state, "urgency_level": urgency_level, "urgency_score": urgency_score}
-
-    _lf_span(trace, "detect_urgency",
-        input_data  = {"gap_pct": gap_pct, "coverage": coverage,
-                       "hour": current_hour, "hrs_rem": hours_remaining},
-        output_data = {"urgency_level": urgency_level, "urgency_score": urgency_score,
-                       "gap_score": round(gap_score, 3),
-                       "time_pressure": round(time_pressure, 3)},
-        latency_ms  = duration,
-        level       = "WARNING" if urgency_level in ("HIGH", "CRITICAL") else "DEFAULT",
-    )
-
-    log.node_done("detect_urgency", log_id, output, duration,
-                  {"level": urgency_level, "score": urgency_score})
-    logger.info(f"[ANALYST] Node detect_urgency — Urgence={urgency_level} | "
-                f"Score={urgency_score:.3f} | Gap={gap_pct:.1f}%")
-    return {**output, "metrics": _update_metrics(state, "analyste_urgency_ms", round(duration))}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NODE 9 — llm_summary  ← TRACE LLM COMPLÈTE
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def node_llm_summary(state: SalesAgentState) -> dict:
-    cid    = _cycle_id(state)
-    sid    = _store_id(state)
-    log    = AgentLogger("analyste", cid, sid)
-    log_id = log.node_start("llm_summary", state)
-    t0     = time.time()
-    trace  = _get_or_create_trace(state)
-
-    pos_data        = state.get("pos_data")           or {}
-    features        = state.get("analysis_features")  or {}
-    memory_insights = state.get("memory_insights")    or {}
-    prediction      = state.get("timesfm_prediction") or {}
-
-    urgency_level   = state.get("urgency_level", "LOW")
-    gap_pct         = float(state.get("gap_objectif", 0) or 0)
-    gap_amount      = float(state.get("gap_amount",   0) or 0)
-    forecast_eod    = float(state.get("forecast_eod", 0) or 0)
-    coverage        = float(state.get("coverage",     0) or 0)
-    current_revenue = float(pos_data.get("current_revenue", 0) or 0)
-    daily_target    = float(pos_data.get("daily_target", 0) or 0)
-    nb_tx           = int(  features.get("nb_transactions", 0) or 0)
-    avg_ticket      = float(features.get("avg_ticket",      0) or 0)
-    current_hour    = datetime.now().hour
-
-    llm_ok          = False
-    analyst_summary = ""
-    user_prompt     = ""
-    llm_latency_ms  = 0.0
-
-    pos_history_summary = {
-        "total_transactions": nb_tx,
-        "total_revenue":      current_revenue,
-        "avg_ticket":         avg_ticket,
-        "top_categories":     features.get("top_categories", [])[:3],
-        "hourly_trend":       features.get("hourly_trend",   [])[-4:],
-        "ca_live":            features.get("ca_live",        0),
-        "ca_historique":      features.get("ca_historique",  0),
-        "business_date":      pos_data.get("business_date"),
-        "sim_date":           pos_data.get("sim_date"),
-        "source":             pos_data.get("source", "unknown"),
-    }
-
-    # Skip LLM when urgency is clearly LOW — rule-based summary is sufficient
-    # and avoids paying 26-37s Ollama latency on the common green-flag case.
-    if urgency_level == "LOW" and gap_pct < 5.0:
-        trend_info = memory_insights.get("gap_trend", "unknown")
-        top_cats   = features.get("top_categories", [])[:2]
-        cats_str   = ", ".join(str(c) for c in top_cats) if top_cats else "produits standards"
-        trend_str  = (" Tendance en amélioration." if trend_info == "improving"
-                      else " Tendance stable." if trend_info == "stable" else "")
-        analyst_summary = (
-            f"Objectif atteint — CA {current_revenue:.0f}/{daily_target:.0f} TND "
-            f"(EOD {forecast_eod:.0f} TND).{trend_str} "
-            f"Axes de performance : upsell sur {cats_str}, "
-            f"optimiser panier moyen ({avg_ticket:.0f} TND), cross-sell complémentaires."
-        )
-        llm_ok         = True
-        llm_latency_ms = 0.0
-        logger.info(f"[ANALYST] Node llm_summary — skipped (LOW/gap {gap_pct:.1f}%) — template used")
-    else:
-        try:
-            logger.info(f"[ANALYST] Node llm_summary — Appel LLM ({OLLAMA_MODEL})")
-            llm = get_llm()
-
-            system_prompt = get_analyst_system_prompt(
-                sid, store_name=pos_data.get("store_name", ""),
-                daily_target=daily_target,
-            )
-            user_prompt = ANALYST_USER_PROMPT.format(
-                store_id=sid,
-                pos_data=json.dumps({
-                    "current_revenue":       current_revenue,
-                    "daily_target":          daily_target,
-                    "nb_transactions":       nb_tx,
-                    "avg_ticket":            avg_ticket,
-                    "current_hour":          current_hour,
-                    "hours_remaining":       max(0, 20 - current_hour),
-                    "data_status":           pos_data.get("data_status", "available"),
-                    "source":                pos_data.get("source", "unknown"),
-                    "business_date":         pos_data.get("business_date"),
-                }, ensure_ascii=False, indent=2),
-                pos_history_summary=json.dumps(pos_history_summary, ensure_ascii=False, indent=2),
-                timesfm_prediction=json.dumps({
-                    "forecast_end_of_day":   forecast_eod,
-                    "mape":                  prediction.get("mape", 14.3),
-                    "nb_sources":            prediction.get("nb_sources", 1),
-                    "confidence_interval":   prediction.get("confidence_interval", {}),
-                    "source":                prediction.get("source", "unknown"),
-                }, ensure_ascii=False, indent=2),
-                current_time=f"{current_hour:02d}:00",
-                daily_target=f"{daily_target:.0f}",
-            )
-
-            t_llm    = time.time()
-            response = await llm.ainvoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt),
-            ])
-            llm_latency_ms = (time.time() - t_llm) * 1000
-            raw = response.content.strip() if response and response.content else ""
-
-            if raw.startswith("{"):
-                try:
-                    parsed = json.loads(raw)
-                    analyst_summary = parsed.get("analyst_summary", "")
-                    if parsed.get("urgency_level"):
-                        state = {**state, "urgency_level": parsed["urgency_level"]}
-                    if parsed.get("urgency_score") is not None:
-                        state = {**state, "urgency_score": parsed["urgency_score"]}
-                    llm_ok = True
-                except json.JSONDecodeError:
-                    import re
-                    m = re.search(r'"analyst_summary"\s*:\s*"([^"]+)"', raw)
-                    analyst_summary = m.group(1).strip() if m else raw[:300]
-                    llm_ok = bool(analyst_summary)
-            else:
-                analyst_summary = raw[:300]
-                llm_ok = bool(analyst_summary)
-
-            _lf_generation(
-                trace         = trace,
-                name          = "analyste-llm-summary",
-                model         = OLLAMA_MODEL,
-                system_prompt = system_prompt[:600],
-                user_prompt   = user_prompt[:600],
-                response      = analyst_summary[:600],
-                latency_ms    = llm_latency_ms,
-                metadata      = {
-                    "urgency":  urgency_level,
-                    "gap_pct":  gap_pct,
-                    "llm_ok":   llm_ok,
-                    "store_id": sid,
-                },
-            )
-
-        except Exception as e:
-            llm_latency_ms = (time.time() - t0) * 1000
-            logger.warning(f"[ANALYST] LLM failed: {e} — fallback summary")
-            _lf_span(trace, "analyste-llm-summary",
-                     {"model": OLLAMA_MODEL, "urgency": urgency_level},
-                     {"error": str(e)[:200]}, llm_latency_ms, "ERROR")
-
-    if not analyst_summary:
-        analyst_summary = _make_fallback_summary(
-            gap_pct, urgency_level, current_revenue,
-            daily_target, forecast_eod, memory_insights,
-        )
-
-    total_duration = (time.time() - t0) * 1000
-    output = {**state, "analyst_summary": analyst_summary, "route_to": "strategie"}
-
-    _lf_span(trace, "llm_summary",
-        input_data  = {"urgency": urgency_level, "gap_pct": gap_pct},
-        output_data = {"summary": analyst_summary[:200], "llm_ok": llm_ok,
-                       "llm_latency_ms": round(llm_latency_ms)},
-        latency_ms  = total_duration,
-    )
-
-    log.node_done("llm_summary", log_id, output, total_duration,
-                  {"llm_ok": llm_ok, "summary_len": len(analyst_summary),
-                   "urgency": urgency_level})
-
-    metrics = dict(state.get("metrics") or {})
-    metrics["analyste_llm_ms"]  = round(total_duration)
-    metrics["nodes_executed"]   = int(metrics.get("nodes_executed", 0)) + 1
-    metrics["llm_calls"]        = int(metrics.get("llm_calls", 0)) + (1 if llm_ok else 0)
-
-    logger.info(f"[ANALYST] Node llm_summary — {OLLAMA_MODEL} | "
-                f"{llm_latency_ms:.0f}ms | ok={llm_ok}")
-    return {**output, "metrics": metrics}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NODE 10 — build_strategy_query
+# NODE 5 — build_strategy_query
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_build_strategy_query(state: SalesAgentState) -> dict:
@@ -950,7 +490,7 @@ async def node_build_strategy_query(state: SalesAgentState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 11 — save_memory
+# NODE 6 — save_memory
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def node_save_memory(state: SalesAgentState) -> dict:

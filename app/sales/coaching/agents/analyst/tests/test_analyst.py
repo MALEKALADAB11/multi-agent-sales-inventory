@@ -1,147 +1,111 @@
 """
-Tests unitaires — Agent Analyste (outils + nodes).
+Tests unitaires — Agent Analyste v4 (surface réellement exécutée).
+
+Le moteur statistique est couvert par test_ts_engine.py. Ce fichier couvre ce
+qui l'entoure : le graphe compilé, le prompt de résumé, et la comparaison
+inter-cycles de la mémoire.
+
+Historique : ce fichier testait `react_tools._score_urgency` et une classe
+`Analyste._sql_rolling_forecast` qui n'existent plus — le mode ReAct n'a jamais
+été câblé dans le graphe v4 et a été supprimé.
 """
 import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, patch, MagicMock
+
+from app.sales.coaching.agents.analyst.agent import build_analyst_graph
+from app.sales.coaching.agents.analyst.prompts import (
+    ANALYST_SUMMARY_SYSTEM_PROMPT,
+    build_summary_prompt,
+)
+from app.sales.coaching.agents.analyst.tools import compare_with_memory
 
 
-# ── Import helpers (graceful skip when DB/LLM absent) ───────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# GRAPHE — la topologie v4 est figée
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _import_react_tools():
-    """Import react_tools; skip test if optional deps missing."""
-    try:
-        import sys, os
-        base = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..")
-        sys.path.insert(0, os.path.abspath(base))
-        from app.sales.coaching.agents.analyst.react_tools import (
-            _score_urgency,
-        )
-        return _score_urgency
-    except Exception as exc:
-        pytest.skip(f"react_tools import failed: {exc}")
+class TestAnalystGraph:
 
+    EXPECTED_NODES = {
+        "receive_pos", "validate_data", "load_memory", "ts_analyst",
+        "compare_with_memory", "build_strategy_query", "save_memory",
+    }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# URGENCY SCORING (pure function, no IO)
-# ═══════════════════════════════════════════════════════════════════════════════
+    def test_graph_has_exactly_seven_nodes(self):
+        graph = build_analyst_graph()
+        assert set(graph.nodes) - {"__start__", "__end__"} == self.EXPECTED_NODES
 
-class TestUrgencyScoring:
+    def test_graph_compiles(self):
+        assert build_analyst_graph().compile() is not None
 
-    def test_high_urgency_late_day(self):
-        """Gap 60% à 17h → HIGH."""
-        _score_urgency = _import_react_tools()
-        level, score = _score_urgency(gap_pct=60.0, hour=17, hours_remaining=3.0)
-        assert level == "HIGH"
-        assert score >= 0.6
-
-    def test_low_urgency_morning(self):
-        """Gap 5% à 10h → LOW."""
-        _score_urgency = _import_react_tools()
-        level, score = _score_urgency(gap_pct=5.0, hour=10, hours_remaining=10.0)
-        assert level == "LOW"
-        assert score < 0.4
-
-    def test_critical_threshold(self):
-        """Gap > 70% en fin de journée → CRITICAL."""
-        _score_urgency = _import_react_tools()
-        level, score = _score_urgency(gap_pct=75.0, hour=19, hours_remaining=1.0)
-        assert level in ("HIGH", "CRITICAL")
-        assert score >= 0.7
-
-    def test_score_bounded(self):
-        """Le score est toujours dans [0.0, 1.0]."""
-        _score_urgency = _import_react_tools()
-        for gap, hour, hrs in [(0.0, 9, 11), (100.0, 20, 0), (50.0, 15, 5)]:
-            _, score = _score_urgency(gap, hour, hrs)
-            assert 0.0 <= score <= 1.0, f"score={score} hors bornes pour gap={gap}"
+    def test_no_react_node(self):
+        """Garde-fou : le mode ReAct ne doit pas revenir sans décision explicite."""
+        assert not any("react" in n for n in build_analyst_graph().nodes)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# EOD FORECAST — SQL ROLLING FALLBACK (unit-test via mock)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# PROMPT DE RÉSUMÉ — le LLM reformule, il ne calcule pas
+# ══════════════════════════════════════════════════════════════════════════════
 
-class TestSqlRollingForecast:
-
-    @pytest.mark.asyncio
-    async def test_sql_fallback_returns_dict(self):
-        """_sql_rolling_forecast retourne bien eod/ci_low/ci_high/model."""
-        try:
-            from app.sales.coaching.agents.analyste import Analyste
-        except Exception as exc:
-            pytest.skip(f"Analyste import failed: {exc}")
-
-        analyste = Analyste.__new__(Analyste)
-
-        fake_rows = [
-            {"date_only": "2026-06-22", "ca": 800.0},
-            {"date_only": "2026-06-23", "ca": 950.0},
-            {"date_only": "2026-06-24", "ca": 1100.0},
-            {"date_only": "2026-06-25", "ca": 750.0},
-            {"date_only": "2026-06-26", "ca": 900.0},
-            {"date_only": "2026-06-27", "ca": 1050.0},
-            {"date_only": "2026-06-28", "ca": 870.0},
-        ]
-
-        with patch("modules.coaching.agents.analyste.psycopg2") as mock_pg:
-            mock_conn = MagicMock()
-            mock_cur  = MagicMock()
-            mock_pg.connect.return_value = mock_conn
-            mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
-            mock_conn.cursor.return_value.__exit__  = MagicMock(return_value=False)
-            mock_cur.fetchall.return_value = fake_rows
-
-            result = analyste._sql_rolling_forecast("I63", ca_so_far=300.0, hour=14)
-
-        assert "eod" in result
-        assert "ci_low" in result
-        assert "ci_high" in result
-        assert result["model"] == "SQL-rolling-7d"
-        assert result["eod"] > 0
-
-    def test_sql_fallback_returns_zero_on_empty_rows(self):
-        """Quand la DB retourne 0 lignes, eod doit rester > 0 (fallback sur ca_so_far)."""
-        try:
-            from app.sales.coaching.agents.analyste import Analyste
-        except Exception as exc:
-            pytest.skip(f"Analyste import failed: {exc}")
-
-        analyste = Analyste.__new__(Analyste)
-
-        with patch("modules.coaching.agents.analyste.psycopg2") as mock_pg:
-            mock_conn = MagicMock()
-            mock_cur  = MagicMock()
-            mock_pg.connect.return_value = mock_conn
-            mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
-            mock_conn.cursor.return_value.__exit__  = MagicMock(return_value=False)
-            mock_cur.fetchall.return_value = []
-
-            result = analyste._sql_rolling_forecast("I63", ca_so_far=400.0, hour=10)
-
-        assert result["eod"] >= 400.0
+def _analysis(**overrides) -> dict:
+    base = {
+        "store_id": "I63", "analysis_hour": 14,
+        "current_ca": 580.0, "daily_target": 1007.0, "attainment_pct": 57.6,
+        "eod_forecast": 890.0, "eod_ci_low": 820.0, "eod_ci_high": 960.0,
+        "mape_backtest": 4.4, "model_engine": "holt_winters_seasonal7",
+        "gap_pct": 11.6, "gap_eod": 117.0,
+        "trend_signal": "DECELERATING", "feasibility": "CHALLENGING",
+        "hours_remaining": 6,
+        "hourly_gaps": [
+            {"hour": 11, "deviation_pct": -38.0},
+            {"hour": 12, "deviation_pct": -22.5},
+        ],
+    }
+    base.update(overrides)
+    return base
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STOCK URGENCY BOOST — formule pure (get_stock_alerts)
-# ═══════════════════════════════════════════════════════════════════════════════
+class TestSummaryPrompt:
 
-class TestStockUrgencyBoost:
+    def test_system_prompt_forbids_recomputation(self):
+        assert "recalcules rien" in ANALYST_SUMMARY_SYSTEM_PROMPT
+        assert "2 phrases" in ANALYST_SUMMARY_SYSTEM_PROMPT
 
-    def test_boost_zero_when_no_ruptures(self):
-        nb_ruptures         = 0
-        high_value_ruptures = 0
-        boost = min(0.25, nb_ruptures * 0.05 + high_value_ruptures * 0.08)
-        assert boost == 0.0
+    def test_prompt_carries_every_figure(self):
+        out = build_summary_prompt(_analysis())
+        for expected in ("I63", "14h", "580", "1007", "890", "11.6%", "117",
+                         "DECELERATING", "CHALLENGING", "holt_winters_seasonal7"):
+            assert expected in out, f"{expected!r} absent du prompt"
 
-    def test_boost_capped_at_025(self):
-        nb_ruptures         = 10
-        high_value_ruptures = 5
-        boost = min(0.25, nb_ruptures * 0.05 + high_value_ruptures * 0.08)
-        assert boost == 0.25
+    def test_gap_hours_are_formatted(self):
+        out = build_summary_prompt(_analysis())
+        assert "11h -38%" in out and "12h -22%" in out
 
-    def test_boost_partial(self):
-        """2 ruptures dont 1 high-value → 0.10 + 0.08 = 0.18."""
-        nb_ruptures         = 2
-        high_value_ruptures = 1
-        boost = min(0.25, nb_ruptures * 0.05 + high_value_ruptures * 0.08)
-        assert boost == pytest.approx(0.18)
+    def test_gap_hours_empty_says_aucune(self):
+        assert "aucune" in build_summary_prompt(_analysis(hourly_gaps=[]))
+
+    def test_gap_hours_truncated_to_four(self):
+        gaps = [{"hour": h, "deviation_pct": -30.0} for h in range(9, 19)]
+        out = build_summary_prompt(_analysis(hourly_gaps=gaps))
+        assert "13h" not in out.split("Heures en retard")[1].split("\n")[0]
+
+    def test_missing_keys_do_not_raise(self):
+        """Le fallback linéaire produit un dict incomplet — il ne doit pas casser."""
+        assert build_summary_prompt({"store_id": "I63"})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÉMOIRE — comparaison entre cycles
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCompareWithMemory:
+
+    def test_no_memory_returns_defaults(self):
+        out = compare_with_memory({"gap_pct": 20.0}, {"count": 0, "latest": {}})
+        assert isinstance(out, dict)
+
+    def test_detects_worsening_gap(self):
+        current = {"gap_pct": 40.0, "current_revenue": 300.0, "avg_ticket": 50.0}
+        memory = {"count": 1, "latest": {"gap_pct": 20.0, "current_revenue": 500.0,
+                                         "avg_ticket": 60.0}}
+        out = compare_with_memory(current, memory)
+        assert out.get("gap_trend") in ("worsening", "degrading", "up", "increasing")

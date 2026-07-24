@@ -1,23 +1,21 @@
 """
-tools.py — Outils Agent Analyste.
-PostgreSQL + Redis optionnel + Analyst Memory + calculs métier.
+tools.py — Mémoire de l'Agent Analyste.
+
+Ne contient plus que la persistance et la comparaison inter-cycles. Les calculs
+métier (gap, urgence, agrégats horaires) vivaient ici en double de ts_engine ;
+ils ont été supprimés avec les nodes qui les appelaient. Source de vérité
+unique : ts_engine.analyze_store().
 """
 
 import json
 import logging
 from datetime import datetime
-from typing import Optional
 
 import asyncpg
 
-try:
-    import redis.asyncio as aioredis
-except ImportError:
-    aioredis = None
-
 from app.core.db import acquire_conn, release_conn
 from app.sales.core.config import get_config
-from app.sales.data.postgres_provider import DB_CONFIG, normalize_store_id
+from app.sales.data.postgres_provider import normalize_store_id
 
 logger = logging.getLogger(__name__)
 config = get_config()
@@ -184,177 +182,6 @@ def compare_with_memory(current: dict, memory: dict) -> dict:
         "current_avg_ticket": current_avg_ticket,
         "ticket_trend": ticket_trend,
     }
-
-
-async def get_redis_client():
-    if aioredis is None:
-        return None
-    return aioredis.from_url(config.redis_url, decode_responses=True)
-
-
-async def fetch_pos_context_redis(store_id: str) -> Optional[dict]:
-    store_id = normalize_store_id(store_id)
-
-    try:
-        redis = await get_redis_client()
-        if redis is None:
-            return None
-
-        raw = await redis.get(f"pos:context:{store_id}")
-        return json.loads(raw) if raw else None
-
-    except Exception as e:
-        logger.warning(f"[REDIS] fetch failed store={store_id}: {e}")
-        return None
-
-
-async def cache_pos_context_redis(store_id: str, context: dict) -> None:
-    store_id = normalize_store_id(store_id)
-
-    try:
-        redis = await get_redis_client()
-        if redis is None:
-            return
-
-        await redis.setex(
-            f"pos:context:{store_id}",
-            config.redis_context_ttl,
-            json.dumps(context, default=str),
-        )
-
-    except Exception as e:
-        logger.warning(f"[REDIS] cache failed store={store_id}: {e}")
-
-
-def summarize_pos_history(history: list[dict]) -> dict:
-    if not history:
-        return {
-            "total_transactions": 0,
-            "total_revenue": 0.0,
-            "revenue_last_hour": 0.0,
-            "revenue_last_2h": 0.0,
-            "avg_transaction_value": 0.0,
-            "hourly_trend": [],
-        }
-
-    total_revenue = sum(float(r.get("revenue", 0) or 0) for r in history)
-    total_tx = len(history)
-
-    revenue_last_hour = sum(
-        float(r.get("revenue", 0) or 0)
-        for r in history
-        if int(r.get("minutes_ago", 999) or 999) <= 60
-    )
-
-    revenue_last_2h = sum(
-        float(r.get("revenue", 0) or 0)
-        for r in history
-        if int(r.get("minutes_ago", 999) or 999) <= 120
-    )
-
-    return {
-        "total_transactions": total_tx,
-        "total_revenue": total_revenue,
-        "revenue_last_hour": revenue_last_hour,
-        "revenue_last_2h": revenue_last_2h,
-        "avg_transaction_value": total_revenue / total_tx if total_tx > 0 else 0.0,
-        "hourly_trend": _compute_hourly_trend(history),
-    }
-
-
-def _compute_hourly_trend(history: list[dict]) -> list[dict]:
-    hourly: dict[int, float] = {}
-
-    for row in history:
-        h = row.get("hour")
-
-        if h is None:
-            tx_time = row.get("transaction_time")
-            if tx_time and hasattr(tx_time, "hour"):
-                h = tx_time.hour
-
-        if h is not None:
-            hourly[int(h)] = hourly.get(int(h), 0.0) + float(row.get("revenue", 0) or 0)
-
-    return [
-        {"hour": h, "revenue": round(rev, 2)}
-        for h, rev in sorted(hourly.items())
-    ]
-
-
-def compute_gap_metrics(
-    current_revenue: float,
-    daily_target: float,
-    forecast_end_of_day: float,
-) -> dict:
-    gap_amount = max(0.0, daily_target - current_revenue)
-    gap_percentage = (gap_amount / daily_target * 100) if daily_target > 0 else 0.0
-
-    remaining_gap = max(0.0, daily_target - forecast_end_of_day)
-    forecast_covers_gap = forecast_end_of_day >= daily_target
-
-    if gap_amount > 0:
-        coverage_pct = min(
-            100.0,
-            max(0.0, ((forecast_end_of_day - current_revenue) / gap_amount) * 100),
-        )
-    else:
-        coverage_pct = 100.0
-
-    return {
-        "gap_amount": round(gap_amount, 2),
-        "gap_percentage": round(gap_percentage, 2),
-        "forecast_covers_gap": forecast_covers_gap,
-        "remaining_gap_after_forecast": round(remaining_gap, 2),
-        "forecast_gap_coverage_pct": round(coverage_pct, 2),
-    }
-
-
-def compute_urgency(
-    gap_pct: float,
-    coverage_pct: float,
-    current_hour: int,
-    hours_remaining: float,
-    avg_ticket: float = 0.0,
-    nb_transactions: int = 0,
-) -> tuple[str, float]:
-    time_pressure = min(1.0, max(0.0, (current_hour - 8) / 12))
-    gap_score = min(1.0, gap_pct / 60.0)
-    coverage_penalty = max(0.0, (100 - coverage_pct) / 100) * 0.25
-
-    activity_risk = 0.0
-    if current_hour >= 10 and nb_transactions <= 2:
-        activity_risk = 0.15
-    elif current_hour >= 12 and nb_transactions <= 5:
-        activity_risk = 0.10
-
-    ticket_risk = 0.0
-    if avg_ticket > 0 and avg_ticket < 30 and gap_pct > 10:
-        ticket_risk = 0.10
-
-    urgency_score = min(
-        1.0,
-        gap_score * 0.40
-        + time_pressure * 0.25
-        + coverage_penalty
-        + activity_risk
-        + ticket_risk,
-    )
-
-    if gap_pct > 45 and coverage_pct < 70:
-        level = "CRITICAL"
-    elif gap_pct > 30 and coverage_pct < 85:
-        level = "HIGH"
-    elif gap_pct > 15 or hours_remaining < 3:
-        level = "MEDIUM"
-    else:
-        level = "LOW"
-
-    if hours_remaining < 2 and gap_pct > 10:
-        level = "HIGH" if level != "CRITICAL" else "CRITICAL"
-        urgency_score = max(urgency_score, 0.85)
-
-    return level, round(urgency_score, 3)
 
 
 def build_analyst_memory_payload(state: dict) -> dict:
