@@ -48,22 +48,39 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 ## 3bis. DecisionAgent inventaire — recommendation_text (LLM-as-judge)
 
 - **Cas évalués** : 15/15 (100.0%)
-- **Score juge global** : 4.13/5
+- **Score juge global** : 4.0/5
 
 | Critère (0–5) | Moyenne |
 |---|---|
-| clarte | 4.47 |
-| coherence | 4.4 |
-| completude | 4.27 |
-| actionabilite | 4.47 |
-| richesse | 4.07 |
-| ancrage | 4.13 |
+| clarte | 4.86 |
+| coherence | 5.0 |
+| completude | 4.71 |
+| actionabilite | 5.0 |
+| richesse | 4.43 |
+| ancrage | 4.0 |
 
 **Ancre `richesse`** (LLM vs fallback rule-based) :
 - `critical_stockout-02` — LLM=5 vs rule-based=5
-- `hold_overstock-01` — LLM=5 vs rule-based=4
+- `hold_overstock-01` — LLM=3 vs rule-based=4
 
 **Sanity checks du juge** :
+
+## 3ter. DecisionAgent inventaire — échantillon réel (LLM-as-judge)
+
+- **Cas réussis** : 3/3 (100.0%)
+- **Cas jugés** : 3/3 (exclut les cas dégradés en fallback rule-based ou où le juge était indisponible)
+- **Score juge global** : 5.0/5
+
+| Critère (0–5) | Moyenne |
+|---|---|
+| clarte | 5.0 |
+| coherence | 5.0 |
+| completude | 4.0 |
+| actionabilite | 5.0 |
+| richesse | 4.0 |
+| ancrage | 5.0 |
+
+_Échantillon réel, non-déterministe — à lire comme un instantané, pas comme un seuil de non-régression. Pas d'ancre `richesse`/`ancrage` ici : ces cas ne sont pas synthétiques, il n'y a pas de fallback rule-based ni de version corrompue à comparer pour le même cas._
 
 ## 4. Benchmark comparatif des modèles
 

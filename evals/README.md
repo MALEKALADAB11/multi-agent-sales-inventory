@@ -10,6 +10,7 @@ racine du repo, les clés API sont lues dans `.env`.
 | RAGAS | `python -m evals.run_ragas` | clé LLM + Milvus + Ollama (embeddings) | faithfulness, answer relevancy, context precision, context recall |
 | Coach E2E | `python -m evals.run_coach` | serveur lancé (`uvicorn app.main:app`) + clés LLM pour le juge | taux de réponse, latence p50/p95, checks déterministes, juge 0–5, hallucination |
 | Inventory Recs | `python -m evals.run_inventory_recommendations` | clés LLM (pas de serveur requis — decide_node appelé directement) | scores clarté/coherence/completude/actionabilite/richesse/ancrage |
+| Inventory Recs (échantillon réel) | `python -m evals.run_inventory_recommendations_live` | DB + orchestrateur inventaire + clés LLM, SKUs réels — **non-déterministe**, à lancer périodiquement, pas en CI | mêmes 6 critères que ci-dessus, sur des recommandations réelles au lieu du dataset figé |
 | Modèles | `python -m evals.run_models` | clés Mistral/Groq/OpenRouter | classement des modèles à prompt/contexte/juge constants |
 
 ### Benchmark modèles — protocole
@@ -57,6 +58,35 @@ python -m evals.report     # → evals/results/REPORT.md
   figé — tout chiffre absent du contexte est une hallucination par définition.
 - **Golden set par propriétés** (domaine, tokens, abstention) et non par
   doc_id : le corpus RAG est vivant, les IDs ne sont pas stables.
+
+## Inventory Recs — dataset figé vs échantillon réel
+
+`run_inventory_recommendations.py` (dataset figé, 15 scénarios synthétiques,
+déterministe, gate CI possible) et `run_inventory_recommendations_live.py`
+(échantillon de vrais SKU/store via `create_orchestrator`, non-déterministe,
+pas de gate CI) **partagent le même juge** (`judge_inventory_answer`,
+`INVENTORY_CRITERIA` dans `evals/judge.py`) — seule la source des
+recommandations change. Le premier répond à « le prompt gère-t-il toujours les
+cas connus ? », le second à « qu'est-ce que le système produit réellement en
+ce moment ? ».
+
+Différence d'accès : le premier appelle `create_decide_node()` directement
+avec un dict fait main (`baseline_report`/`context_report`/`adjusted_metrics`
+du dataset JSON) — aucune base de données touchée. Le second appelle
+`create_orchestrator(use_llm=True).analyze_sku(sku, store_id, ...)`, qui fait
+tourner les agents d'analyse et de contexte réels — ceux-ci interrogent la DB
+pour calculer ces mêmes rapports à partir de stock réel. C'est pour ça que le
+second a besoin d'un accès DB et le premier non.
+
+Lancer le second seulement une fois le juge validé via `--sanity-check` sur le
+premier — inutile de dépenser du quota LLM à juger des recommandations
+réelles avec un juge dont on n'a pas encore confirmé qu'il discrimine
+correctement.
+
+Échantillon défini en dur dans `SAMPLE_PAIRS` en tête de
+`run_inventory_recommendations_live.py` — à passer à une sélection dynamique
+(requête DB des SKU actifs) une fois cette version validée sur quelques cas
+connus.
 
 ## Voir les évaluations dans Langfuse
 
@@ -140,9 +170,14 @@ retriever, `run_ragas` pour la chaîne retriever + génération.
   `context_signal_cases`/`escalation_cases`/`edge_cases`) pour juger la
   `recommendation_text` du DecisionAgent ; `compare_fallback: true` marque les
   cas utilisés comme ancre `richesse` contre le fallback rule-based
+- `run_inventory_recommendations_live.py` — pas de dataset JSON, échantillon
+  défini dans `SAMPLE_PAIRS` (liste de `(sku, store_id)` réels) en tête du fichier
 
 ## Codes de sortie (CI)
 
 Chaque runner sort non-zéro sous un seuil défendable (guardrail < 90% accuracy,
 RAG hit@k < 80% ou abstention < 66%, coach < 90% de réponses) — branchable tel
-quel dans GitHub Actions.
+quel dans GitHub Actions. `run_inventory_recommendations_live` n'a volontairement
+pas de seuil de sortie CI : ses résultats varient avec les données réelles du
+jour, un seuil dur produirait des échecs CI qui ne reflètent rien de cassé côté
+code.

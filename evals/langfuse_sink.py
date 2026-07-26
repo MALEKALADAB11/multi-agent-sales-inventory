@@ -137,10 +137,18 @@ def push_models(summary: dict) -> int:
     return n
 
 
-def push_inventory_recommendations(summary: dict) -> int:
-    """Miroir de `push_coach` : un cas = une trace `eval-inventory_recommendations`,
-    chaque critère du juge inventaire (clarte/coherence/completude/actionabilite/
-    richesse/ancrage) devient un score `eval/<critere>`, normalisé [0,1]."""
+def push_inventory_recommendations(summary: dict, suite: str = "inventory_recommendations") -> int:
+    """Miroir de `push_coach` : un cas = une trace `eval-<suite>`, chaque critère
+    du juge inventaire (clarte/coherence/completude/actionabilite/richesse/
+    ancrage) devient un score `eval/<critere>`, normalisé [0,1].
+
+    `suite` est paramétrable pour réutiliser cette même fonction sur les deux
+    variantes de l'éval inventaire : le dataset synthétique fixe
+    ("inventory_recommendations") et l'échantillon réel
+    ("inventory_recommendations_live") — même juge, mêmes critères, seule la
+    source des recommandations change entre les deux, donc pas de raison de
+    dupliquer la logique de push.
+    """
     lf = get_langfuse()
     if not lf:
         return 0
@@ -156,10 +164,11 @@ def push_inventory_recommendations(summary: dict) -> int:
                       if c in judge}
             scores["judge_mean"] = judge["mean"] / 5
             comment = judge.get("verdict", "")
+        case_id = row.get("id") or f"{row.get('sku', '?')}@{row.get('store_id', '?')}"
         _push_case(
-            lf, "inventory_recommendations", run_id,
-            case_id=row["id"],
-            inp={"scenario": row["scenario"], "case_id": row["id"],
+            lf, suite, run_id,
+            case_id=case_id,
+            inp={"scenario": row.get("scenario") or case_id, "case_id": case_id,
                  "category": row.get("category")},
             out={"recommendation_text": (row.get("recommendation_text") or "")[:_TRUNC],
                  "action": row.get("action"), "verdict": comment[:_TRUNC]},
@@ -168,10 +177,11 @@ def push_inventory_recommendations(summary: dict) -> int:
             scores=scores, comment=comment,
         )
         n += 1
-    _push_summary(lf, "inventory_recommendations", run_id, {
+    _push_summary(lf, suite, run_id, {
         "success_rate": summary.get("success_rate"),
         "judge_global_mean_over5": summary.get("judge_global_mean"),
         "fallback_comparison": summary.get("fallback_comparison"),
+        "n_judged": summary.get("n_judged"),
     })
     lf.flush()
     return n
@@ -255,6 +265,8 @@ _PUSHERS = {
     "rag_retrieval":              lambda s: push_aggregate("rag", s),
     "ragas":                      push_ragas,
     "inventory_recommendations": push_inventory_recommendations,
+    "inventory_recommendations_live": lambda s: push_inventory_recommendations(
+        s, suite="inventory_recommendations_live"),
 }
 
 

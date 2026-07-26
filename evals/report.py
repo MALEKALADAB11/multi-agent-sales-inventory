@@ -134,6 +134,33 @@ def build() -> str:
                 lines.append(f"- {mark} ancrage — original={a['original_score']} vs corrompu={a['corrupted_score']}")
         lines.append("")
 
+    irl = _load("inventory_recommendations_live")
+    if irl:
+        n_judged = irl.get("n_judged", 0)
+        n_ok = irl.get("n_success", 0)
+        lines += [
+            "## 3ter. DecisionAgent inventaire — échantillon réel (LLM-as-judge)", "",
+            f"- **Cas réussis** : {n_ok}/{irl['n_cases']} ({_pct(irl.get('success_rate'))})",
+            f"- **Cas jugés** : {n_judged}/{n_ok} "
+            "(exclut les cas dégradés en fallback rule-based ou où le juge était indisponible)",
+        ]
+        if n_judged < n_ok:
+            lines.append(
+                f"  ⚠️ {n_ok - n_judged} cas réussis mais non jugés — voir `details` dans le JSON brut."
+            )
+        if irl.get("judge_global_mean") is not None:
+            lines += [
+                f"- **Score juge global** : {irl['judge_global_mean']}/5",
+                "", "| Critère (0–5) | Moyenne |", "|---|---|",
+            ]
+            for crit in INVENTORY_CRITERIA:
+                lines.append(f"| {crit} | {irl['judge_scores_mean'].get(crit)} |")
+        lines += ["",
+                  "_Échantillon réel, non-déterministe — à lire comme un instantané, pas comme un "
+                  "seuil de non-régression. Pas d'ancre `richesse`/`ancrage` ici : ces cas ne sont "
+                  "pas synthétiques, il n'y a pas de fallback rule-based ni de version corrompue à "
+                  "comparer pour le même cas._", ""]
+
     m = _load("model_benchmark")
     if m:
         w = m.get("weights", {})

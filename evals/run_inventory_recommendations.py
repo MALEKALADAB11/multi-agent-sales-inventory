@@ -3,7 +3,7 @@ run_inventory_recommendations.py — Éval LLM-as-judge du DecisionAgent inventa
 
 Appelle `create_decide_node` directement (pas le serveur, pas la base de
 données, pas `create_orchestrator`) : ce dernier va toujours chercher les
-données stock/produit réelles en base et n'a aucun moyen d'injecter un
+données stock/produit réelles en base et n'a aucun moyen d'injecter un²
 scénario synthétique. `create_decide_node` prend le state dict qu'on lui
 donne et exécute le même prompt de production (`DECIDE_SYSTEM`/`DECIDE_USER`)
 sans dépendance externe — c'est ce qui permet des scénarios figés et

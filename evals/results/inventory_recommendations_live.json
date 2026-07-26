@@ -1,0 +1,73 @@
+{
+  "suite": "inventory_recommendations_live",
+  "n_cases": 3,
+  "n_success": 3,
+  "n_judged": 3,
+  "success_rate": 1.0,
+  "judge_scores_mean": {
+    "clarte": 5.0,
+    "coherence": 5.0,
+    "completude": 4.0,
+    "actionabilite": 5.0,
+    "richesse": 4.0,
+    "ancrage": 5.0
+  },
+  "judge_global_mean": 5.0,
+  "details": [
+    {
+      "sku": "3025000",
+      "store_id": "I63",
+      "recommendation_text": "Il est nécessaire d'expédier 100 unités aujourd'hui pour éviter une rupture de stock, car le stock actuel est de 0 unité et le délai de livraison est de 10 jours. Le niveau de risque est critique et les jours de stock sont inférieurs au délai de livraison moyen. La quantité de commande est de 100 unités, correspondant au MOQ, bien que l'EOQ soit de 93,20 unités. L'expédition urgente entraînera des coûts supplémentaires, mais il est nécessaire pour maintenir le niveau de service et éviter une rupture de stock. Il y a une légère augmentation de la demande due aux offres Ooredoo, ce qui justifie une commande immédiate.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 4,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification solide pour l'expédition urgente de 100 unités.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "sku": "3200004",
+      "store_id": "I63",
+      "recommendation_text": "Il est nécessaire d'expédier immédiatement 152 unités aujourd'hui, car le stock est à zéro et le délai de livraison moyen est de 10 jours. La demande est en hausse de 6,0% en raison de deux offres Ooredoo actives, ce qui justifie cette quantité de commande. L'expédition immédiate entraînera un coût supplémentaire, mais cela est nécessaire pour éviter une rupture de stock et maintenir le niveau de service. Il est important de noter que le délai de livraison moyen est de 10 jours et que les jours de stock sont de 0 jour, ce qui nécessite une action immédiate pour éviter une rupture de stock.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 4,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification solide pour la quantité de 152 unités et l'urgence d'agir.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "sku": "5020591",
+      "store_id": "I14",
+      "recommendation_text": "Il est nécessaire d'expédier 20 unités dès que possible — le stock est déjà à zéro et le délai de livraison est de 10 jours, ce qui signifie que nous allons manquer de stock si nous ne prenons pas des mesures immédiates. Le signal de demande indique une augmentation de 15% due aux promotions en cours, ce qui renforce la nécessité d'agir rapidement pour maintenir le niveau de service. L'expédition urgente entraînera des coûts supplémentaires, mais cela est nécessaire pour éviter une rupture de stock et maintenir le niveau de service.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 4,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification solide des actions proposées.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    }
+  ],
+  "run_at": "2026-07-26T14:50:20"
+}

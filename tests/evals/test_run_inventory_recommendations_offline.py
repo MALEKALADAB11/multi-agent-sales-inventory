@@ -1,5 +1,5 @@
 """
-evals/tests/test_run_inventory_recommendations_offline.py
+tests/evals/test_run_inventory_recommendations_offline.py
 ===========================================================
 Test de câblage hors-ligne pour run_inventory_recommendations.py.
 
@@ -22,8 +22,9 @@ secrets/API (CI, sandbox local) ne peut pas atteindre :
      fait chuter `richesse`. Assez pour vérifier que le SCRIPT réagit
      correctement à ces deux critères, sans vérifier la qualité du vrai juge.
 
-Lancer :  python -m pytest tests/test_run_inventory_recommendations_offline.py -q
-      ou : python tests/test_run_inventory_recommendations_offline.py
+Lancer depuis la racine du repo :
+    python -m pytest tests/evals/test_run_inventory_recommendations_offline.py -q
+    ou : python tests/evals/test_run_inventory_recommendations_offline.py
 """
 from __future__ import annotations
 
@@ -31,6 +32,18 @@ import re
 import sys
 import types
 import unittest
+from pathlib import Path
+
+# evals/ et tests/ sont tous deux à la racine du repo, et ce fichier est
+# maintenant à tests/evals/ (deux niveaux sous la racine) — sans ce bootstrap,
+# `from evals import ...` ne se résout que si le fichier est lancé via
+# `python -m pytest` depuis la racine (qui préfixe automatiquement le cwd à
+# sys.path). Lancé directement (`python tests/evals/test_x.py`) ou via un
+# runner qui n'utilise pas `-m`, Python n'ajoute que le dossier du script
+# (tests/evals/) à sys.path, pas la racine — `evals` resterait introuvable.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _install_fake_app_modules():
