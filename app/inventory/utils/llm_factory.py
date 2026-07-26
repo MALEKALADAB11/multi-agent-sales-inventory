@@ -7,7 +7,6 @@ Fournisseurs supportés :
   groq         — inference ultra-rapide (Llama 3.3 70B)
   ollama       — modèles locaux (pas d'API key)
   openai       — GPT-4o
-  anthropic    — Claude direct
 
 Sélection tiérée OpenRouter (role= param) :
   "fast"     → gemini-flash-1.5         — analyse, contexte, signals
@@ -46,7 +45,7 @@ def get_llm(
     Factory LLM centralisée.
 
     Args:
-        provider:    "openrouter" | "groq" | "ollama" | "openai" | "anthropic"
+        provider:    "openrouter" | "groq" | "ollama" | "openai"
                      Si None → lit LLM_PROVIDER depuis .env
         temperature: 0.0-1.0. Si None → lit LLM_TEMPERATURE depuis .env
         model:       Nom du modèle. Si None → défaut du provider
@@ -210,30 +209,10 @@ def get_llm(
             **kwargs,
         )
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # ANTHROPIC
-    # ══════════════════════════════════════════════════════════════════════════
-    elif provider == "anthropic":
-        try:
-            from langchain_anthropic import ChatAnthropic
-        except ImportError:
-            raise ImportError("langchain-anthropic requis: pip install langchain-anthropic")
-
-        resolved_key = api_key or settings.anthropic_api_key
-        if not resolved_key:
-            raise ValueError("ANTHROPIC_API_KEY manquante dans .env")
-
-        return ChatAnthropic(
-            api_key=resolved_key,
-            model=model or settings.anthropic_model,
-            temperature=temperature,
-            **kwargs,
-        )
-
     else:
         raise ValueError(
             f"Provider '{provider}' non supporté. "
-            "Valeurs valides: mistral, openrouter, groq, ollama, openai, anthropic"
+            "Valeurs valides: mistral, openrouter, groq, ollama, openai"
         )
 
 
@@ -245,16 +224,25 @@ def get_llm(
 _groq_multikey_cls = None
 
 
-def _rotatable_groq_error(exc: Exception) -> bool:
-    """Erreur qui justifie d'essayer la clé Groq suivante (quota/limite/clé)."""
+def _rotatable_llm_error(exc: Exception) -> bool:
+    """Erreur qui justifie de basculer sur la clé/provider suivant (quota/
+    limite/clé/indisponibilité). Utilisé pour la rotation de clés Groq ET
+    pour la chaîne de secours inter-fournisseurs (OpenRouter → Groq → Ollama).
+    """
     status = getattr(exc, "status_code", None)
-    if status in (401, 403, 413, 429, 498, 499):
+    if status in (401, 403, 413, 429, 498, 499, 500, 502, 503, 504):
         return True
     msg = str(exc).lower()
     return any(t in msg for t in (
         "rate limit", "rate_limit", "quota", "invalid api key",
         "over capacity", "insufficient", "too many requests",
+        "connection", "timeout", "unreachable", "refused",
+        "unavailable", "temporarily",
     ))
+
+
+# Backward-compat alias (Groq-specific code below still calls this name).
+_rotatable_groq_error = _rotatable_llm_error
 
 
 def _get_groq_multikey_cls():
@@ -394,33 +382,185 @@ def _build_groq_multikey(keys: list, model: str, temperature: float, **kwargs) -
     return primary
 
 
-# ── Helpers tiérés — utilisés directement par les agents ─────────────────────
-# Providers avec sélection de modèle par rôle (fast/smart/guardian)
-_TIERED_PROVIDERS = ("openrouter", "mistral")
+# ── Chaîne de secours inter-fournisseurs ──────────────────────────────────────
+# PRIMARY: OpenRouter → SECONDARY: Groq (4-clés) → FINAL: Ollama (local).
+# Mistral est volontairement EXCLU de cette chaîne : il est réservé au rôle
+# "guardian" (évaluation), et Ollama est trop faible pour ce rôle-là (voir
+# get_guardian_llm ci-dessous) — donc pas de croisement des deux.
+_FALLBACK_CHAIN_PROVIDERS = ("openrouter", "groq", "ollama")
 
+
+def _get_fallback_wrapper_cls():
+    """Construit paresseusement la classe wrapper (évite d'importer pydantic
+    PrivateAttr au chargement du module si elle n'est jamais utilisée)."""
+    global _fallback_wrapper_cls
+    if _fallback_wrapper_cls is not None:
+        return _fallback_wrapper_cls
+
+    from pydantic import PrivateAttr
+
+    class ChatWithProviderFallback(BaseChatModel):
+        """Enchaîne plusieurs BaseChatModel (fournisseurs différents) : si le
+        premier échoue avec une erreur de quota/rate-limit/indisponibilité,
+        on essaie le suivant dans l'ordre, jusqu'à épuisement de la chaîne.
+        """
+
+        _chain: list = PrivateAttr(default_factory=list)  # [(name, BaseChatModel), ...]
+
+        model_config = {"arbitrary_types_allowed": True}
+
+        @property
+        def _llm_type(self) -> str:
+            return "provider-fallback-chain"
+
+        def _generate(self, *args, **kwargs):
+            last = None
+            for name, model in self._chain:
+                try:
+                    return model._generate(*args, **kwargs)
+                except Exception as e:
+                    if not _rotatable_llm_error(e):
+                        raise
+                    logger.warning(
+                        "[LLMFactory] %s indisponible (%.100s) → bascule sur le provider suivant",
+                        name, str(e),
+                    )
+                    last = e
+            raise last
+
+        async def _agenerate(self, *args, **kwargs):
+            last = None
+            for name, model in self._chain:
+                try:
+                    return await model._agenerate(*args, **kwargs)
+                except Exception as e:
+                    if not _rotatable_llm_error(e):
+                        raise
+                    logger.warning(
+                        "[LLMFactory] %s indisponible (%.100s) → bascule sur le provider suivant",
+                        name, str(e),
+                    )
+                    last = e
+            raise last
+
+        def _stream(self, *args, **kwargs):
+            last = None
+            for name, model in self._chain:
+                yielded = False
+                try:
+                    for chunk in model._stream(*args, **kwargs):
+                        yielded = True
+                        yield chunk
+                    return
+                except Exception as e:
+                    if yielded or not _rotatable_llm_error(e):
+                        raise
+                    logger.warning(
+                        "[LLMFactory] %s indisponible en stream (%.100s) → bascule",
+                        name, str(e),
+                    )
+                    last = e
+            raise last
+
+        async def _astream(self, *args, **kwargs):
+            last = None
+            for name, model in self._chain:
+                yielded = False
+                try:
+                    async for chunk in model._astream(*args, **kwargs):
+                        yielded = True
+                        yield chunk
+                    return
+                except Exception as e:
+                    if yielded or not _rotatable_llm_error(e):
+                        raise
+                    logger.warning(
+                        "[LLMFactory] %s indisponible en stream (%.100s) → bascule",
+                        name, str(e),
+                    )
+                    last = e
+            raise last
+
+    _fallback_wrapper_cls = ChatWithProviderFallback
+    return ChatWithProviderFallback
+
+
+_fallback_wrapper_cls = None
+
+
+def get_llm_with_fallback(
+    role:        Optional[LLMRole] = None,
+    temperature: Optional[float]   = None,
+    **kwargs,
+) -> BaseChatModel:
+    """
+    LLM tiéré (fast/smart) avec bascule automatique inter-fournisseurs :
+      1. OpenRouter (primaire — modèles tiérés)
+      2. Groq       (secondaire — rotation 4 clés déjà en place)
+      3. Ollama     (dernier recours local — pas de clé API requise)
+
+    Chaque provider manquant une clé/import est simplement ignoré à la
+    construction (log warning). Au runtime, une erreur de quota/rate-limit/
+    indisponibilité sur le provider actif fait basculer sur le suivant.
+
+    N'utilise PAS Mistral : Mistral est réservé au rôle "guardian" (évaluation),
+    voir get_guardian_llm().
+    """
+    chain: list = []
+    for name in _FALLBACK_CHAIN_PROVIDERS:
+        try:
+            model = get_llm(provider=name, role=role, temperature=temperature, **kwargs)
+            chain.append((name, model))
+        except Exception as e:
+            logger.warning(
+                "[LLMFactory] %s non disponible pour la chaîne de secours (%s) — ignoré",
+                name, e,
+            )
+
+    if not chain:
+        raise ValueError(
+            "Aucun provider LLM disponible pour la chaîne de secours "
+            "(openrouter/groq/ollama) — vérifier les clés API dans .env"
+        )
+
+    if len(chain) == 1:
+        # Un seul provider dispo (ex: dev local avec seulement Ollama) —
+        # pas besoin du wrapper, on retourne le client directement.
+        return chain[0][1]
+
+    wrapper_cls = _get_fallback_wrapper_cls()
+    wrapper = wrapper_cls()
+    wrapper._chain = chain
+    logger.info(
+        "[LLMFactory] Chaîne de secours active (role=%s): %s",
+        role, " → ".join(name for name, _ in chain),
+    )
+    return wrapper
+
+
+# ── Helpers tiérés — utilisés directement par les agents ─────────────────────
 
 def get_fast_llm(**kwargs) -> BaseChatModel:
-    """LLM FAST — pour analyse/contexte/signals (rapide, économique)."""
-    from app.inventory.config.settings import settings
-    if settings.llm_provider in _TIERED_PROVIDERS:
-        return get_llm(provider=settings.llm_provider, role="fast", **kwargs)
-    return get_llm(**kwargs)
+    """LLM FAST — analyse/contexte/signals. Chaîne: OpenRouter → Groq → Ollama."""
+    return get_llm_with_fallback(role="fast", **kwargs)
 
 
 def get_smart_llm(**kwargs) -> BaseChatModel:
-    """LLM SMART — pour décision/coach/synthèse (précis, raisonnement fort)."""
-    from app.inventory.config.settings import settings
-    if settings.llm_provider in _TIERED_PROVIDERS:
-        return get_llm(provider=settings.llm_provider, role="smart", **kwargs)
-    return get_llm(**kwargs)
+    """LLM SMART — décision/coach/synthèse. Chaîne: OpenRouter → Groq → Ollama."""
+    return get_llm_with_fallback(role="smart", **kwargs)
 
 
 def get_guardian_llm(**kwargs) -> BaseChatModel:
-    """LLM GUARDIAN — pour guardrail/critique/validation (fiable, structuré)."""
-    from app.inventory.config.settings import settings
-    if settings.llm_provider in _TIERED_PROVIDERS:
-        return get_llm(provider=settings.llm_provider, role="guardian", **kwargs)
-    return get_llm(**kwargs)
+    """
+    LLM GUARDIAN — guardrail/critique/évaluation. Route DIRECTEMENT vers
+    Mistral, sans passer par la chaîne de secours OpenRouter→Groq→Ollama.
+
+    Choix produit : Ollama (modèle local léger) n'est pas assez fiable pour
+    ce rôle d'évaluation/validation — on préfère échouer proprement (ou que
+    l'appelant gère l'exception) plutôt que de laisser un modèle faible
+    valider silencieusement une décision critique.
+    """
+    return get_llm(provider="mistral", role="guardian", **kwargs)
 
 
 # ── Backward compat ───────────────────────────────────────────────────────────

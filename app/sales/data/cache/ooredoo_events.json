@@ -9,7 +9,7 @@
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-25T17:13:33.621848"
+      "date": "2026-07-26T15:47:41.774454"
     },
     {
       "title": "[Go Back]",
@@ -19,7 +19,7 @@
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-25T17:13:37.447671"
+      "date": "2026-07-26T15:47:44.611095"
     }
   ],
   "active": [
@@ -31,7 +31,7 @@
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-25T17:13:33.621848"
+      "date": "2026-07-26T15:47:41.774454"
     },
     {
       "title": "[Go Back]",
@@ -41,7 +41,7 @@
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-25T17:13:37.447671"
+      "date": "2026-07-26T15:47:44.611095"
     }
   ],
   "promotions": [
@@ -53,7 +53,7 @@
       "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-25T17:13:33.621848"
+      "date": "2026-07-26T15:47:41.774454"
     }
   ],
   "new_offers": [],
@@ -66,9 +66,9 @@
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-25T17:13:37.447671"
+      "date": "2026-07-26T15:47:44.611095"
     }
   ],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-25T17:13:49.498840"
+  "fetched_at": "2026-07-26T15:47:48.076757"
 }

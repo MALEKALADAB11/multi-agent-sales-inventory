@@ -557,20 +557,28 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
 def get_orchestrator():
     global _orchestrator
     if _orchestrator is None:
-        # NOTE: use_llm=False here — despite the historical comment this used
-        # to carry ("Force LLM enabled"), this orchestrator is NOT using an
-        # LLM. It is currently identical to get_orchestrator_fast() below.
-        # fast=True/False on GET /store/{store_id} therefore has NO effect on
-        # speed today. If you want a genuinely LLM-backed "slow" path for
-        # single-SKU analysis (POST /analyze), change this to use_llm=True —
-        # but note that will add real LLM latency to that endpoint.
-        _orchestrator = create_orchestrator(use_llm=False)
+        # FIXED (was use_llm=False — see git history): this orchestrator is
+        # the genuinely LLM-backed one. It's used by:
+        #   - POST /analyze                    (single-SKU on-demand deep dive)
+        #   - analyze_store(..., fast=False)    (opt-in full-LLM batch run)
+        # Real LLM latency applies here (analysis + context agents on the
+        # "fast" tier, decision agent on the "smart" tier, with the
+        # OpenRouter → Groq → Ollama fallback chain in llm_factory.py).
+        # get_orchestrator_fast() below stays rule-based for the default
+        # batch/dashboard load and WS broadcasts, where instant response
+        # matters more than per-SKU reasoning depth.
+        _orchestrator = create_orchestrator(use_llm=True)
     return _orchestrator
 
 
 def get_orchestrator_fast():
     global _orchestrator_fast
     if _orchestrator_fast is None:
+        # Intentionally rule-based: this is the default path for the store
+        # dashboard (100+ SKUs) and WS broadcasts, where an instant response
+        # matters more than per-SKU LLM reasoning. Pass fast=False on the
+        # batch endpoint (see analyze_store) to opt into the full-LLM
+        # orchestrator above instead.
         _orchestrator_fast = create_orchestrator(use_llm=False)
     return _orchestrator_fast
 
@@ -1402,7 +1410,14 @@ async def ws_inventory(
                         None,
                         lambda: analyze_store(
                             store_id, business_objective,
-                            force_refresh=False, fast=False,
+                            # fast=True (was False): this is the automatic
+                            # cold-cache warm-up for the dashboard, not an
+                            # explicit request for full-LLM analysis. Now that
+                            # get_orchestrator() is genuinely LLM-backed (see
+                            # get_orchestrator() above), fast=False here would
+                            # have silently turned every cold dashboard load
+                            # into a 100+ SKU x 3-agent LLM run.
+                            force_refresh=False, fast=True,
                             page=1, page_size=0,
                         ),
                     )
