@@ -31,7 +31,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:admin@localhost:5432/ooredoo_sales")
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:root@localhost:5432/ooredoo_sales")
 UA     = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
           "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
 

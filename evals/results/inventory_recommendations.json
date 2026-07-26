@@ -1,0 +1,275 @@
+{
+  "suite": "inventory_recommendations",
+  "n_cases": 15,
+  "n_success": 15,
+  "success_rate": 1.0,
+  "judge_scores_mean": {
+    "clarte": 4.86,
+    "coherence": 5.0,
+    "completude": 4.71,
+    "actionabilite": 5.0,
+    "richesse": 4.43,
+    "ancrage": 4.0
+  },
+  "judge_global_mean": 4.0,
+  "fallback_comparison": [
+    {
+      "case_id": "critical_stockout-02",
+      "llm_richesse": 5,
+      "rule_based_richesse": 5
+    },
+    {
+      "case_id": "hold_overstock-01",
+      "llm_richesse": 3,
+      "rule_based_richesse": 4
+    }
+  ],
+  "details": [
+    {
+      "id": "critical_stockout-01",
+      "category": "critical_stockout",
+      "scenario": "Risque CRITICAL, 2 jours de stock restants, délai de livraison standard de 10 jours — rupture garantie avant l'arrivée d'une commande normale. Doit produire EXPEDITE, pas ORDER.",
+      "recommendation_text": "Commander 45 unités en urgence aujourd'hui — le stock tombe à zéro dans 2 jours et le délai de livraison standard de 10 jours ne suffira pas à couvrir la demande restante. Le risque de rupture de stock est critique et nécessite une action immédiate. Aucun signal de demande détecté cette semaine, l'estimation de la demande reste au niveau de base. L'expédition d'urgence implique un coût supplémentaire, mais il est nécessaire pour éviter une rupture de stock.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, l'action EXPEDITE est clairement justifiée par la comparaison des 2 jours de stock restants vs le délai de 10 jours, et le ton est direct et cohérent avec le risque CRITICAL.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "critical_stockout-02",
+      "category": "critical_stockout",
+      "scenario": "Risque CRITICAL, 3 jours de stock, coût de réapprovisionnement élevé (>50000 DT) — doit escalader en plus d'EXPEDITE. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
+      "recommendation_text": "Il est nécessaire d'expédier 400 unités aujourd'hui — le stock tombe à zéro dans 3 jours et le délai de livraison est de 14 jours. Le coût élevé de la commande est accepté pour éviter une rupture de stock et maintenir le niveau de service. Aucun signal de demande détecté cette semaine, l'estimation de la demande reste au niveau de base. L'analyste a noté que le coût élevé est justifié pour éviter une rupture de stock et maintenir le niveau de service.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 3,
+        "mean": 3.0,
+        "verdict": "La recommandation est claire, cohérente et actionnable, mais cite un seuil de coût (>50 000 DT) non vérifié dans le scénario (le coût réel est de 62 000 DT).",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "normal_reorder-01",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 12 jours de stock, délai de 7 jours — le formulaire d'ORDER standard peut encore arriver à temps.",
+      "recommendation_text": "Commander 80 unités cette semaine — le stock tombe sous le point de commande et le délai de livraison est encore couvert. Les 12 jours de stock restants sont insuffisants pour couvrir la demande et il est nécessaire de commander pour éviter une rupture de stock. Aucun signal de demande détecté cette semaine, l'estimation de la demande reste au niveau de base. Le coût de la commande est de 4200 DT, ce qui est acceptable pour maintenir le niveau de stock souhaité.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et des chiffres vérifiés.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "normal_reorder-02",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 9 jours de stock, délai de 6 jours, objectif cost_savings — la quantité devrait tendre vers l'EOQ.",
+      "recommendation_text": "Commander 150 unités cette semaine — le stock tombe en dessous du point de commande et les 9 jours de stock restants sont proches du délai de livraison moyen de 6 jours. La marge de sécurité est correcte, mais il est important de noter que l'objectif de cost_savings peut entraîner une marge de sécurité plus fine. Aucun signal de demande détecté cette semaine, l'estimation de la demande reste au niveau de base.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "monitor_situations-01",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM, stock proche du point de commande mais pas encore franchi — MONITOR, pas ORDER.",
+      "recommendation_text": "Il n’est pas nécessaire de passer une commande pour le moment — le stock est proche du point de commande, mais pas encore franchi. Le délai de livraison moyen est de 8 jours et les jours de stock sont de 22,0 jours, ce qui laisse suffisamment de temps pour réapprovisionner si nécessaire. Aucun signal de demande n’a été détecté cette semaine, donc l’estimation de la demande reste au niveau de base.",
+      "action": "MONITOR",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "monitor_situations-02",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM avec un signal de demande à confiance moyenne — MONITOR mais la rationale doit noter le signal sans le sur-pondérer.",
+      "recommendation_text": "Il n'est pas nécessaire de passer une commande pour le moment — le stock est encore au-dessus du point de commande et les jours de stock sont de 15,0 jours. Une promotion chez un concurrent proche pourrait légèrement augmenter la demande, mais la confiance dans ce signal est moyenne. Il est préférable de surveiller la situation et de réévaluer la commande dans quelques jours.",
+      "action": "MONITOR",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "hold_overstock-01",
+      "category": "hold_overstock",
+      "scenario": "Surstock signalé — HOLD, l'ajout de stock augmenterait les coûts sans bénéfice. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
+      "recommendation_text": "Il n'y a pas besoin de passer une commande pour le moment, car le stock est nettement au-dessus du seuil maximal recommandé et le niveau de risque est faible. Le coût de stockage est plus élevé en raison du stock excédentaire, mais cela n'a pas d'impact sur la décision. Aucune promotion ou événement n'est prévu cette semaine, l'estimation de la demande reste donc au niveau de base.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 4,
+        "coherence": 5,
+        "completude": 3,
+        "actionabilite": 5,
+        "richesse": 3,
+        "ancrage": 2,
+        "mean": 2.0,
+        "verdict": "Le chiffre '140 jours de stock' n'est pas cité dans la recommandation alors qu'il est central pour justifier le surstock, et 'seuil maximal recommandé' n'est pas explicitement défini dans le scénario, ce qui affaiblit l'ancrage.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "hold_overstock-02",
+      "category": "hold_overstock",
+      "scenario": "Risque LOW, demande quasi nulle (sentinelle 999 jours) — HOLD sans surstock formel, cas limite pour la formulation des jours.",
+      "recommendation_text": "Il n'y a pas besoin de passer de commande pour le moment — le stock est largement suffisant et le niveau de risque est faible. Le délai de livraison moyen est de 12 jours, mais les jours de stock sont très élevés, il n'y a donc pas de pression pour agir rapidement. Aucune promotion ou événement n'est prévu cette semaine, l'estimation de la demande reste au niveau de base, sans pression à la hausse.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et une action concrète (HOLD). La richesse est légèrement limitée par l'absence de mention explicite des 999 jours de stock, mais cela reste conforme aux comportements attendus.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "context_signal_cases-01",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande à haute confiance qui fait basculer la couverture ajustée sous le point de commande — ORDER motivé par le contexte, pas seulement la formule de base.",
+      "recommendation_text": "Commander 95 unités dès que possible — le festival ce week-end devrait augmenter la demande et le stock actuel ne suffit pas pour répondre à cette demande accrue. Le délai de livraison moyen de 9 jours nous oblige à agir rapidement pour éviter une rupture de stock. Le coût de la commande est plus élevé, mais il est justifié par la nécessité de maintenir un niveau de service élevé. Le signal de demande élevé et la confiance haute dans ce signal nous permettent de prendre cette décision avec assurance.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification solide liant l'événement local à la quantité ajustée (95 unités). La richesse est légèrement limitée par l'absence de comparaison explicite entre les 20 jours initiaux et les 11 jours ajustés, bien que le raisonnement reste complet.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "context_signal_cases-02",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande non-nul mais à faible confiance — la décision doit utiliser les métriques ajustées tout en abaissant la confiance de la décision.",
+      "recommendation_text": "Commander 47 unités cette semaine — le stock tombe à un niveau critique dans 13 jours et le délai de livraison est de 8 jours. La rumeur d'une campagne réseaux sociaux locale existe mais n'est pas confirmée, ce qui rend le signal de demande incertain. Il est important de passer commande pour maintenir le niveau de stock, même si la confiance dans le signal de demande est faible. L'acceptation d'un coût légèrement plus élevé pour la commande est un compromis nécessaire pour éviter une rupture de stock.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "context_signal_cases-03",
+      "category": "context_signal_cases",
+      "scenario": "Aucun signal détecté (uplift=0, confidence=low) — décision basée uniquement sur les maths de stock, confiance ne doit PAS être abaissée à cause de l'absence de signal.",
+      "recommendation_text": "Commander 70 unités aujourd'hui — le stock tombe à zéro dans 4 jours et le délai de livraison est de 5 jours. Le niveau de risque est critique et il est essentiel de réapprovisionner le stock pour éviter une rupture de stock. Aucune promotion ou événement cette semaine — l'estimation de la demande reste au niveau de base, sans pression à la hausse. L'opérateur doit agir rapidement pour maintenir un niveau de service adéquat.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "escalation_cases-01",
+      "category": "escalation_cases",
+      "scenario": "ORDER dont le coût dépasse 50 000 DT — doit escalader au manager en plus de recommander la commande.",
+      "recommendation_text": "Commander 60 unités cette semaine — le stock tombe en dessous du point de commande et le délai de livraison moyen est de 10 jours. Le coût de la commande est élevé, mais il est nécessaire pour maintenir un niveau de service acceptable. Aucun signal de demande détecté cette semaine, l'estimation de la demande reste au niveau de base. La commande doit être passée rapidement pour éviter une rupture de stock.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "escalation_cases-02",
+      "category": "escalation_cases",
+      "scenario": "Produit en fin de vie (end_of_life) avec risque CRITICAL — doit escalader pour vérifier l'écoulement intentionnel avant de commander.",
+      "recommendation_text": "Il est recommandé de passer commande de 25 unités pour éviter les ruptures de stock et maintenir la continuité de l'approvisionnement",
+      "action": "ORDER",
+      "reasoning_source": "llm_revised_after_critique",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "edge_cases-01",
+      "category": "edge_cases",
+      "scenario": "Conflit d'objectif (objectif_conflict=true) avec coût élevé — vaut une escalade et une phrase dédiée, sans changer l'action.",
+      "recommendation_text": "Il est nécessaire d'expédier 200 unités d'urgence aujourd'hui, car le stock tombe à zéro dans 7 jours et le délai de livraison est de 9 jours. Le seul fournisseur disponible dans les délais facture un tarif express supérieur au budget cost_savings, mais cela est nécessaire pour éviter une rupture de stock. L'objectif de cost_savings est en conflit avec le seul chemin de réapprovisionnement disponible, ce qui nécessite une escalade vers un gestionnaire pour prendre une décision éclairée.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "HTTP 429: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day\",\"code\":429,\"metadata\":{\"headers\":{\"X-RateLimit-Limit\":\"50\",\"X-RateLimit-Remain"
+      }
+    },
+    {
+      "id": "edge_cases-02",
+      "category": "edge_cases",
+      "scenario": "MOQ contraignant : la quantité formule est inférieure au MOQ, l'analyste suggère de négocier — la quantité commandée doit être le MOQ, avec la déviation notée.",
+      "recommendation_text": "Commander 50 unités aujourd'hui — le stock tombe sous le point de commande et le délai de livraison est de 7 jours. Le MOQ fournisseur est de 50 unités, ce qui est largement supérieur au besoin réel, mais il est nécessaire de respecter ce minimum pour obtenir une livraison. Aucun signal de demande détecté cette semaine, l'estimation de la demande reste au niveau de base. Il est nécessaire de commander pour éviter une rupture de stock, mais il serait judicieux d'envisager de négocier une quantité minimale plus basse avec ce fournisseur pour réduire les coûts.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 3,
+        "mean": 3.0,
+        "verdict": "La recommandation est claire, cohérente et actionnable, mais mentionne des chiffres non vérifiés (point de commande à 25 et quantité formule à 12) sans lien direct avec l'action proposée, ce qui affecte légèrement l'ancrage.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    }
+  ],
+  "sanity_checks": {
+    "richesse": null,
+    "ancrage": null
+  },
+  "determinism_check": {
+    "case_id": "critical_stockout-01",
+    "stable": null,
+    "reason": "moins de 2 juges disponibles pour comparer"
+  },
+  "run_at": "2026-07-26T11:07:40"
+}

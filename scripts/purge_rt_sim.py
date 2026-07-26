@@ -12,7 +12,7 @@ STORE = 'I63'
 
 async def main():
     c = await asyncpg.connect(host='localhost', database='ooredoo_sales',
-                              user='postgres', password='admin')
+                              user='postgres', password='root')
     async with c.transaction():
         restored = await c.execute("""
             UPDATE inventory.stock_levels sl

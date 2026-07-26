@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from evals.common import RESULTS_DIR
-from evals.judge import CRITERIA
+from evals.judge import CRITERIA, INVENTORY_CRITERIA
 
 
 def _load(name: str) -> dict | None:
@@ -98,6 +98,40 @@ def build() -> str:
             ]
             for crit in CRITERIA:
                 lines.append(f"| {crit} | {c['judge_scores_mean'].get(crit)} |")
+        lines.append("")
+
+    ir = _load("inventory_recommendations")
+    if ir:
+        lines += [
+            "## 3bis. DecisionAgent inventaire — recommendation_text (LLM-as-judge)", "",
+            f"- **Cas évalués** : {ir['n_success']}/{ir['n_cases']} "
+            f"({_pct(ir['success_rate'])})",
+        ]
+        if ir.get("judge_global_mean") is not None:
+            lines += [
+                f"- **Score juge global** : {ir['judge_global_mean']}/5",
+                "", "| Critère (0–5) | Moyenne |", "|---|---|",
+            ]
+            for crit in INVENTORY_CRITERIA:
+                lines.append(f"| {crit} | {ir['judge_scores_mean'].get(crit)} |")
+        if ir.get("fallback_comparison"):
+            lines += ["", "**Ancre `richesse`** (LLM vs fallback rule-based) :"]
+            for comp in ir["fallback_comparison"]:
+                lines.append(
+                    f"- `{comp['case_id']}` — LLM={comp['llm_richesse']} "
+                    f"vs rule-based={comp['rule_based_richesse']}"
+                )
+        sanity = ir.get("sanity_checks")
+        if sanity:
+            lines += ["", "**Sanity checks du juge** :"]
+            r = sanity.get("richesse")
+            if r:
+                mark = "✅" if r.get("discriminates") else "⚠️"
+                lines.append(f"- {mark} richesse — LLM={r['llm_score']} vs rule-based={r['rule_based_score']}")
+            a = sanity.get("ancrage")
+            if a:
+                mark = "✅" if a.get("discriminates") else "⚠️"
+                lines.append(f"- {mark} ancrage — original={a['original_score']} vs corrompu={a['corrupted_score']}")
         lines.append("")
 
     m = _load("model_benchmark")

@@ -9,6 +9,7 @@ racine du repo, les clés API sont lues dans `.env`.
 | RAG retrieval | `python -m evals.run_rag` | Milvus ou fallback corpus | hit@k, MRR, token recall, pureté, **abstention** |
 | RAGAS | `python -m evals.run_ragas` | clé LLM + Milvus + Ollama (embeddings) | faithfulness, answer relevancy, context precision, context recall |
 | Coach E2E | `python -m evals.run_coach` | serveur lancé (`uvicorn app.main:app`) + clés LLM pour le juge | taux de réponse, latence p50/p95, checks déterministes, juge 0–5, hallucination |
+| Inventory Recs | `python -m evals.run_inventory_recommendations` | clés LLM (pas de serveur requis — decide_node appelé directement) | scores clarté/coherence/completude/actionabilite/richesse/ancrage |
 | Modèles | `python -m evals.run_models` | clés Mistral/Groq/OpenRouter | classement des modèles à prompt/contexte/juge constants |
 
 ### Benchmark modèles — protocole
@@ -133,6 +134,12 @@ retriever, `run_ragas` pour la chaîne retriever + génération.
 - Golden set retrieval : `app/sales/data/rag/evaluation/golden_set.py`
 - `datasets/ragas_qa.json` — requêtes RAGAS (`question` + `reference`, la réponse
   idéale servant au `context_recall`)
+- `datasets/inventory_recommendations.json` — scénarios stock/demande figés
+  (`baseline_report` + `context_report` + `adjusted_metrics`, catégories
+  `critical_stockout`/`normal_reorder`/`monitor_situations`/`hold_overstock`/
+  `context_signal_cases`/`escalation_cases`/`edge_cases`) pour juger la
+  `recommendation_text` du DecisionAgent ; `compare_fallback: true` marque les
+  cas utilisés comme ancre `richesse` contre le fallback rule-based
 
 ## Codes de sortie (CI)
 

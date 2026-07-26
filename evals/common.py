@@ -53,6 +53,11 @@ class Provider:
 
 def _groq_keys() -> list[str]:
     keys = [os.getenv("GROQ_API_KEY") or ""] + (os.getenv("GROQ_API_KEYS") or "").split(",")
+    # Also check numbered keys (GROQ_API_KEY_1..4) like the main app does
+    for i in range(1, 10):
+        key = os.getenv(f"GROQ_API_KEY_{i}") or ""
+        if key.strip():
+            keys.append(key)
     return [k.strip() for k in keys if k.strip()]
 
 

@@ -198,7 +198,7 @@ class CircuitBreaker:
             "agent":               self.agent_name,
             "state":               self._state.value,
             "consecutive_failures":self._stats.consecutive_failures,
-            "total_calls":         self._stats.total_calls,
+            "total_calls":         self._stats.total_calls, 
             "total_failures":      self._stats.total_failures,
             "total_successes":     self._stats.total_successes,
             "time_until_retry":    self._time_until_half_open() if self.is_open() else 0.0,

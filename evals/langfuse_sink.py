@@ -137,6 +137,46 @@ def push_models(summary: dict) -> int:
     return n
 
 
+def push_inventory_recommendations(summary: dict) -> int:
+    """Miroir de `push_coach` : un cas = une trace `eval-inventory_recommendations`,
+    chaque critère du juge inventaire (clarte/coherence/completude/actionabilite/
+    richesse/ancrage) devient un score `eval/<critere>`, normalisé [0,1]."""
+    lf = get_langfuse()
+    if not lf:
+        return 0
+    run_id = _run_id(summary)
+    n = 0
+    for row in summary.get("details", []):
+        judge = row.get("judge") or {}
+        scores: dict[str, float] = {}
+        comment = ""
+        if "mean" in judge:
+            scores = {c: judge[c] / 5 for c in
+                      ("clarte", "coherence", "completude", "actionabilite", "richesse", "ancrage")
+                      if c in judge}
+            scores["judge_mean"] = judge["mean"] / 5
+            comment = judge.get("verdict", "")
+        _push_case(
+            lf, "inventory_recommendations", run_id,
+            case_id=row["id"],
+            inp={"scenario": row["scenario"], "case_id": row["id"],
+                 "category": row.get("category")},
+            out={"recommendation_text": (row.get("recommendation_text") or "")[:_TRUNC],
+                 "action": row.get("action"), "verdict": comment[:_TRUNC]},
+            metadata={"action": row.get("action"), "reasoning_source": row.get("reasoning_source"),
+                      "judge_model": judge.get("judge_model"), "error": row.get("error") or None},
+            scores=scores, comment=comment,
+        )
+        n += 1
+    _push_summary(lf, "inventory_recommendations", run_id, {
+        "success_rate": summary.get("success_rate"),
+        "judge_global_mean_over5": summary.get("judge_global_mean"),
+        "fallback_comparison": summary.get("fallback_comparison"),
+    })
+    lf.flush()
+    return n
+
+
 def push_ragas(summary: dict) -> int:
     """Un cas RAGAS = une trace `eval-ragas` ; chaque métrique = un score
     `eval/ragas/<metrique>` (déjà normalisé [0,1] par RAGAS). Plus une trace résumé."""
@@ -209,11 +249,12 @@ def _push_summary(lf, suite: str, run_id: str, metrics: dict) -> None:
 
 
 _PUSHERS = {
-    "coach_e2e":       push_coach,
-    "model_benchmark": push_models,
-    "guardrail":       lambda s: push_aggregate("guardrail", s),
-    "rag_retrieval":   lambda s: push_aggregate("rag", s),
-    "ragas":           push_ragas,
+    "coach_e2e":                 push_coach,
+    "model_benchmark":           push_models,
+    "guardrail":                 lambda s: push_aggregate("guardrail", s),
+    "rag_retrieval":              lambda s: push_aggregate("rag", s),
+    "ragas":                      push_ragas,
+    "inventory_recommendations": push_inventory_recommendations,
 }
 
 

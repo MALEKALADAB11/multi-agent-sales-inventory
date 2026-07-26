@@ -1,0 +1,926 @@
+{
+  "description": "Scénarios figés pour l'éval LLM-as-judge du DecisionAgent inventaire (recommendation_text). Chaque cas alimente directement create_decide_node(llm, use_llm=True) — aucune base de données, aucun serveur requis. Champs: baseline_report (risk_assessment, metrics, stock, constraints), context_report, adjusted_metrics, business_objective. expected_behaviors est réservé à ce qu'un juge qualitatif peut évaluer (clarté, cohérence narrative, richesse) — tout ce qui est mécaniquement vérifiable (ex: CRITICAL ne doit jamais produire HOLD) est déjà couvert par guardrail.py et n'est pas répété ici.",
+  "cases": [
+    {
+      "id": "critical_stockout-01",
+      "category": "critical_stockout",
+      "scenario": "Risque CRITICAL, 2 jours de stock restants, délai de livraison standard de 10 jours — rupture garantie avant l'arrivée d'une commande normale. Doit produire EXPEDITE, pas ORDER.",
+      "sku": "SKU-TEST-001",
+      "store_id": "TEST-STORE-A",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "CRITICAL",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock à 2 jours, très en dessous du point de commande de 30 unités."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 2.0,
+          "formula_order_qty": 45,
+          "reorder_point": 30,
+          "total_replenishment_cost": 8500,
+          "safety_stock": 15
+        },
+        "stock": {
+          "lead_time_avg_days": 10,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 9,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 10,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Envisager l'expédition d'urgence — le délai standard ne suffira pas à couvrir la demande restante.",
+        "objective_note": "Objectif standard : suivre la formule sans ajustement particulier.",
+        "product_name": "Samsung Galaxy A15"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 2.0,
+          "formula_order_qty": 45,
+          "reorder_point": 30,
+          "total_replenishment_cost": 8500,
+          "safety_stock": 15
+        }
+      },
+      "expected_behaviors": [
+        "Ouvre en désignant EXPEDITE et la quantité, pas une commande standard",
+        "Justifie par la comparaison explicite jours restants (2) vs délai de livraison (10)",
+        "Ton direct et non hésitant, cohérent avec un risque CRITICAL"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "critical_stockout-02",
+      "category": "critical_stockout",
+      "scenario": "Risque CRITICAL, 3 jours de stock, coût de réapprovisionnement élevé (>50000 DT) — doit escalader en plus d'EXPEDITE. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
+      "sku": "SKU-TEST-002",
+      "store_id": "TEST-STORE-A",
+      "business_objective": "service_level",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "CRITICAL",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock à 3 jours sur un produit à forte rotation, délai de 14 jours."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 3.0,
+          "formula_order_qty": 400,
+          "reorder_point": 250,
+          "total_replenishment_cost": 62000,
+          "safety_stock": 100
+        },
+        "stock": {
+          "lead_time_avg_days": 14,
+          "lead_time_std_days": 3,
+          "lifecycle_stage": "mature",
+          "current_stock": 40,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 50,
+          "moq_is_binding": false,
+          "high_cost_flag": true,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Coût élevé mais rupture certaine sans expédition — le service_level prime ici.",
+        "objective_note": "service_level : accepter un coût de sécurité plus élevé pour éviter toute rupture.",
+        "product_name": "iPhone 16 128GB"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 3.0,
+          "formula_order_qty": 400,
+          "reorder_point": 250,
+          "total_replenishment_cost": 62000,
+          "safety_stock": 100
+        }
+      },
+      "expected_behaviors": [
+        "Recommande EXPEDITE avec la quantité et le coût explicites",
+        "Signale l'escalade (coût > 50 000 DT) dans le texte, sans en faire l'objet principal",
+        "Cohérent avec l'objectif service_level (accepter le coût plutôt que risquer la rupture)"
+      ],
+      "compare_fallback": true,
+      "benchmark": true
+    },
+    {
+      "id": "normal_reorder-01",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 12 jours de stock, délai de 7 jours — le formulaire d'ORDER standard peut encore arriver à temps.",
+      "sku": "SKU-TEST-003",
+      "store_id": "TEST-STORE-B",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande, mais délai de livraison encore couvert."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 12.0,
+          "formula_order_qty": 80,
+          "reorder_point": 60,
+          "total_replenishment_cost": 4200,
+          "safety_stock": 20
+        },
+        "stock": {
+          "lead_time_avg_days": 7,
+          "lead_time_std_days": 1,
+          "lifecycle_stage": "mature",
+          "current_stock": 55,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Chargeur USB-C 20W"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 12.0,
+          "formula_order_qty": 80,
+          "reorder_point": 60,
+          "total_replenishment_cost": 4200,
+          "safety_stock": 20
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER (pas EXPEDITE) car les jours restants dépassent le délai de livraison",
+        "Chiffre la quantité et le point de commande franchi",
+        "Ton posé, pas d'urgence artificielle"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "normal_reorder-02",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 9 jours de stock, délai de 6 jours, objectif cost_savings — la quantité devrait tendre vers l'EOQ.",
+      "sku": "SKU-TEST-004",
+      "store_id": "TEST-STORE-B",
+      "business_objective": "cost_savings",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande, marge de livraison correcte."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 9.0,
+          "formula_order_qty": 150,
+          "reorder_point": 100,
+          "total_replenishment_cost": 9800,
+          "safety_stock": 30
+        },
+        "stock": {
+          "lead_time_avg_days": 6,
+          "lead_time_std_days": 1.5,
+          "lifecycle_stage": "mature",
+          "current_stock": 90,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 25,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "cost_savings : privilégier la quantité EOQ même avec une marge de sécurité plus fine.",
+        "product_name": "Coque de protection universelle"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 9.0,
+          "formula_order_qty": 150,
+          "reorder_point": 100,
+          "total_replenishment_cost": 9800,
+          "safety_stock": 30
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec la quantité EOQ, cohérente avec l'objectif cost_savings",
+        "Mentionne le compromis coût/buffer de sécurité"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "monitor_situations-01",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM, stock proche du point de commande mais pas encore franchi — MONITOR, pas ORDER.",
+      "sku": "SKU-TEST-005",
+      "store_id": "TEST-STORE-C",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock proche du point de commande, pas encore franchi."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 22.0,
+          "formula_order_qty": 0,
+          "reorder_point": 40,
+          "total_replenishment_cost": 0,
+          "safety_stock": 15
+        },
+        "stock": {
+          "lead_time_avg_days": 8,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 48,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Câble Lightning 1m"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "MEDIUM", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 22.0,
+          "formula_order_qty": 0,
+          "reorder_point": 40,
+          "total_replenishment_cost": 0,
+          "safety_stock": 15
+        }
+      },
+      "expected_behaviors": [
+        "Recommande MONITOR, pas de commande immédiate",
+        "Précise le seuil qui déclencherait une commande (point de commande à 40 unités)"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "monitor_situations-02",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM avec un signal de demande à confiance moyenne — MONITOR mais la rationale doit noter le signal sans le sur-pondérer.",
+      "sku": "SKU-TEST-006",
+      "store_id": "TEST-STORE-C",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock encore au-dessus du point de commande."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 18.0,
+          "formula_order_qty": 0,
+          "reorder_point": 35,
+          "total_replenishment_cost": 0,
+          "safety_stock": 12
+        },
+        "stock": {
+          "lead_time_avg_days": 9,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 44,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Écouteurs filaires basiques"
+      },
+      "context_report": {
+        "demand_uplift_pct": 12.0,
+        "dominant_signal": "promotion_concurrente",
+        "confidence": "medium",
+        "interpretation": "Une promotion chez un concurrent proche pourrait légèrement augmenter la demande."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "MEDIUM", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 15.0,
+          "formula_order_qty": 0,
+          "reorder_point": 35,
+          "total_replenishment_cost": 0,
+          "safety_stock": 12
+        }
+      },
+      "expected_behaviors": [
+        "Recommande MONITOR mais mentionne le signal de demande à confiance moyenne",
+        "Note l'incertitude du signal dans la rationale sans changer l'action"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "hold_overstock-01",
+      "category": "hold_overstock",
+      "scenario": "Surstock signalé — HOLD, l'ajout de stock augmenterait les coûts sans bénéfice. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
+      "sku": "SKU-TEST-007",
+      "store_id": "TEST-STORE-D",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "LOW",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": true,
+          "rationale": "Stock nettement au-dessus du seuil maximal recommandé."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 140.0,
+          "formula_order_qty": 0,
+          "reorder_point": 25,
+          "total_replenishment_cost": 0,
+          "safety_stock": 10
+        },
+        "stock": {
+          "lead_time_avg_days": 10,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 300,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Support voiture magnétique"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "LOW", "overstock_flag": true},
+        "metrics": {
+          "days_of_stock_remaining": 140.0,
+          "formula_order_qty": 0,
+          "reorder_point": 25,
+          "total_replenishment_cost": 0,
+          "safety_stock": 10
+        }
+      },
+      "expected_behaviors": [
+        "Recommande HOLD, explique le surstock avec le chiffre de jours de couverture",
+        "Mentionne le coût de stockage inutile plutôt qu'un risque de rupture"
+      ],
+      "compare_fallback": true,
+      "benchmark": true
+    },
+    {
+      "id": "hold_overstock-02",
+      "category": "hold_overstock",
+      "scenario": "Risque LOW, demande quasi nulle (sentinelle 999 jours) — HOLD sans surstock formel, cas limite pour la formulation des jours.",
+      "sku": "SKU-TEST-008",
+      "store_id": "TEST-STORE-D",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "LOW",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Demande quasi nulle, stock largement suffisant."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 999.0,
+          "formula_order_qty": 0,
+          "reorder_point": 10,
+          "total_replenishment_cost": 0,
+          "safety_stock": 5
+        },
+        "stock": {
+          "lead_time_avg_days": 12,
+          "lead_time_std_days": 3,
+          "lifecycle_stage": "mature",
+          "current_stock": 60,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 10,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Adaptateur double SIM"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "LOW", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 999.0,
+          "formula_order_qty": 0,
+          "reorder_point": 10,
+          "total_replenishment_cost": 0,
+          "safety_stock": 5
+        }
+      },
+      "expected_behaviors": [
+        "Recommande HOLD sans afficher '999 jours' littéralement (couverture quasi illimitée)",
+        "Ton simple, aucune urgence"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "context_signal_cases-01",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande à haute confiance qui fait basculer la couverture ajustée sous le point de commande — ORDER motivé par le contexte, pas seulement la formule de base.",
+      "sku": "SKU-TEST-009",
+      "store_id": "TEST-STORE-E",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock au-dessus du point de commande avant application du signal de demande."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 20.0,
+          "formula_order_qty": 60,
+          "reorder_point": 45,
+          "total_replenishment_cost": 5400,
+          "safety_stock": 18
+        },
+        "stock": {
+          "lead_time_avg_days": 9,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 50,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Un festival ce week-end pourrait accélérer nettement la demande.",
+        "objective_note": "",
+        "product_name": "Batterie externe 10000mAh"
+      },
+      "context_report": {
+        "demand_uplift_pct": 45.0,
+        "dominant_signal": "evenement_local",
+        "confidence": "high",
+        "interpretation": "Un festival confirmé ce week-end en centre-ville devrait fortement augmenter les ventes d'accessoires."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 11.0,
+          "formula_order_qty": 95,
+          "reorder_point": 65,
+          "total_replenishment_cost": 8550,
+          "safety_stock": 26
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec la quantité ajustée (95), pas la quantité de base (60)",
+        "Explique explicitement que le festival/l'événement est le facteur qui a fait passer la couverture de 20 à 11 jours",
+        "Confiance élevée dans la décision, cohérente avec la confiance élevée du signal"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "context_signal_cases-02",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande non-nul mais à faible confiance — la décision doit utiliser les métriques ajustées tout en abaissant la confiance de la décision.",
+      "sku": "SKU-TEST-010",
+      "store_id": "TEST-STORE-E",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock proche du point de commande, signal de demande incertain."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 16.0,
+          "formula_order_qty": 40,
+          "reorder_point": 35,
+          "total_replenishment_cost": 3200,
+          "safety_stock": 14
+        },
+        "stock": {
+          "lead_time_avg_days": 8,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 38,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Rumeur non confirmée d'une campagne réseaux sociaux locale.",
+        "objective_note": "",
+        "product_name": "Coque transparente iPhone"
+      },
+      "context_report": {
+        "demand_uplift_pct": 18.0,
+        "dominant_signal": "rumeur_reseaux_sociaux",
+        "confidence": "low",
+        "interpretation": "Une rumeur de campagne virale locale existe mais n'est pas confirmée — signal incertain."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "MEDIUM", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 13.0,
+          "formula_order_qty": 47,
+          "reorder_point": 40,
+          "total_replenishment_cost": 3760,
+          "safety_stock": 16
+        }
+      },
+      "expected_behaviors": [
+        "Utilise les métriques ajustées mais signale explicitement l'incertitude du signal dans la rationale",
+        "Confiance de la décision plus basse que dans un cas équivalent sans signal incertain"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "context_signal_cases-03",
+      "category": "context_signal_cases",
+      "scenario": "Aucun signal détecté (uplift=0, confidence=low) — décision basée uniquement sur les maths de stock, confiance ne doit PAS être abaissée à cause de l'absence de signal.",
+      "sku": "SKU-TEST-011",
+      "store_id": "TEST-STORE-F",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "CRITICAL",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock très bas, aucun signal de demande à considérer."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 4.0,
+          "formula_order_qty": 70,
+          "reorder_point": 50,
+          "total_replenishment_cost": 6000,
+          "safety_stock": 20
+        },
+        "stock": {
+          "lead_time_avg_days": 5,
+          "lead_time_std_days": 1,
+          "lifecycle_stage": "mature",
+          "current_stock": 14,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Recharge Ooredoo 10 DT"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 4.0,
+          "formula_order_qty": 70,
+          "reorder_point": 50,
+          "total_replenishment_cost": 6000,
+          "safety_stock": 20
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER (jours ≥ délai) avec une confiance haute ou moyenne, jamais abaissée simplement parce qu'aucun signal n'a été trouvé",
+        "Peut mentionner l'absence de signal comme information neutre, pas comme source d'incertitude"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "escalation_cases-01",
+      "category": "escalation_cases",
+      "scenario": "ORDER dont le coût dépasse 50 000 DT — doit escalader au manager en plus de recommander la commande.",
+      "sku": "SKU-TEST-012",
+      "store_id": "TEST-STORE-G",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande sur un produit à coût unitaire élevé."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 15.0,
+          "formula_order_qty": 60,
+          "reorder_point": 40,
+          "total_replenishment_cost": 78000,
+          "safety_stock": 12
+        },
+        "stock": {
+          "lead_time_avg_days": 10,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 35,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 10,
+          "moq_is_binding": false,
+          "high_cost_flag": true,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "iPad Air 11 pouces"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 15.0,
+          "formula_order_qty": 60,
+          "reorder_point": 40,
+          "total_replenishment_cost": 78000,
+          "safety_stock": 12
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec le coût explicite (78 000 DT)",
+        "Mentionne clairement la nécessité d'une validation manager avant l'engagement de la dépense"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "escalation_cases-02",
+      "category": "escalation_cases",
+      "scenario": "Produit en fin de vie (end_of_life) avec risque CRITICAL — doit escalader pour vérifier l'écoulement intentionnel avant de commander.",
+      "sku": "SKU-TEST-013",
+      "store_id": "TEST-STORE-G",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "CRITICAL",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock très bas sur un produit en fin de vie — vérifier si le déstockage est voulu."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 3.0,
+          "formula_order_qty": 25,
+          "reorder_point": 20,
+          "total_replenishment_cost": 1800,
+          "safety_stock": 8
+        },
+        "stock": {
+          "lead_time_avg_days": 12,
+          "lead_time_std_days": 3,
+          "lifecycle_stage": "end_of_life",
+          "current_stock": 5,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 10,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Produit en fin de vie — confirmer avec le category manager avant tout réapprovisionnement.",
+        "objective_note": "",
+        "product_name": "Étui modèle discontinué X200"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 3.0,
+          "formula_order_qty": 25,
+          "reorder_point": 20,
+          "total_replenishment_cost": 1800,
+          "safety_stock": 8
+        }
+      },
+      "expected_behaviors": [
+        "Signale explicitement l'escalade liée au statut fin de vie, pas seulement le risque CRITICAL",
+        "N'engage pas de commande ferme sans validation, même si l'urgence stock semble justifier EXPEDITE"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "edge_cases-01",
+      "category": "edge_cases",
+      "scenario": "Conflit d'objectif (objectif_conflict=true) avec coût élevé — vaut une escalade et une phrase dédiée, sans changer l'action.",
+      "sku": "SKU-TEST-014",
+      "store_id": "TEST-STORE-H",
+      "business_objective": "cost_savings",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande ; le seul chemin de réapprovisionnement disponible est coûteux."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 10.0,
+          "formula_order_qty": 200,
+          "reorder_point": 120,
+          "total_replenishment_cost": 55000,
+          "safety_stock": 40
+        },
+        "stock": {
+          "lead_time_avg_days": 9,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 110,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 50,
+          "moq_is_binding": false,
+          "high_cost_flag": true,
+          "objective_conflict": true
+        },
+        "analyst_flag": "Le seul fournisseur disponible dans les délais facture un tarif express supérieur au budget cost_savings.",
+        "objective_note": "cost_savings : cet objectif entre en tension avec le seul chemin de réapprovisionnement disponible.",
+        "product_name": "Modem 4G domestique"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 10.0,
+          "formula_order_qty": 200,
+          "reorder_point": 120,
+          "total_replenishment_cost": 55000,
+          "safety_stock": 40
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER (le conflit d'objectif n'annule pas l'action requise par le risque)",
+        "Ajoute une phrase distincte sur le conflit avec l'objectif cost_savings, à faire remonter au category manager"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "edge_cases-02",
+      "category": "edge_cases",
+      "scenario": "MOQ contraignant : la quantité formule est inférieure au MOQ, l'analyste suggère de négocier — la quantité commandée doit être le MOQ, avec la déviation notée.",
+      "sku": "SKU-TEST-015",
+      "store_id": "TEST-STORE-H",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande, mais la quantité formule est bloquée par le MOQ fournisseur."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 11.0,
+          "formula_order_qty": 12,
+          "reorder_point": 25,
+          "total_replenishment_cost": 900,
+          "safety_stock": 8
+        },
+        "stock": {
+          "lead_time_avg_days": 7,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 20,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 50,
+          "moq_is_binding": true,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "MOQ largement supérieur au besoin réel — envisager de négocier une quantité minimale plus basse avec ce fournisseur.",
+        "objective_note": "",
+        "product_name": "Film de protection écran"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 11.0,
+          "formula_order_qty": 12,
+          "reorder_point": 25,
+          "total_replenishment_cost": 900,
+          "safety_stock": 8
+        }
+      },
+      "expected_behaviors": [
+        "Commande la quantité MOQ (50), pas la quantité formule (12), avec la déviation explicitement justifiée",
+        "Mentionne l'opportunité de négocier le MOQ pour la prochaine commande"
+      ],
+      "benchmark": true
+    }
+  ]
+}

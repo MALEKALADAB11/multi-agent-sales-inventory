@@ -45,6 +45,26 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 | langue | 4.15 |
 | securite | 4.0 |
 
+## 3bis. DecisionAgent inventaire — recommendation_text (LLM-as-judge)
+
+- **Cas évalués** : 15/15 (100.0%)
+- **Score juge global** : 4.13/5
+
+| Critère (0–5) | Moyenne |
+|---|---|
+| clarte | 4.47 |
+| coherence | 4.4 |
+| completude | 4.27 |
+| actionabilite | 4.47 |
+| richesse | 4.07 |
+| ancrage | 4.13 |
+
+**Ancre `richesse`** (LLM vs fallback rule-based) :
+- `critical_stockout-02` — LLM=5 vs rule-based=5
+- `hold_overstock-01` — LLM=5 vs rule-based=4
+
+**Sanity checks du juge** :
+
 ## 4. Benchmark comparatif des modèles
 
 Protocole : 10 questions × 2 passage(s), prompt et contexte figés, panel de 2 juge(s) LLM distincts (jamais le modèle évalué), 3 réessais sur 429/5xx.
