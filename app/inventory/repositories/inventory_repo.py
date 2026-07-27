@@ -1069,6 +1069,34 @@ class SyncInventoryRepo:
         finally:
             conn.close()
 
+    @staticmethod
+    def fetch_active_promotions(limit: int = 8) -> list[dict]:
+        """
+        Promotions en cours aujourd'hui (inventory.vw_active_promotions).
+
+        Source de vérité des « offres actives » côté Stratège et dashboard —
+        elles étaient auparavant écrites en dur dans le fallback du scraper.
+        Liste vide si la DB est indisponible : aucune offre vaut mieux qu'une
+        offre inventée.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return []
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT promo_name, product_name, discount_pct, end_date
+                    FROM inventory.vw_active_promotions
+                    ORDER BY discount_pct DESC NULLS LAST
+                    LIMIT %s
+                """, (limit,))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            logger.warning("SyncInventoryRepo.fetch_active_promotions(): %s", exc)
+            return []
+        finally:
+            conn.close()
+
     # ── Writes ────────────────────────────────────────────────────────────────
 
     @staticmethod
