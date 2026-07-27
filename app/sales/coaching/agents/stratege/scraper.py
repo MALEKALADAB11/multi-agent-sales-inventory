@@ -6,6 +6,7 @@ Cache 1h pour éviter les requêtes répétées.
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,20 +16,40 @@ logger = logging.getLogger(__name__)
 CACHE_FILE = Path(__file__).parent.parent.parent.parent / "data" / "cache" / "ooredoo_events.json"
 CACHE_TTL  = 3600  # 1 heure
 
+# ooredoo.tn est injoignable depuis le réseau de déploiement : les trois pages
+# partaient systématiquement en timeout (~23 s au total) pour finir sur le
+# fallback, et comme seul un scraping réussi était mis en cache, ce coût était
+# repayé à chaque cycle. Deux garde-fous :
+#   - budget global : au-delà, on abandonne et on sert le fallback ;
+#   - cache négatif : un échec est mémorisé (TTL court) pour ne pas relancer
+#     Playwright à chaque appel tant que le site ne répond pas.
+SCRAPER_BUDGET_S    = float(os.getenv("OOREDOO_SCRAPER_BUDGET_S", "6"))
+NEGATIVE_CACHE_TTL  = int(os.getenv("OOREDOO_SCRAPER_FAIL_TTL_S", "900"))
+NEGATIVE_CACHE_MAX  = int(os.getenv("OOREDOO_SCRAPER_FAIL_TTL_MAX_S", str(6 * 3600)))
+SCRAPER_ENABLED     = os.getenv("OOREDOO_SCRAPER_ENABLED", "1") not in ("0", "false", "False")
+
 
 # ─────────────────────────────────────────────────────────────────
 # CACHE
 # ─────────────────────────────────────────────────────────────────
 
 def _load_cache() -> dict | None:
+    """
+    Cache disque. Un fallback est mémorisé avec un TTL court (cache négatif)
+    plutôt qu'un TTL d'une heure : le site peut redevenir joignable, mais on ne
+    veut pas relancer Playwright à chaque cycle en attendant.
+    """
     try:
         if not CACHE_FILE.exists():
             return None
         data       = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
         fetched_at = datetime.fromisoformat(data.get("fetched_at", "2000-01-01"))
         age        = (datetime.now() - fetched_at).total_seconds()
-        if age < CACHE_TTL:
-            logger.info(f"[SCRAPER] Cache valide ({age:.0f}s < {CACHE_TTL}s)")
+        ttl        = _negative_ttl(int(data.get("fail_streak", 1))) \
+                     if data.get("degraded") else CACHE_TTL
+        if age < ttl:
+            logger.info("[SCRAPER] Cache %s valide (%.0fs < %ds)",
+                        "dégradé" if data.get("degraded") else "", age, ttl)
             return data
         logger.info(f"[SCRAPER] Cache expiré ({age:.0f}s)")
         return None
@@ -53,34 +74,74 @@ def _save_cache(data: dict) -> None:
 # SCRAPER PRINCIPAL
 # ─────────────────────────────────────────────────────────────────
 
+def _negative_ttl(fail_streak: int) -> int:
+    """
+    Backoff exponentiel sur les échecs consécutifs, plafonné.
+
+    Un TTL négatif fixe de 15 min faisait repayer le budget Playwright quatre
+    fois par heure alors que le site est indisponible de façon durable. En
+    doublant à chaque échec, on converge vers une seule tentative toutes les
+    quelques heures — assez pour détecter un retour du site sans peser sur les
+    cycles.
+    """
+    return min(NEGATIVE_CACHE_TTL * (2 ** max(0, fail_streak - 1)), NEGATIVE_CACHE_MAX)
+
+
+def _degraded_fallback(reason: str) -> dict:
+    """Fallback marqué comme dégradé et mis en cache pour éviter de le repayer."""
+    previous = 0
+    try:
+        if CACHE_FILE.exists():
+            old = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            previous = int(old.get("fail_streak", 0)) if old.get("degraded") else 0
+    except Exception:
+        previous = 0
+
+    result = _fallback_events()
+    result["degraded"]        = True
+    result["degraded_reason"] = reason
+    result["fail_streak"]     = previous + 1
+    result["source"]          = f"fallback ({reason})"
+    result["fetched_at"]      = datetime.now().isoformat()
+    _save_cache(result)
+    logger.info("[SCRAPER] échec #%d — prochaine tentative dans %d min",
+                result["fail_streak"], _negative_ttl(result["fail_streak"]) // 60)
+    return result
+
+
 async def scrape_ooredoo_events() -> dict:
     cached = _load_cache()
     if cached:
         return cached
 
-    logger.info("[SCRAPER] Lancement Playwright pour Ooredoo...")
+    if not SCRAPER_ENABLED:
+        logger.info("[SCRAPER] désactivé (OOREDOO_SCRAPER_ENABLED=0)")
+        return _degraded_fallback("désactivé")
+
+    logger.info("[SCRAPER] Lancement Playwright pour Ooredoo (budget %.0fs)...",
+                SCRAPER_BUDGET_S)
 
     try:
-        from playwright.async_api import async_playwright
-
         # ── Fix Windows asyncio + FastAPI ─────────────────
-        import asyncio
         import sys
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-        # ── Lancer dans un thread séparé ──────────────────
-        import concurrent.futures
-        loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            _scrape_sync
+        # ── Lancer dans un thread séparé, sous budget de temps ──────────────
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _scrape_sync),
+            timeout=SCRAPER_BUDGET_S,
         )
         return result
 
+    except asyncio.TimeoutError:
+        logger.warning("[SCRAPER] budget %.0fs dépassé → fallback dégradé (cache %ds)",
+                       SCRAPER_BUDGET_S, NEGATIVE_CACHE_TTL)
+        return _degraded_fallback("timeout")
     except Exception as e:
-        logger.warning(f"[SCRAPER] Playwright error: {str(e)[:50]} → fallback")
-        return _fallback_events()
+        logger.warning(f"[SCRAPER] Playwright error: {str(e)[:50]} → fallback dégradé")
+        return _degraded_fallback("erreur")
 
 
 def _scrape_sync() -> dict:
@@ -146,7 +207,7 @@ async def _scrape_async() -> dict:
     events = unique[:20]
 
     if not events:
-        return _fallback_events()
+        return _degraded_fallback("aucune offre extraite")
 
     promotions = [e for e in events if e.get("type") == "promotion"]
     new_offers = [e for e in events if e.get("type") == "new_offer"]
@@ -412,69 +473,40 @@ def _extract_from_raw_text(text: str, category: str) -> list:
 # ─────────────────────────────────────────────────────────────────
 
 def _fallback_events() -> dict:
-    """Événements Ooredoo connus comme fallback."""
-    events = [
-        {
-            "title":     "Forfait Max 5G — 100Go à 49 DT/mois",
-            "type":      "tarif",
-            "category":  "Mobile",
-            "price":     "49 DT/mois",
-            "details":   "5G disponible dans les grandes villes",
-            "is_active": True,
-            "scraped":   False,
-            "date":      datetime.now().isoformat(),
-        },
-        {
-            "title":     "Box Fibre Ooredoo — 200 Mbps",
-            "type":      "tarif",
-            "category":  "Internet",
-            "price":     "59 DT/mois",
-            "details":   "Installation gratuite ce mois",
-            "is_active": True,
-            "scraped":   False,
-            "date":      datetime.now().isoformat(),
-        },
-        {
-            "title":     "iPhone 16 Pro — Disponible en boutique",
-            "type":      "new_offer",
-            "category":  "Smartphone",
-            "price":     "À partir de 3,299 DT",
-            "details":   "Stock limité",
-            "is_active": True,
-            "scraped":   False,
-            "date":      datetime.now().isoformat(),
-        },
-        {
-            "title":     "Promo Recharge Double — Weekend",
-            "type":      "promotion",
-            "category":  "Prépayé",
-            "price":     "Bonus 100%",
-            "details":   "Valable samedi et dimanche",
-            "is_active": True,
-            "scraped":   False,
-            "date":      datetime.now().isoformat(),
-        },
-        {
-            "title":     "Samsung Galaxy A55 5G — Bundle Exclusif",
-            "type":      "promotion",
-            "category":  "Smartphone",
-            "price":     "1,299 DT + forfait offert 3 mois",
-            "details":   "Bundle exclusif boutique",
-            "is_active": True,
-            "scraped":   False,
-            "date":      datetime.now().isoformat(),
-        },
-        {
-            "title":     "Forfait Famille 5G — 4 lignes",
-            "type":      "promotion",
-            "category":  "Mobile",
-            "price":     "120 DT/mois",
-            "details":   "4 lignes 5G incluses — économie 40%",
-            "is_active": True,
-            "scraped":   False,
-            "date":      datetime.now().isoformat(),
-        },
-    ]
+    """
+    Promotions de repli — lues dans PostgreSQL, jamais inventées.
+
+    Cette fonction renvoyait six offres écrites à la main (« iPhone 16 Pro à
+    partir de 3 299 DT », « Samsung Galaxy A55 5G — Bundle Exclusif »…). Comme
+    ooredoo.tn est injoignable depuis ce réseau, c'était en pratique la seule
+    source d'« offres Ooredoo actives » : ces produits fictifs remontaient dans
+    le prompt du Stratège et jusque dans la modal du dashboard.
+
+    inventory.promotions porte les promotions réellement en cours, avec leur
+    remise et leur date de fin. En cas d'échec DB, on renvoie une structure
+    vide : mieux vaut aucune offre qu'une offre imaginaire.
+    """
+    events = []
+    try:
+        from app.inventory.repositories.inventory_repo import SyncInventoryRepo
+
+        rows = SyncInventoryRepo.fetch_active_promotions(limit=8) or []
+        for r in rows:
+            remise = r.get("discount_pct")
+            events.append({
+                "title":     str(r.get("promo_name") or ""),
+                "type":      "promotion",
+                "category":  str(r.get("product_name") or ""),
+                "price":     f"-{float(remise):.0f}%" if remise else "",
+                "details":   (f"Valable jusqu'au {r.get('end_date')}"
+                              if r.get("end_date") else ""),
+                "is_active": True,
+                "scraped":   False,
+                "date":      datetime.now().isoformat(),
+            })
+        logger.info("[SCRAPER] Fallback PostgreSQL — %d promotion(s) active(s)", len(events))
+    except Exception as e:
+        logger.warning("[SCRAPER] Fallback PostgreSQL indisponible: %s", str(e)[:100])
 
     promotions = [e for e in events if e["type"] == "promotion"]
     new_offers = [e for e in events if e["type"] == "new_offer"]
@@ -487,6 +519,6 @@ def _fallback_events() -> dict:
         "promotions": promotions,
         "new_offers": new_offers,
         "tarifs":     tarifs,
-        "source":     "fallback_hardcoded",
+        "source":     "postgresql_promotions",
         "fetched_at": datetime.now().isoformat(),
     }

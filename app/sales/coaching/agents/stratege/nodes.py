@@ -26,13 +26,26 @@ from app.sales.data.rag.settings import (
     DOMAIN_INVENTORY_PLAYBOOK,
     DOMAIN_SALES_SCRIPT,
 )
+from app.sales.coaching.agents.stratege.catalog import (
+    fetch_catalog,
+    format_catalog_block,
+    pick_products,
+)
 from app.sales.coaching.agents.stratege.prompts import (
-    STRATEGE_SYSTEM_PROMPT,
+    build_system_prompt,
     STRATEGE_USER_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
 config = get_config()
+
+# Heure de fermeture réelle de la boutique — le calcul du temps restant était
+# figé à 20h en dur dans cinq endroits différents.
+CLOSE_HOUR = core_config.STORE_CLOSE_HOUR
+
+
+def _hours_remaining(hour: int | None = None) -> int:
+    return max(0, CLOSE_HOUR - (datetime.now().hour if hour is None else hour))
 
 OLLAMA_URL        = core_config.OLLAMA_BASE_URL
 OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",       "llama3.2:latest")
@@ -132,6 +145,15 @@ def get_llm():
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _get_critical_stock(store_id=DEFAULT_STORE_ID, threshold=5):
+    """
+    SKU en tension réelle. Exécuté une seule fois, dans node_fetch_context : la
+    version précédente relançait la requête dans node_analyze_context alors que
+    node_rag_search lisait déjà state["stock_alerts"] — jamais peuplé, ce qui
+    désactivait silencieusement la recherche du playbook inventory.
+
+    En cas d'échec DB : liste vide. L'ancien fallback renvoyait un SKU inventé
+    (« iPhone 16 Pro », SKU 5021240) qui remontait ensuite en alerte au vendeur.
+    """
     try:
         from app.core.db import acquire
         async with acquire(connect_timeout=3) as conn:
@@ -139,20 +161,26 @@ async def _get_critical_stock(store_id=DEFAULT_STORE_ID, threshold=5):
                 SELECT s.sku,
                        s.product_name,
                        COALESCE(s.stock_dispo, 0) AS stock_qty,
-                       s.stock_risk
+                       s.stock_risk,
+                       COALESCE(s.prix_ttc, 0)    AS prix_ttc,
+                       s.gamme_libelle
                 FROM sales.vw_stock_enriched s
                 WHERE s.store_id = $1
                   AND (s.stock_risk IN ('rupture','critical')
                        OR COALESCE(s.stock_dispo, 0) <= $2)
-                ORDER BY COALESCE(s.stock_dispo, 0) ASC LIMIT 5
+                  AND COALESCE(s.prix_ttc, 0) > 0
+                ORDER BY COALESCE(s.prix_ttc, 0) DESC,
+                         COALESCE(s.stock_dispo, 0) ASC
+                LIMIT 5
             """, store_id, threshold)
             return [{"sku": str(r["sku"]), "product_name": str(r["product_name"]),
-                     "stock_qty": int(r["stock_qty"]), "risk_level": str(r["stock_risk"])}
+                     "stock_qty": int(r["stock_qty"]), "risk_level": str(r["stock_risk"]),
+                     "prix_ttc": round(float(r["prix_ttc"]), 2),
+                     "gamme": r["gamme_libelle"] or "AUTRE"}
                     for r in rows]
     except Exception as e:
-        logger.warning(f"[STRATEGE STOCK] Fallback: {e}")
-        return [{"sku":"5021240","product_name":"iPhone 16 Pro",
-                 "stock_qty":3,"risk_level":"critical"}]
+        logger.warning(f"[STRATEGE STOCK] indisponible: {str(e)[:80]}")
+        return []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -165,27 +193,53 @@ async def node_fetch_context(state: SalesAgentState) -> dict:
     log_id = log.node_start("fetch_context", state)
     t0 = time.time(); trace = _get_trace(state)
     logger.info(f"[STRATEGE] Node 1 — Fetch contexte pour {sid}")
-    try:
-        context = await fetch_full_context(sid)
-        summary = context.get("summary", {})
-        duration = (time.time() - t0) * 1000
-        _lf_span(trace, "fetch_context", {"store_id": sid},
-            {"weather": summary.get("weather_label",""), "effect": summary.get("weather_effect",0),
-             "is_holiday": summary.get("is_holiday",False), "active_promos": summary.get("active_promos",0)},
-            duration)
-        logger.info(f"[STRATEGE] Node 1 — {summary.get('weather_icon','')} {summary.get('weather_label','')} | effet={summary.get('weather_effect',0):+.0%}")
-        output = {**state, "external_context": context}
-        log.node_done("fetch_context", log_id, output, duration, {"weather": summary.get("weather_label","")})
-        return {**output, "metrics": _update_metrics(state, "stratege_context_ms", round(duration))}
-    except Exception as e:
-        duration = (time.time() - t0) * 1000
-        _lf_span(trace, "fetch_context", {"store_id": sid}, {"error": str(e)}, duration, "ERROR")
-        log.node_error("fetch_context", log_id, e, state)
-        fallback = {"summary":{"weather_label":"Tunis","weather_icon":"🌤️","weather_effect":0.0,
-                               "temperature":22,"is_holiday":False,"active_promos":0},
-                    "holidays":{},"events":{},"heatmap":{}}
-        return {**state, "external_context": fallback,
-                "metrics": _update_metrics(state, "stratege_context_ms", round(duration))}
+
+    # Contexte externe, catalogue vendable et stock en tension sont indépendants :
+    # les lancer en parallèle évite d'empiler trois allers-retours séquentiels.
+    import asyncio as _aio
+    ctx_task     = _aio.create_task(fetch_full_context(sid))
+    catalog_task = _aio.create_task(fetch_catalog(sid))
+    stock_task   = _aio.create_task(_get_critical_stock(store_id=sid, threshold=5))
+    context, catalog, stock_alerts = await _aio.gather(
+        ctx_task, catalog_task, stock_task, return_exceptions=True,
+    )
+
+    if isinstance(context, BaseException):
+        logger.warning(f"[STRATEGE] contexte externe indisponible: {str(context)[:100]}")
+        log.node_error("fetch_context", log_id, context, state)
+        context = {"summary": {"weather_label": "", "weather_icon": "🌤️",
+                               "weather_effect": 0.0, "temperature": 22,
+                               "is_holiday": False, "active_promos": 0},
+                   "holidays": {}, "events": {}, "heatmap": {}}
+    if isinstance(catalog, BaseException):
+        logger.warning(f"[STRATEGE] catalogue indisponible: {str(catalog)[:100]}")
+        catalog = {"store_id": sid, "gammes": {}, "promotions": [],
+                   "ruptures": [], "dormant": [], "nb_skus": 0, "source": "unavailable"}
+    if isinstance(stock_alerts, BaseException):
+        logger.warning(f"[STRATEGE] stock indisponible: {str(stock_alerts)[:100]}")
+        stock_alerts = []
+
+    summary  = context.get("summary", {})
+    duration = (time.time() - t0) * 1000
+    _lf_span(trace, "fetch_context", {"store_id": sid},
+        {"weather": summary.get("weather_label",""), "effect": summary.get("weather_effect",0),
+         "is_holiday": summary.get("is_holiday",False),
+         "nb_events": summary.get("active_promos",0),
+         "catalog_skus": catalog.get("nb_skus", 0), "nb_stock_alerts": len(stock_alerts)},
+        duration)
+    logger.info(
+        "[STRATEGE] Node 1 — %s %s | effet=%+.0f%% | catalogue=%d SKU | stock tendu=%d | %.0fms",
+        summary.get("weather_icon", ""), summary.get("weather_label", ""),
+        float(summary.get("weather_effect", 0)) * 100,
+        catalog.get("nb_skus", 0), len(stock_alerts), duration,
+    )
+
+    output = {**state, "external_context": context,
+              "catalog": catalog, "stock_alerts": stock_alerts}
+    log.node_done("fetch_context", log_id, output, duration,
+                  {"weather": summary.get("weather_label",""),
+                   "catalog_skus": catalog.get("nb_skus", 0)})
+    return {**output, "metrics": _update_metrics(state, "stratege_context_ms", round(duration))}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -331,11 +385,13 @@ async def node_analyze_context(state: SalesAgentState) -> dict:
     if rag_ok and nb_scr > 0: factors.append(f"RAG : {nb_scr} scripts similaires disponibles")
 
     cause_racine = factors[0] if factors else f"Gap {gap_pct:.1f}% sans facteur externe majeur"
-    stock_alerts = await _get_critical_stock(store_id=sid, threshold=5)
+    # Stock déjà chargé par node_fetch_context — plus de seconde requête ici.
+    stock_alerts = state.get("stock_alerts") or []
     alerts = _generate_alerts(gap_pct=gap_pct, urgency=urgency, hour=hour, hrs_rem=hrs_rem,
         w_eff=w_eff, weather_label=summary.get("weather_label",""),
         weather_icon=summary.get("weather_icon","🌤️"), promos=promos, cr=cr, dt_val=dt_val,
-        rag_ok=rag_ok, is_rainy=w_eff<=-0.10, stock_alerts=stock_alerts)
+        rag_ok=rag_ok, is_rainy=w_eff<=-0.10, stock_alerts=stock_alerts,
+        catalog=state.get("catalog") or {})
 
     duration = (time.time() - t0) * 1000
     _lf_span(trace, "analyze_context",
@@ -353,16 +409,32 @@ async def node_analyze_context(state: SalesAgentState) -> dict:
 
 
 def _generate_alerts(gap_pct, urgency, hour, hrs_rem, w_eff, weather_label,
-                     weather_icon, promos, cr, dt_val, rag_ok, is_rainy, stock_alerts=None):
+                     weather_icon, promos, cr, dt_val, rag_ok, is_rainy,
+                     stock_alerts=None, catalog=None):
+    """
+    Alertes terrain — chaque libellé est dérivé des données du cycle.
+
+    L'ancienne version affichait des produits et des prix écrits en dur
+    (« AirPods Pro 3 (279 TND) », « Bundle iPhone = 1 357 TND », « 21% du CA
+    journalier ») qui n'existaient ni au catalogue ni dans les mesures : le
+    vendeur lisait des recommandations invérifiables. Ici, un produit n'est cité
+    que s'il vient du catalogue PostgreSQL du magasin.
+    """
     alerts = []; now_str = datetime.now().strftime("%H:%M")
     stock_alerts = stock_alerts or []
+    catalog      = catalog or {}
+
     if stock_alerts:
         top = stock_alerts[0]; qty = top["stock_qty"]; pname = top["product_name"]
+        # Alternative réelle : même gamme, en stock sain.
+        alternatives = pick_products(catalog, [top.get("gamme", "")], limit=1)
+        action = (f"Proposer une alternative en stock : {alternatives[0]['nom']}"
+                  if alternatives else "Proposer une alternative en stock")
         alerts.append({"id":f"alert-stock-{now_str}","type":"stock",
             "level":"critical" if qty<=2 else "warning","icon":"📦",
             "title":f"Stock {'rupture' if qty==0 else 'critique'} — {pname}",
             "message":f"{qty} unité(s) restante(s)" if qty>0 else f"Rupture — {pname}",
-            "action":"Proposer alternative premium","cta":"Demander au coach","timestamp":now_str})
+            "action":action,"cta":"Demander au coach","timestamp":now_str})
         for s in stock_alerts[1:3]:
             alerts.append({"id":f"alert-stock-{s['sku']}-{now_str}","type":"stock",
                 "level":"warning","icon":"⚠️","title":f"Stock bas — {s['product_name']}",
@@ -370,35 +442,55 @@ def _generate_alerts(gap_pct, urgency, hour, hrs_rem, w_eff, weather_label,
                 "cta":"Demander au coach","timestamp":now_str})
     else:
         alerts.append({"id":f"alert-stock-{now_str}","type":"stock","level":"info",
-            "icon":"📦","title":"Stock nominal","message":"Aucun SKU en rupture",
+            "icon":"📦","title":"Stock nominal","message":"Aucun SKU en tension",
             "action":"Vérifier stock","cta":"Demander au coach","timestamp":now_str})
+
     if abs(w_eff) >= 0.10:
+        # Par mauvais temps, mettre en avant ce qui a la meilleure marge et reste
+        # vendable sans démonstration longue ; sinon, ce qui tourne le mieux.
+        gammes = (["ACCESSOIRE_PREMIUM", "ACCESSOIRE", "SERVICE"] if is_rainy
+                  else ["TERMINAL", "FORFAIT", "FORFAIT_BOX"])
+        suggest = pick_products(catalog, gammes, limit=2)
+        action  = (" · ".join(f"{p['nom']} ({p['prix_ttc']:.0f} TND)" for p in suggest)
+                   if suggest else "Adapter le mix produit au contexte")
         alerts.append({"id":f"alert-meteo-{now_str}","type":"weather","level":"info",
             "icon":weather_icon,
-            "title":f"{weather_label} — {'Opportunité accessoires' if is_rainy else f'Trafic {w_eff:+.0%}'}",
-            "message":"Demande accessoires +40%" if is_rainy else "Conditions favorables",
-            "action":"AirPods Pro 3 (279 TND) + Apple Watch S10 (449 TND)" if is_rainy else "Focus terminaux premium",
-            "cta":"Demander au coach","timestamp":now_str})
+            "title":f"{weather_label} — trafic {w_eff:+.0%}",
+            "message":("Clients captifs plus longtemps — fenêtre d'attachement"
+                       if is_rainy else "Afflux attendu — maximiser chaque contact"),
+            "action":action,"cta":"Demander au coach","timestamp":now_str})
+
     if 15 <= hour <= 17:
         alerts.append({"id":f"alert-pic-{now_str}","type":"traffic","level":"warning",
             "icon":"⚡","title":f"Pic trafic attendu {hour}h-{hour+1}h",
-            "message":"Créneau le plus fort — 21% du CA journalier",
-            "action":"Pré-qualifier les clients — script express 3 min",
+            "message":"Créneau à fort passage",
+            "action":"Pré-qualifier les clients en attente — script express 3 min",
             "cta":"Demander au coach","timestamp":now_str})
+
     if gap_pct > 30 and hrs_rem <= 4:
         gap_tnd = max(0, dt_val - cr)
+        # Combien de ventes réelles ferment le gap, avec un produit réel.
+        best = pick_products(catalog, ["TERMINAL", "FORFAIT", "FORFAIT_BOX",
+                                       "ACCESSOIRE_PREMIUM", "SERVICE"], limit=1)
+        if best and best[0]["prix_ttc"] > 0:
+            p    = best[0]
+            nb   = max(1, round(gap_tnd / p["prix_ttc"] + 0.49))
+            plan = f"{nb} × {p['nom']} ({p['prix_ttc']:.0f} TND) = {nb * p['prix_ttc']:.0f} TND"
+        else:
+            plan = "Prioriser la gamme au meilleur ticket encore en stock"
         alerts.append({"id":f"alert-gap-{now_str}","type":"gap",
             "level":"critical" if gap_pct>50 else "warning",
             "icon":"🚨" if gap_pct>50 else "⚠️",
             "title":f"Gap {gap_pct:.0f}% — {hrs_rem}h restantes",
-            "message":f"{gap_tnd:.0f} TND à combler · Bundle iPhone = solution",
-            "action":"iPhone 16 Pro + Forfait 5G Max + Assurance = 1 357 TND",
-            "cta":"Plan d'action coach","timestamp":now_str})
-    if promos > 0:
+            "message":f"{gap_tnd:.0f} TND à combler",
+            "action":plan,"cta":"Plan d'action coach","timestamp":now_str})
+
+    promos_list = (catalog.get("promotions") or [])[:3]
+    if promos_list:
         alerts.append({"id":f"alert-promo-{now_str}","type":"promo","level":"info",
-            "icon":"🎯","title":f"{promos} offre(s) Ooredoo active(s)",
-            "message":"Forfait 5G Max · iPhone 16 Pro · Box Fibre installation offerte",
-            "action":"Mentionner la promotion dans chaque pitch",
+            "icon":"🎯","title":f"{len(catalog.get('promotions') or [])} promotion(s) active(s)",
+            "message":" · ".join(f"{p['nom']} (-{p['remise_pct']:.0f}%)" for p in promos_list),
+            "action":"Mentionner la promotion applicable dans chaque pitch",
             "cta":"Script promo","timestamp":now_str})
     return alerts
 
@@ -414,11 +506,25 @@ _OR_MODEL_ROTATION = [
     "meta-llama/llama-3.3-70b-instruct:free",
 ]
 
+# Quota journalier OpenRouter épuisé (429 free-models-per-day) : inutile de
+# rappeler l'API à chaque cycle — chaque tentative coûtait ~2,5 s pour un échec
+# certain. On note l'heure et on saute directement au fournisseur suivant.
+_OR_COOLDOWN_UNTIL: float = 0.0
+_OR_COOLDOWN_S = int(os.getenv("OPENROUTER_COOLDOWN_S", str(3600)))
+
+
 async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
                                     urgency: str) -> tuple[str, float]:
-    """Appel OpenRouter avec rotation automatique sur rate-limit."""
+    """Appel OpenRouter avec rotation automatique sur erreur modèle."""
+    global _OR_COOLDOWN_UNTIL
     t0 = time.time()
+    if time.time() < _OR_COOLDOWN_UNTIL:
+        logger.info("[STRATEGE OR] quota épuisé — cooldown encore %.0f min",
+                    (_OR_COOLDOWN_UNTIL - time.time()) / 60)
+        return "", 0.0
+
     import httpx
+    exhausted = 0
     for model in _OR_MODEL_ROTATION:
         # Le stratège doit rendre du JSON : on l'exige du modèle plutôt que de
         # réparer sa sortie à coups de regex. Tous les modèles ne supportent pas
@@ -458,9 +564,11 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
                         continue  # retente le même modèle en texte libre
                     logger.warning(f"[STRATEGE OR] {model} → {code}: {msg}")
                     if code in (429, 503):
-                        break     # rate-limit → modèle suivant
-                    return "", (time.time() - t0) * 1000
-
+                        exhausted += 1
+                    # Un modèle indisponible (404 « paid only », 400…) ne dit rien
+                    # des suivants : la version précédente retournait ici et
+                    # abandonnait toute la rotation dès le premier refus.
+                    break     # modèle suivant
                 content = data["choices"][0]["message"]["content"].strip()
                 ms = (time.time() - t0) * 1000
                 logger.info(f"[STRATEGE OR] OK — {len(content)} chars | {ms:.0f}ms | {model}")
@@ -468,15 +576,38 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
             except Exception as e:
                 logger.warning(f"[STRATEGE OR] {model} exception: {str(e)[:60]}")
                 break
+
+    # Rotation entièrement épuisée : quotas atteints ou modèles devenus payants.
+    # Dans les deux cas, réessayer au cycle suivant coûte ~2,3 s pour un échec
+    # certain — on met le fournisseur en pause plutôt que de le sonder en boucle.
+    _OR_COOLDOWN_UNTIL = time.time() + _OR_COOLDOWN_S
+    logger.warning("[STRATEGE OR] rotation épuisée (%d rate-limit) — cooldown %d min",
+                   exhausted, _OR_COOLDOWN_S // 60)
     return "", (time.time() - t0) * 1000
 
 
-MISTRAL_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-_MISTRAL_MODEL_ROTATION = [
-    os.getenv("MISTRAL_MODEL_SMART", "mistral-large-latest"),
-    os.getenv("MISTRAL_MODEL",       "mistral-small-latest"),
-]
+MISTRAL_KEY   = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_URL   = "https://api.mistral.ai/v1/chat/completions"
+MISTRAL_LARGE = os.getenv("MISTRAL_MODEL_SMART", "mistral-large-latest")
+MISTRAL_SMALL = os.getenv("MISTRAL_MODEL",       "mistral-small-latest")
+
+
+def _mistral_rotation(urgency: str) -> list[str]:
+    """
+    Ordre d'essai des modèles Mistral.
+
+    On pourrait croire qu'il faut réserver le grand modèle aux cycles urgents et
+    router les cycles de routine vers le petit, plus rapide. La mesure dit le
+    contraire sur ce compte : 3 appels identiques donnent une médiane de 21,8 s
+    pour mistral-small contre 8,9 s pour mistral-large (small semble davantage
+    mis en file d'attente). Le grand modèle est donc à la fois le plus rapide et
+    le plus fiable — il passe en premier quel que soit le niveau d'urgence, le
+    petit ne servant que de repli si le premier échoue.
+
+    urgency est conservé en paramètre : si les latences relatives changent côté
+    fournisseur, c'est ici, et nulle part ailleurs, qu'on rebranche un routage.
+    """
+    return [MISTRAL_LARGE, MISTRAL_SMALL]
 
 
 async def _call_mistral_stratege(system_prompt: str, user_msg: str,
@@ -486,7 +617,7 @@ async def _call_mistral_stratege(system_prompt: str, user_msg: str,
     if not MISTRAL_KEY:
         return "", 0.0
     import httpx
-    for model in _MISTRAL_MODEL_ROTATION:
+    for model in _mistral_rotation(urgency):
         try:
             async with httpx.AsyncClient(timeout=45) as client:
                 resp = await client.post(
@@ -541,12 +672,16 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
     rag_scripts     = state.get("rag_context") or []
     rag_txt         = state.get("rag_txt", "")
     hour            = datetime.now().hour
-    hours_remaining = max(0, 20 - hour)
+    hours_remaining = _hours_remaining(hour)
     summary         = context.get("summary", {})
     holidays        = context.get("holidays", {})
     events          = context.get("events", {})
+    catalog         = state.get("catalog") or {}
+    stock_alerts    = state.get("stock_alerts") or []
 
-    system_with_rag = STRATEGE_SYSTEM_PROMPT + rag_txt
+    # Catalogue PostgreSQL du magasin + scripts Milvus : les deux seules sources
+    # de produits autorisées. Sans catalogue, le prompt interdit de citer un nom.
+    system_with_rag = build_system_prompt(format_catalog_block(catalog)) + rag_txt
 
     analyst_data = json.dumps({
         "urgency_level": urgency_level, "gap_pct": round(gap_pct, 1),
@@ -589,10 +724,21 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
         "events_a_venir":  [_ev_brief(e) for e in (context.get("events_a_venir") or [])[:3]],
     }, indent=2, ensure_ascii=False)
 
+    stock_data = json.dumps({
+        "skus_en_tension": [
+            {"produit": s["product_name"], "restant": s["stock_qty"],
+             "risque": s["risk_level"], "prix_ttc": s.get("prix_ttc", 0)}
+            for s in stock_alerts[:5]
+        ],
+        "nb_references_disponibles": catalog.get("nb_skus", 0),
+        "gammes_disponibles": list((catalog.get("gammes") or {}).keys()),
+    }, indent=2, ensure_ascii=False)
+
     user_msg = STRATEGE_USER_PROMPT.format(
         analyst_data=analyst_data, weather_data=weather_data,
-        holidays_data=holidays_data, events_data=events_data,
+        holidays_data=holidays_data, events_data=events_data, stock_data=stock_data,
         current_time=datetime.now().strftime("%H:%M"), hours_remaining=hours_remaining,
+        close_hour=CLOSE_HOUR,
     )
 
     # Boucle de feedback : taux de suivi des incitations + rejets HITL récents
@@ -617,10 +763,10 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
         model_used = OPENROUTER_MODEL
 
     if not llm_response and MISTRAL_KEY:
-        logger.info("[STRATEGE] Node 4 — Appel Mistral direct...")
+        logger.info("[STRATEGE] Node 4 — Appel Mistral direct (urgence=%s)...", urgency_level)
         llm_response, llm_latency_ms = await _call_mistral_stratege(
             system_with_rag, user_msg, urgency_level)
-        model_used = "mistral"
+        model_used = _mistral_rotation(urgency_level)[0]
 
     if not llm_response:
         logger.info(f"[STRATEGE] Node 4 — Appel Ollama ({OLLAMA_MODEL})...")
@@ -663,7 +809,8 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
 
     if not strategie_data.get("actions"):
         strategie_data = _make_fallback_strategy(gap_pct, urgency_level, summary,
-                                                  hours_remaining, rag_scripts)
+                                                 hours_remaining, rag_scripts,
+                                                 catalog=catalog, gap_amount=gap_amount)
 
     total_duration = (time.time() - t0) * 1000
     _lf_span(trace, "generate_strategy",
@@ -697,13 +844,16 @@ async def node_build_output(state: SalesAgentState) -> dict:
     rag_used         = state.get("rag_used", False)
     nb_scripts       = state.get("nb_rag_scripts", 0)
     hour             = datetime.now().hour
-    hrs_remaining    = max(0, 20 - hour)
+    hrs_remaining    = _hours_remaining(hour)
     summary          = context.get("summary", {})
     real_time_alerts = state.get("real_time_alerts", [])
+    catalog          = state.get("catalog") or {}
 
     if not strategie_data.get("actions"):
-        strategie_data = _make_fallback_strategy(gap_pct, urgency_level, summary,
-                                                  hrs_remaining, state.get("rag_context") or [])
+        strategie_data = _make_fallback_strategy(
+            gap_pct, urgency_level, summary, hrs_remaining,
+            state.get("rag_context") or [], catalog=catalog,
+            gap_amount=float(state.get("gap_amount", 0) or 0))
 
     actions           = strategie_data.get("actions", [])[:3]
     focus_produits    = strategie_data.get("focus_produits", [])
@@ -715,15 +865,32 @@ async def node_build_output(state: SalesAgentState) -> dict:
         strategie_summary = (f"Gap {gap_pct:.1f}% — {cause_racine[:80]}. "
                              f"Focus: {', '.join(focus_produits[:2]) or 'produits premium'}.")
 
+    # Garde-fou catalogue : le prompt interdit d'inventer un produit (G1), mais
+    # une consigne ne se vérifie pas toute seule. On confronte chaque
+    # produit_cible au catalogue PostgreSQL et on marque celles qui n'y sont pas —
+    # le vendeur voit ainsi ce qui est réellement disponible en boutique.
+    known = _catalog_index(catalog)
     validated_actions = []
+    off_catalog = 0
     for i, a in enumerate(actions, 1):
+        produit = str(a.get("produit_cible", ""))[:100]
+        match   = _match_catalog(produit, known)
+        if produit and not match:
+            off_catalog += 1
         validated_actions.append({
             "priorite":       int(a.get("priorite", i)),
             "action":         str(a.get("action", ""))[:200],
-            "produit_cible":  str(a.get("produit_cible", ""))[:100],
+            "produit_cible":  produit,
             "argument_vente": str(a.get("argument_vente", ""))[:250],
             "impact_estime":  str(a.get("impact_estime", ""))[:100],
+            "en_catalogue":   bool(match) if produit else None,
+            "sku":            match.get("sku") if match else None,
+            "prix_ttc":       match.get("prix_ttc") if match else None,
+            "stock_dispo":    match.get("stock") if match else None,
         })
+    if off_catalog:
+        logger.warning("[STRATEGE] %d/%d action(s) citent un produit hors catalogue %s",
+                       off_catalog, len(validated_actions), catalog.get("store_id", ""))
 
     if validated_actions and real_time_alerts:
         for alert in real_time_alerts:
@@ -732,7 +899,10 @@ async def node_build_output(state: SalesAgentState) -> dict:
                 alert["action"] = f"{a['produit_cible']} — {a['argument_vente'][:80]}"
 
     context_signals = _build_context_signals(context, factors)
-    heatmap         = context.get("heatmap") or _build_heatmap(urgency_level, summary)
+    # L'urgence réelle du cycle pilote la heatmap. Auparavant context["heatmap"]
+    # était toujours présent — calculé avec "MEDIUM" en dur dans tools.py — donc
+    # cette branche ne s'exécutait jamais et la heatmap ignorait l'urgence.
+    heatmap         = _build_heatmap(urgency_level, summary)
     duration        = (time.time() - t0) * 1000
 
     _lf_span(trace, "build_output",
@@ -932,6 +1102,58 @@ async def node_self_critique_stratege(state: SalesAgentState) -> dict:
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _normalize_product(name: str) -> str:
+    """Clé de rapprochement tolérante aux accents, casse et ponctuation."""
+    import unicodedata
+    txt = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", txt.lower())
+
+
+_MIN_MATCH_LEN = 6
+
+
+def _catalog_index(catalog: dict) -> dict:
+    """
+    Index nom normalisé → fiche produit, toutes gammes confondues.
+
+    Les clés trop courtes sont écartées : une clé vide (produit libellé « . »)
+    est incluse dans n'importe quelle chaîne et ferait correspondre tout à tout.
+    """
+    index = {}
+    for produits in (catalog.get("gammes") or {}).values():
+        for p in produits:
+            key = _normalize_product(p["nom"])
+            if len(key) >= _MIN_MATCH_LEN:
+                index[key] = p
+    for d in (catalog.get("dormant") or []):
+        key = _normalize_product(d["nom"])
+        if len(key) >= _MIN_MATCH_LEN:
+            index.setdefault(key, {**d, "marge_pct": 0, "qty_30j": 0,
+                                   "stock_risk": "dormant"})
+    return index
+
+
+def _match_catalog(produit: str, index: dict) -> dict | None:
+    """
+    Rapproche un produit cité par le LLM d'une ligne du catalogue.
+
+    Exact d'abord, puis inclusion dans les deux sens : les modèles recopient
+    volontiers la ligne entière du catalogue, prix compris (« Forfait MIFI PRE
+    75Go  109 TND »), ou au contraire l'abrègent. En cas de candidats multiples
+    on retient le plus spécifique — le nom le plus long — plutôt que d'exiger
+    l'unicité, qui rejetait des correspondances pourtant valides.
+    """
+    key = _normalize_product(produit)
+    if len(key) < _MIN_MATCH_LEN:
+        return None
+    if key in index:
+        return index[key]
+    candidats = [(k, v) for k, v in index.items() if key in k or k in key]
+    if not candidats:
+        return None
+    return max(candidats, key=lambda kv: len(kv[0]))[1]
+
+
 def _extract_from_partial_json(content):
     result = {}
     for field in ["cause_racine","strategie_summary","message_manager"]:
@@ -948,46 +1170,96 @@ def _extract_from_partial_json(content):
     return result
 
 
-def _make_fallback_strategy(gap_pct, urgency, summary, hours_remaining, rag_scripts=None):
-    rag_scripts = rag_scripts or []
-    w_eff = float(summary.get("weather_effect", 0))
-    is_rainy = w_eff <= -0.10; w_label = summary.get("weather_label", "")
-    if rag_scripts:
-        # rag_context contient des RetrievedDocument : action/argument/impact
-        # vivent dans le payload, quel que soit le domaine du document.
-        def _p(doc, key: str) -> str:
-            return str((getattr(doc, "payload", None) or {}).get(key, "") or "")
+def _make_fallback_strategy(gap_pct, urgency, summary, hours_remaining,
+                            rag_scripts=None, catalog=None, gap_amount=0.0):
+    """
+    Stratégie de repli quand le LLM est indisponible.
 
+    Deux sources, dans cet ordre : les scripts Milvus (ils portent déjà un
+    argumentaire rédigé), puis le catalogue PostgreSQL du magasin. L'ancienne
+    version listait des produits et des prix écrits en dur — un repli qui
+    recommandait des références absentes de la base, donc invendables.
+    """
+    rag_scripts = rag_scripts or []
+    catalog     = catalog or {}
+    w_eff    = float(summary.get("weather_effect", 0))
+    is_rainy = w_eff <= -0.10
+    w_label  = summary.get("weather_label", "")
+
+    def _p(doc, key: str) -> str:
+        return str((getattr(doc, "payload", None) or {}).get(key, "") or "")
+
+    # ── 1. Scripts RAG exploitables (ils nomment un produit) ──────────────────
+    usable = [s for s in rag_scripts[:4] if getattr(s, "produit", "")]
+    if usable:
         actions = [{"priorite": i, "action": _p(s, "action")[:150],
                     "produit_cible": (s.produit or "")[:100],
                     "argument_vente": _p(s, "argument")[:200],
                     "impact_estime": _p(s, "impact")[:100]}
-                   for i, s in enumerate(rag_scripts[:3], 1)]
-        focus = [p for p in dict.fromkeys(s.produit for s in rag_scripts[:3]) if p]
-    elif is_rainy:
-        actions = [
-            {"priorite":1,"action":"Proposer AirPods Pro 3 résistants eau","produit_cible":"AirPods Pro 3","argument_vente":"Certifiés IPX4 résistants à l'eau","impact_estime":"+279 TND panier"},
-            {"priorite":2,"action":"Cross-sell Box Fibre 1Go","produit_cible":"Box Fibre 1Go","argument_vente":"Fibre 59 TND/mois installation offerte","impact_estime":"+59 TND récurrent"},
-            {"priorite":3,"action":"Assurance Premium systématique","produit_cible":"Assurance Premium","argument_vente":"9 TND/mois remplacement 48h","impact_estime":"Marge 80%"},
-        ]; focus = ["AirPods Pro 3","Box Fibre 1Go","Assurance Premium"]
-    elif gap_pct > 40:
-        actions = [
-            {"priorite":1,"action":"Bundle iPhone 16 Pro + Forfait 5G Max + Assurance","produit_cible":"iPhone 16 Pro","argument_vente":"0 DT aujourd'hui, 54 TND/mois sur 24 mois","impact_estime":"+1 357 TND"},
-            {"priorite":2,"action":"Convertir recharges vers Forfait Flexi 25Go","produit_cible":"Forfait Flexi 25Go","argument_vente":"3 recharges = 30 TND. Flexi = 29 TND + illimité","impact_estime":"+29 TND récurrent"},
-            {"priorite":3,"action":"Closing express clients indécis","produit_cible":"Samsung Galaxy A55 5G","argument_vente":"Il reste 2 unités — offre 0% expire ce soir","impact_estime":"+899 TND"},
-        ]; focus = ["iPhone 16 Pro","Forfait 5G Max","Forfait Flexi 25Go"]
+                   for i, s in enumerate(usable[:3], 1)]
+        focus  = [p for p in dict.fromkeys(s.produit for s in usable[:3]) if p]
+        source = "rag"
     else:
+        # ── 2. Catalogue réel du magasin ──────────────────────────────────────
+        # Gammes choisies selon la situation, produits choisis selon la rotation.
+        if is_rainy:
+            gammes = ["ACCESSOIRE_PREMIUM", "SERVICE", "ACCESSOIRE", "FORFAIT"]
+        elif gap_pct > 40:
+            gammes = ["TERMINAL", "FORFAIT", "FORFAIT_BOX", "ACCESSOIRE_PREMIUM"]
+        else:
+            gammes = ["SERVICE", "ACCESSOIRE_PREMIUM", "FORFAIT", "SIM_KIT"]
+        produits = pick_products(catalog, gammes, limit=3)
+        if not produits:   # dernier recours : n'importe quelle gamme disponible
+            produits = pick_products(catalog, list((catalog.get("gammes") or {}).keys()),
+                                     limit=3)
+
+        actions, focus = [], []
+        for i, p in enumerate(produits, 1):
+            nb_ventes = (max(1, round(gap_amount / p["prix_ttc"] + 0.49))
+                         if gap_amount and p["prix_ttc"] > 0 else 1)
+            actions.append({
+                "priorite":       i,
+                "action":         f"Proposer {p['nom']} en priorité {i}",
+                "produit_cible":  p["nom"],
+                "argument_vente": (
+                    f"{p['prix_ttc']:.0f} TND"
+                    + (f" — marge {p['marge_pct']:.0f}%" if p["marge_pct"] >= 20 else "")
+                    + (f" — {p['qty_30j']} vendus ces 30 derniers jours" if p["qty_30j"] else "")
+                ),
+                "impact_estime": (f"+{p['prix_ttc']:.0f} TND par vente"
+                                  + (f" — {nb_ventes} vente(s) pour combler le gap"
+                                     if gap_amount else "")),
+            })
+            focus.append(p["nom"])
+        source = "catalogue" if actions else "aucune"
+
+    if not actions:
+        # Ni RAG ni catalogue : rester au niveau de la gamme plutôt que d'inventer.
         actions = [
-            {"priorite":1,"action":"Upsell Assurance Premium sur 100% ventes terminaux","produit_cible":"Assurance Premium","argument_vente":"9 TND/mois remplacement 48h garanti","impact_estime":"Marge 80%"},
-            {"priorite":2,"action":"Cross-sell Box Fibre 1Go","produit_cible":"Box Fibre 1Go","argument_vente":"Fibre 1Go 59 TND/mois","impact_estime":"+59 TND récurrent"},
-            {"priorite":3,"action":"Proposer Cloud Backup 1To","produit_cible":"Cloud Backup 1To","argument_vente":"15 TND/mois photos sauvegardées automatiquement","impact_estime":"Marge haute"},
-        ]; focus = ["Assurance Premium","Box Fibre 1Go","Cloud Backup 1To"]
+            {"priorite": 1, "action": "Prioriser la gamme au meilleur ticket encore en stock",
+             "produit_cible": "", "argument_vente": "Vérifier la disponibilité en boutique",
+             "impact_estime": "Impact selon ticket moyen"},
+            {"priorite": 2, "action": "Convertir vers une offre à revenu récurrent",
+             "produit_cible": "", "argument_vente": "Engagement mensuel plutôt qu'acte unique",
+             "impact_estime": "Récurrent mensuel"},
+            {"priorite": 3, "action": "Attacher un service à chaque vente",
+             "produit_cible": "", "argument_vente": "Vente additionnelle en 60 secondes",
+             "impact_estime": "Marge haute"},
+        ]
+        focus = []
+
+    logger.info("[STRATEGE FALLBACK] source=%s — %d action(s)", source, len(actions))
     return {
         "cause_racine": f"Gap {gap_pct:.1f}% — {w_label or 'performance à améliorer'}",
         "actions": actions, "focus_produits": focus,
-        "message_manager": f"Gap {gap_pct:.0f}% | {hours_remaining}h | {'URGENT' if gap_pct>40 else 'À surveiller'}",
-        "strategie_summary": (f"Gap {gap_pct:.1f}% avec {hours_remaining}h restantes. "
-                              f"{'Météo — accessoires priorité.' if is_rainy else ''} Focus: {', '.join(focus[:2])}."),
+        "message_manager": f"Gap {gap_pct:.0f}% | {hours_remaining}h | "
+                           f"{'URGENT' if gap_pct > 40 else 'À surveiller'}",
+        "strategie_summary": (
+            f"Gap {gap_pct:.1f}% avec {hours_remaining}h restantes. "
+            + ("Météo défavorable — attachement prioritaire. " if is_rainy else "")
+            + (f"Focus: {', '.join(focus[:2])}." if focus else
+               "Focus: gammes disponibles en boutique.")
+        ),
     }
 
 

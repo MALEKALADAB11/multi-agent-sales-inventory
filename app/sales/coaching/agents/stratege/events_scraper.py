@@ -122,6 +122,22 @@ async def scrape_carthage() -> list[dict]:
 
 _OFFER_KEYWORDS = ("promo", "offre", "bonus", "gratuit", "réduction", "solde", "-50", "-30")
 
+# Fragments de navigation que le découpage en phrases capture comme des offres :
+# menus, barres de recherche, liens. Ils ont pollué market.events avec des lignes
+# du type « Offre Ooredoo — Eshop Ooredoo Particulier Business Recherche… ».
+_NAV_NOISE = re.compile(
+    r"(eshop|recherche de produits|acc[eè]s rapide|t[ée]l[ée]chargez|"
+    r"notre s[ée]lection|par ici|https?://|www\.)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_offer(line: str) -> bool:
+    """Une offre annonce un prix, une remise ou une durée — pas juste un mot-clé."""
+    if _NAV_NOISE.search(line):
+        return False
+    return bool(re.search(r"(\d+\s*(dt|dinars?|go|%|mois)|-\s*\d+\s*%)", line, re.IGNORECASE))
+
 
 async def scrape_ooredoo_offers() -> list[dict]:
     """Promos ooredoo.tn stockées comme événements PROMO_OPERATEUR (durée 30j)."""
@@ -138,6 +154,8 @@ async def scrape_ooredoo_offers() -> list[dict]:
     for line in re.split(r"(?<=[.!?])\s+|\|", text):
         low = line.lower()
         if not any(k in low for k in _OFFER_KEYWORDS):
+            continue
+        if not _looks_like_offer(line):
             continue
         title = line.strip()[:90]
         key = re.sub(r"[^a-z0-9]", "", low)[:40]
@@ -172,16 +190,38 @@ def _norm_key(name: str) -> str:
 
 
 async def store_events(events: list[dict]) -> int:
-    """Upsert idempotent : nom normalisé + start_date. Retourne le nb insérés."""
+    """
+    Upsert idempotent. Retourne le nombre de lignes insérées.
+
+    Clé d'idempotence : le nom normalisé SEUL pour les promotions opérateur,
+    nom + start_date pour les événements datés (concerts, fêtes).
+
+    Une promotion n'a pas de date de début connue — le scraper lui attribuait
+    date.today(). La clé incluant start_date, chaque exécution quotidienne
+    créait donc une nouvelle ligne pour la même offre : 5 promotions étaient
+    devenues 35 lignes en une semaine, saturant le contexte du Stratège. Pour
+    ces événements-là, on prolonge la fenêtre de validité de la ligne existante
+    au lieu d'en insérer une nouvelle.
+    """
     if not events:
         return 0
     conn = await asyncpg.connect(DB_URL)
     inserted = 0
     try:
-        rows = await conn.fetch("SELECT event_name, start_date FROM market.events")
-        existing = {(_norm_key(r["event_name"]), r["start_date"]) for r in rows}
+        rows = await conn.fetch("SELECT event_name, start_date, sous_type FROM market.events")
+        existing      = {(_norm_key(r["event_name"]), r["start_date"]) for r in rows}
+        existing_names = {_norm_key(r["event_name"]) for r in rows}
 
         for ev in events:
+            undated = ev.get("sous_type") == "PROMO_OPERATEUR"
+            if undated and _norm_key(ev["event_name"]) in existing_names:
+                # Offre déjà connue : on prolonge sa validité, sans doublon.
+                await conn.execute("""
+                    UPDATE market.events
+                    SET end_date = GREATEST(end_date, $2)
+                    WHERE lower(regexp_replace(event_name, '[^a-zA-Z0-9]', '', 'g')) = $1
+                """, _norm_key(ev["event_name"]), ev["end_date"])
+                continue
             if (_norm_key(ev["event_name"]), ev["start_date"]) in existing:
                 continue
             up = ev.get("uplift", {})
@@ -202,6 +242,7 @@ async def store_events(events: list[dict]) -> int:
                 (ev.get("note_strategie") or "")[:1000],
             )
             inserted += 1
+            existing_names.add(_norm_key(ev["event_name"]))
 
         # Réaligne les bornes du festival agrégé sur les vraies dates de concerts
         concert_dates = [e["start_date"] for e in events if e.get("sous_type") == "CONCERT"]

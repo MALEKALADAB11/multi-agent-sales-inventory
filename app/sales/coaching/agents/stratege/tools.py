@@ -43,6 +43,14 @@ _weather_cache: dict = {}
 _weather_cache_time: dict = {}
 _WEATHER_TTL = 300
 
+# Budget par source du contexte externe. Le contexte est un enrichissement :
+# aucune de ces sources ne justifie de retarder le cycle commercial, et la
+# somme des budgets doit rester très en deçà du timeout de l'orchestrateur.
+WEATHER_BUDGET_S  = float(os.getenv("STRATEGE_WEATHER_BUDGET_S",  "6"))
+HOLIDAYS_BUDGET_S = float(os.getenv("STRATEGE_HOLIDAYS_BUDGET_S", "5"))
+MARKET_BUDGET_S   = float(os.getenv("STRATEGE_MARKET_BUDGET_S",   "8"))
+EVENTS_BUDGET_S   = float(os.getenv("STRATEGE_EVENTS_BUDGET_S",   "9"))
+
 
 # ── Coordonnées boutique depuis PostgreSQL ────────────────────────────────────
 
@@ -211,18 +219,39 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
     }
     try:
         async with acquire(connect_timeout=8) as conn:
+            # Déduplication à la lecture. Le scraper d'offres réinsérait chaque
+            # jour les mêmes lignes avec une start_date différente (clé
+            # d'idempotence = nom + start_date) : 35 des 42 événements « en
+            # cours » étaient des doublons de texte de navigation ooredoo.tn, et
+            # ils saturaient le LIMIT au détriment des vrais événements
+            # (festivals, fêtes nationales, rentrée). On ne garde qu'une
+            # occurrence par nom normalisé, la plus récemment commencée.
             ev_rows = await conn.fetch("""
-                SELECT event_name, event_type, sous_type,
+                SELECT DISTINCT ON (norm_name)
+                       event_name, event_type, sous_type,
                        start_date, end_date, intensite, scope,
                        uplift_terminal, uplift_forfait, uplift_sim,
                        uplift_recharge, uplift_accessoire, note_strategie
-                FROM market.events
-                WHERE start_date <= CURRENT_DATE + INTERVAL '30 days'
-                  AND end_date   >= CURRENT_DATE
-                -- En cours d'abord, puis les plus proches ; LIMIT élargi car le
-                -- scraper FIC ajoute ~20 concerts datés sur juillet-août.
-                ORDER BY (start_date <= CURRENT_DATE) DESC, start_date ASC
-                LIMIT 25
+                FROM (
+                    SELECT *,
+                           -- translate() plutôt que unaccent : l'extension n'est
+                           -- pas garantie présente, et « Soldes Été 2026 » /
+                           -- « Soldes Ete 2026 » doivent se réduire à la même clé.
+                           lower(regexp_replace(
+                               translate(event_name,
+                                         'áàâäãéèêëíìîïóòôöõúùûüçÁÀÂÄÃÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÇ',
+                                         'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'),
+                               '[^a-zA-Z0-9]', '', 'g')) AS norm_name
+                    FROM market.events
+                    WHERE start_date <= CURRENT_DATE + INTERVAL '30 days'
+                      AND end_date   >= CURRENT_DATE
+                      -- Bruit de scraping : fragments de navigation capturés
+                      -- comme « offres » (menus, liens, barres de recherche).
+                      AND event_name !~* ('(eshop|recherche de produits|acces rapide|'
+                                       || 'accès rapide|telechargez|téléchargez|'
+                                       || 'notre selection|notre sélection|https?://)')
+                ) e
+                ORDER BY norm_name, start_date DESC
             """)
             today = date.today()
 
@@ -254,10 +283,21 @@ async def fetch_market_intelligence_pg(store_id: str = None) -> dict:
                 }
                 for r in ev_rows
             ]
-            # Séparation en cours / à venir : un festival déjà commencé et une
-            # rentrée dans 3 semaines n'appellent pas la même action terrain.
-            result["events_en_cours"] = [e for e in result["events_actifs"] if e["en_cours"]]
-            result["events_a_venir"]  = [e for e in result["events_actifs"] if not e["en_cours"]]
+            # DISTINCT ON impose son propre ORDER BY : le classement métier se
+            # fait donc ici, et il diffère selon l'horizon. Un événement en cours
+            # agit sur le trafic d'aujourd'hui — l'intensité prime. Un événement à
+            # venir sert à préparer stock et équipe — l'imminence prime, sinon un
+            # gros festival dans un mois masque une fête nationale dans six jours.
+            _INTENSITE = {"EXTREME": 3, "HIGH": 2, "MEDIUM": 1, "LOW": 0}
+            en_cours = [e for e in result["events_actifs"] if e["en_cours"]]
+            a_venir  = [e for e in result["events_actifs"] if not e["en_cours"]]
+            en_cours.sort(key=lambda e: _INTENSITE.get(e["intensite"], 0), reverse=True)
+            a_venir.sort(key=lambda e: (e["jours_avant"],
+                                        -_INTENSITE.get(e["intensite"], 0)))
+
+            result["events_en_cours"] = en_cours[:10]
+            result["events_a_venir"]  = a_venir[:10]
+            result["events_actifs"]   = result["events_en_cours"] + result["events_a_venir"]
 
             sp_rows = await conn.fetch("""
                 SELECT categorie, mois, jour_semaine,
@@ -408,21 +448,33 @@ async def fetch_full_context(store_id: str) -> dict:
 
     from .scraper import scrape_ooredoo_events
 
-    weather_task  = asyncio.create_task(fetch_weather(store_id))
-    holidays_task = asyncio.create_task(fetch_holidays())
-    market_task   = asyncio.create_task(fetch_market_intelligence_pg(store_id))
-    events_task   = asyncio.create_task(scrape_ooredoo_events())
+    # Chaque source a son propre budget : une source lente ne doit jamais
+    # dicter la latence du cycle. Auparavant gather(return_exceptions=False)
+    # faisait remonter la première exception, et le except relançait la météo
+    # en séquentiel — on payait deux fois la source la plus lente.
+    async def _budget(coro, seconds: float, label: str, default):
+        try:
+            return await asyncio.wait_for(coro, timeout=seconds)
+        except asyncio.TimeoutError:
+            logger.warning("[STRATEGE] %s : budget %.0fs dépassé — ignoré", label, seconds)
+            return default
+        except Exception as e:
+            logger.warning("[STRATEGE] %s : %s", label, str(e)[:100])
+            return default
 
-    try:
-        weather, holidays, market, ooredoo_events = await asyncio.gather(
-            weather_task, holidays_task, market_task, events_task, return_exceptions=False
-        )
-    except Exception as e:
-        logger.warning(f"[STRATEGE] fetch_full_context gather: {e}")
-        weather        = await fetch_weather(store_id)
-        holidays       = {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}
-        market         = {}
-        ooredoo_events = {"promotions": [], "new_offers": [], "tarifs": [], "events": []}
+    weather, holidays, market, ooredoo_events = await asyncio.gather(
+        _budget(fetch_weather(store_id), WEATHER_BUDGET_S, "météo",
+                {"current": {}, "hourly": {}, "summary": {
+                    "weather_label": "", "weather_icon": "🌤️", "weather_effect": 0.0,
+                    "temperature": 22, "is_rainy": False, "is_sunny": False,
+                    "rain_hours": [], "best_hours": [], "is_holiday": False,
+                    "city": store_id}}),
+        _budget(fetch_holidays(), HOLIDAYS_BUDGET_S, "fériés",
+                {"is_holiday_today": False, "today_holiday": None, "next_holiday": None}),
+        _budget(fetch_market_intelligence_pg(store_id), MARKET_BUDGET_S, "market PG", {}),
+        _budget(scrape_ooredoo_events(), EVENTS_BUDGET_S, "offres Ooredoo",
+                {"promotions": [], "new_offers": [], "tarifs": [], "events": []}),
+    )
 
     summary = weather.get("summary", {})
     if holidays.get("is_holiday_today"):

@@ -1,74 +1,256 @@
 {
-  "total": 2,
+  "total": 8,
   "events": [
     {
-      "title": "HONOR",
+      "title": "Activation SIM 4G frais offerts",
       "type": "promotion",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
+      "category": "SIM Kit Ooredoo 4G",
+      "price": "-100%",
+      "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-26T15:47:41.774454"
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
     },
     {
-      "title": "[Go Back]",
-      "type": "tarif",
-      "category": "internet",
-      "price": "",
-      "details": "",
+      "title": "Soldes accessoires -25%",
+      "type": "promotion",
+      "category": "Accessoires Oraimo (tous)",
+      "price": "-25%",
+      "details": "Valable jusqu'au 2026-07-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-26T15:47:44.611095"
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Pack Postpayé été — 2 mois offerts",
+      "type": "promotion",
+      "category": "Forfait Postpayé Essentiel",
+      "price": "-17%",
+      "details": "Valable jusqu'au 2026-08-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Flexi+ 5G — Data ×2 pendant 3 mois",
+      "type": "promotion",
+      "category": "Forfait Flexi 5G",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Promo Flexi 25Go → 50Go même prix",
+      "type": "promotion",
+      "category": "Forfait Flexi 25Go",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Rentrée anticipée : forfait étudiant -15%",
+      "type": "promotion",
+      "category": "Forfait étudiant Ooredoo",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-09-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes Été 2026 — Terminaux Samsung -10%",
+      "type": "promotion",
+      "category": "Samsung Galaxy (tous modèles)",
+      "price": "-10%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes Été 2026 — Infinix / Tecno -8%",
+      "type": "promotion",
+      "category": "Infinix / Tecno (tous modèles)",
+      "price": "-8%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
     }
   ],
   "active": [
     {
-      "title": "HONOR",
+      "title": "Activation SIM 4G frais offerts",
       "type": "promotion",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
+      "category": "SIM Kit Ooredoo 4G",
+      "price": "-100%",
+      "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-26T15:47:41.774454"
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
     },
     {
-      "title": "[Go Back]",
-      "type": "tarif",
-      "category": "internet",
-      "price": "",
-      "details": "",
+      "title": "Soldes accessoires -25%",
+      "type": "promotion",
+      "category": "Accessoires Oraimo (tous)",
+      "price": "-25%",
+      "details": "Valable jusqu'au 2026-07-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-26T15:47:44.611095"
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Pack Postpayé été — 2 mois offerts",
+      "type": "promotion",
+      "category": "Forfait Postpayé Essentiel",
+      "price": "-17%",
+      "details": "Valable jusqu'au 2026-08-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Flexi+ 5G — Data ×2 pendant 3 mois",
+      "type": "promotion",
+      "category": "Forfait Flexi 5G",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Promo Flexi 25Go → 50Go même prix",
+      "type": "promotion",
+      "category": "Forfait Flexi 25Go",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Rentrée anticipée : forfait étudiant -15%",
+      "type": "promotion",
+      "category": "Forfait étudiant Ooredoo",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-09-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes Été 2026 — Terminaux Samsung -10%",
+      "type": "promotion",
+      "category": "Samsung Galaxy (tous modèles)",
+      "price": "-10%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes Été 2026 — Infinix / Tecno -8%",
+      "type": "promotion",
+      "category": "Infinix / Tecno (tous modèles)",
+      "price": "-8%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
     }
   ],
   "promotions": [
     {
-      "title": "HONOR",
+      "title": "Activation SIM 4G frais offerts",
       "type": "promotion",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
+      "category": "SIM Kit Ooredoo 4G",
+      "price": "-100%",
+      "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-26T15:47:41.774454"
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes accessoires -25%",
+      "type": "promotion",
+      "category": "Accessoires Oraimo (tous)",
+      "price": "-25%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Pack Postpayé été — 2 mois offerts",
+      "type": "promotion",
+      "category": "Forfait Postpayé Essentiel",
+      "price": "-17%",
+      "details": "Valable jusqu'au 2026-08-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Flexi+ 5G — Data ×2 pendant 3 mois",
+      "type": "promotion",
+      "category": "Forfait Flexi 5G",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Promo Flexi 25Go → 50Go même prix",
+      "type": "promotion",
+      "category": "Forfait Flexi 25Go",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Rentrée anticipée : forfait étudiant -15%",
+      "type": "promotion",
+      "category": "Forfait étudiant Ooredoo",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-09-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes Été 2026 — Terminaux Samsung -10%",
+      "type": "promotion",
+      "category": "Samsung Galaxy (tous modèles)",
+      "price": "-10%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
+    },
+    {
+      "title": "Soldes Été 2026 — Infinix / Tecno -8%",
+      "type": "promotion",
+      "category": "Infinix / Tecno (tous modèles)",
+      "price": "-8%",
+      "details": "Valable jusqu'au 2026-07-31",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-07-24T14:04:50.280153"
     }
   ],
   "new_offers": [],
-  "tarifs": [
-    {
-      "title": "[Go Back]",
-      "type": "tarif",
-      "category": "internet",
-      "price": "",
-      "details": "",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-26T15:47:44.611095"
-    }
-  ],
-  "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-26T15:47:48.076757"
+  "tarifs": [],
+  "source": "fallback (timeout)",
+  "fetched_at": "2026-07-24T14:04:50.280153",
+  "degraded": true,
+  "degraded_reason": "timeout",
+  "fail_streak": 1
 }

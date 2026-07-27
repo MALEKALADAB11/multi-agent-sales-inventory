@@ -15,7 +15,7 @@ Pattern :
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -62,15 +62,26 @@ def _extract_extras(result: Dict[str, Any]) -> Dict[str, Any]:
 class StrategyCache:
     """Cache mémoire LRU avec TTL — évite les appels répétitifs au Stratège."""
 
-    def __init__(self, ttl_seconds: int = 1800, max_size: int = 50):
+    def __init__(self, ttl_seconds: int = 1800, max_size: int = 50,
+                 gap_bucket: float = 5.0):
         self._cache: Dict[str, tuple] = {}   # key → (output, timestamp)
-        self._ttl     = ttl_seconds
-        self._max_size = max_size
+        self._ttl        = ttl_seconds
+        self._max_size   = max_size
+        self._gap_bucket = max(1.0, gap_bucket)
         self._hits  = 0
         self._misses = 0
 
     def _key(self, store_id: str, gap_pct: float) -> str:
-        return f"{store_id}:{round(gap_pct, 1)}"
+        """
+        Clé bucketisée. La version précédente arrondissait le gap au dixième de
+        point : le gap bougeant à chaque vente, deux cycles ne partageaient
+        pratiquement jamais la même clé et le cache ne servait à rien. Un pas de
+        5 points regroupe les situations qui appellent la même stratégie, et
+        l'heure est incluse car une même situation ne se joue pas pareil à 11h
+        et à 19h.
+        """
+        bucket = int(max(0.0, gap_pct) // self._gap_bucket) * self._gap_bucket
+        return f"{store_id}:{bucket}:{time.localtime().tm_hour}"
 
     def get(self, store_id: str, gap_pct: float) -> Optional[StrategieOutput]:
         k = self._key(store_id, gap_pct)
@@ -121,13 +132,22 @@ class CoachStrategeOrchestrator:
     def __init__(
         self,
         stratege_agent,
-        timeout:     float = 30.0,
-        max_retries: int   = 3,
+        timeout:     float = None,
+        max_retries: int   = None,
         ttl_cache:   int   = 1800,
     ):
-        self.stratege    = stratege_agent
-        self.timeout     = timeout
-        self.max_retries = max_retries
+        import os
+        self.stratege = stratege_agent
+        # Le Stratège tournait à ~39 s (23 s de scraping web + 15 s de LLM) pour
+        # un timeout de 30 s : il expirait à tous les coups, trois fois de suite,
+        # et le Coach ne recevait jamais qu'un fallback après ~95 s d'attente.
+        # Le contexte est désormais borné (~2 s) et seul le LLM domine la durée.
+        self.timeout     = float(os.getenv("STRATEGE_TIMEOUT_S", "45")) \
+                           if timeout is None else timeout
+        # Un échec du Stratège vient d'un quota LLM ou d'un service externe :
+        # une seconde tentative immédiate reproduit la panne. Une seule reprise.
+        self.max_retries = int(os.getenv("STRATEGE_MAX_RETRIES", "2")) \
+                           if max_retries is None else max_retries
         self.cache       = StrategyCache(ttl_seconds=ttl_cache)
 
     async def invoke(self, state: Dict[str, Any]) -> StrategieOutput:
@@ -143,10 +163,11 @@ class CoachStrategeOrchestrator:
                 "[ORCHESTRATOR] Cache HIT — %s gap=%.1f%% → %d actions <1ms",
                 store_id, gap_pct, cached.nb_actions,
             )
-            cached.cached     = True
-            cached.source     = "cached"
-            cached.latency_ms = (time.time() - t0) * 1000
-            return cached
+            # Copie : muter l'objet marquerait définitivement l'entrée en cache
+            # comme « cached »/« stale_cache », y compris pour les lectures
+            # suivantes qui n'ont pourtant pas le même statut.
+            return replace(cached, cached=True, source="cached",
+                           latency_ms=(time.time() - t0) * 1000)
 
         # ── 2. Invoke avec retry + timeout ────────────────────────────────────
         last_error: Optional[Exception] = None
@@ -194,10 +215,8 @@ class CoachStrategeOrchestrator:
         stale = self.cache.get_stale(store_id, gap_pct)
         if stale:
             logger.info("[ORCHESTRATOR] Fallback L1 — cache expiré utilisé")
-            stale.source     = "stale_cache"
-            stale.cached     = True
-            stale.latency_ms = (time.time() - t0) * 1000
-            return stale
+            return replace(stale, source="stale_cache", cached=True,
+                           latency_ms=(time.time() - t0) * 1000)
 
         # L2 + L3 : produits DB ou actions génériques
         return self._build_fallback(gap_pct, urgency, (time.time() - t0) * 1000, store_id)
