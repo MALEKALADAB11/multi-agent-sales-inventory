@@ -1,75 +1,134 @@
 {
   "suite": "ragas",
-  "error": "retrieval vide (0 contexte sur tous les cas)",
   "judge_model": "mistral/mistral-large-latest",
   "embed_model": "ollama/bge-m3",
+  "store_id": "I63",
+  "top_k": 4,
   "n_cases": 8,
-  "context_coverage": 0.0,
+  "context_coverage": 1.0,
+  "metrics": [
+    "faithfulness",
+    "answer_relevancy",
+    "llm_context_precision_without_reference",
+    "context_recall"
+  ],
+  "means": {
+    "faithfulness": 0.719,
+    "answer_relevancy": 0.677,
+    "llm_context_precision_without_reference": 0.806,
+    "context_recall": 0.167
+  },
+  "scored_cases": {
+    "faithfulness": 8,
+    "answer_relevancy": 8,
+    "llm_context_precision_without_reference": 7,
+    "context_recall": 8
+  },
   "details": [
     {
       "id": "ragas-vente-prix",
       "domain": "sales_script",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "Je ne peux pas répondre à l'objection prix sans contexte documentaire. Veuillez fournir des éléments sur les offres, promotions ou arguments de vente disponibles.",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "Utilise les arguments comparatifs du contexte applicable :\n\n- **Forfait mobile** : *\"Le forfait Telecom à 35 DT est moins cher, mais regardez : hors 5G, plafond data à 20Go, appels limités. Le Ooredoo 5G Max à 49 DT c'est illimité partout + 5G réelle au Lac 2. Sur 30 jours, la différence c'est 47 centimes par jour.\"*\n\n- **Box Fibre** : *\"La Box Fibre à 59 DT peut sembler chère comparée à l'ADSL à 40 DT, mais avec l'ADSL tu paies séparément la ligne, les dépassements, rien pour la TV. La Box Ooredoo à 59 DT c'est fibre 1Go + TV + téléphone fixe illimité. Soit 3 services pour 19 DT de plus. Tu économises en réalité.\"*\n\n- **iPhone** : *\"Un iPhone dure en moyenne 4 ans avec les mises à jour. 1 299 DT sur 4 ans = 325 DT par an = moins d'1 DT par jour. Comparé à un Android mid-range qui se ralentit après 2 ans. Le coût réel est inférieur.\"*\n\nChoisis l'argument en fonction du produit concerné par l'objection.",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.4625160710897596,
+        "llm_context_precision_without_reference": 0.9999999999666667,
+        "context_recall": 0.0
+      }
     },
     {
       "id": "ragas-vente-hesitation",
       "domain": "sales_script",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "Je ne peux pas te donner de réponse précise sans contexte. Veuillez fournir des informations sur les téléphones en question ou toute autre donnée pertinente.",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "Utilise la **technique du choix limité** (C1) :\n*\"Tu préfères repartir avec l'iPhone qui te donne l'écosystème Apple complet, ou le Samsung pour la flexibilité Android ? Les deux sont disponibles maintenant.\"*",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.6622973960072224,
+        "llm_context_precision_without_reference": 0.99999999995,
+        "context_recall": 0.0
+      }
     },
     {
       "id": "ragas-vente-upsell",
       "domain": "sales_script",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "**Action à suivre :**\nVérifie si la boutique a une politique ou un objectif de vente croisée (accessoires avec smartphones). Si oui, applique les directives internes. Sinon, propose systématiquement les accessoires pertinents (coques, chargeurs, écouteurs) en expliquant leur utilité (protection, compatibilité, etc.).\n\n*Si aucune consigne n'est donnée dans le contexte, demande à ton responsable pour clarifier la stratégie de vente.*",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "**Méthode actionnable :**\n\n1. **Identifie le besoin immédiat** :\n   - Si le client n’a **aucun accessoire** (C1) → Propose le **bundle coque + verre trempé (40 DT)**.\n   - Si le client est **mouillé** (C2) → Propose **coque waterproof + assurance Premium** (argument météo visible).\n\n2. **Priorise les accessoires** :\n   - **Écouteurs** (C3) : Disponibles à **12 DT** (marge 20%), à placer en complément si le client hésite sur le bundle.\n\n3. **Stratégie globale** (C4) :\n   - En contexte de **trafic élevé** (+10%), cible les **smartphones haut de gamme** pour maximiser :\n     - **Apple Watch S10** (accessoire premium).\n     - **Assurance + Cloud** (services récurrents).\n\n**Phrase clé** :\n*\"Pour protéger ton investissement, voici [bundle/coque waterproof/écouteurs] – c’est [prix] et ça évite [risque].\"*\n\n**Note** : Si le client refuse, propose un **accessoire à petit prix** (ex : écouteurs 12 DT) pour augmenter le panier moyen.",
+      "scores": {
+        "faithfulness": 0.5882352941176471,
+        "answer_relevancy": 0.6420342717528184,
+        "llm_context_precision_without_reference": 0.8055555555287036,
+        "context_recall": 0.0
+      }
     },
     {
       "id": "ragas-stock-moq",
       "domain": "inventory_playbook",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "Si le besoin prévu est inférieur au **MOQ (Minimum Order Quantity)** du fournisseur, vous ne pouvez pas passer de commande partielle. Deux options s'offrent à vous :\n\n1. **Commander le MOQ** (même si la quantité dépasse votre besoin).\n2. **Ne pas commander** et attendre une future opportunité (si possible).\n\n*→ Vérifiez avec le fournisseur s'il existe une exception ou un arrangement possible.*",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "Si le besoin prévu est sous le MOQ du fournisseur pour le SKU 8811544, deux options selon [C1] :\n1. **Commander le MOQ** (si la rotation justifie le surstock temporaire).\n2. **Regrouper avec d'autres SKU du même fournisseur** pour atteindre le seuil.\n\n*Exemple concret* : Si le MOQ est 1000 unités et le besoin prévu est 500, appliquer l'une des deux solutions ci-dessus.",
+      "scores": {
+        "faithfulness": 0.6666666666666666,
+        "answer_relevancy": 0.7556917482595334,
+        "llm_context_precision_without_reference": null,
+        "context_recall": 1.0
+      }
     },
     {
       "id": "ragas-stock-dormant",
       "domain": "inventory_playbook",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "**Marche à suivre pour le stock dormant :**\n1. **Analyser** : Identifier les produits concernés (quantité, durée d'immobilisation, raisons possibles).\n2. **Promouvoir** :\n   - Mettre en avant via des **offres ciblées** (ex : réductions, bundles).\n   - Utiliser les **réseaux sociaux** et l’emailing pour toucher les clients.\n3. **Écouler** :\n   - Proposer des **ventes flash** ou des **lots**.\n   - Collaborer avec d’autres services Ooredoo (ex : forfaits incluant le produit).\n4. **Évaluer** :\n   - Si le stock reste bloqué, envisager un **destockage** (promos agressives, dons, etc.).\n\n*Si besoin de détails sur un produit spécifique, précisez-le.*",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "D'après le contexte [C1], voici la marche à suivre pour écouler le stock dormant :\n\n1. **Prioriser ce produit dans le discours de vente** : Mettre en avant son écoulement pour libérer de la trésorerie et réduire les coûts de possession.\n2. **L'intégrer en bundle** avec un produit à forte rotation pour accélérer sa vente.\n3. **Suspendre tout réapprovisionnement** jusqu'à normalisation des stocks (jours de couverture > 90 et rotation faible).\n\n*Action immédiate* : Proposer des offres groupées incluant ce produit et cibler les clients sensibles au prix ou aux promotions.",
+      "scores": {
+        "faithfulness": 0.5,
+        "answer_relevancy": 0.8306637286281019,
+        "llm_context_precision_without_reference": 0.9999999999,
+        "context_recall": 0.0
+      }
     },
     {
       "id": "ragas-stock-lead",
       "domain": "inventory_playbook",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "Information manquante : Aucune donnée sur les contrats, garanties ou procédures internes pour gérer ce problème. Consultez votre responsable ou le service juridique pour connaître les recours possibles (pénalités, résiliation, etc.).",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "Augmente le stock de sécurité en utilisant la formule :\n**stock_securite = z × sqrt(lead_time × var_demande + demande² × lead_time_std²)**\npour absorber la variabilité du fournisseur sans surstock excessif.",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.5858732307243746,
+        "llm_context_precision_without_reference": 0.9999999999,
+        "context_recall": 0.0
+      }
     },
     {
       "id": "ragas-produit-prix",
       "domain": "product",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "Information manquante.",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "L'iPhone 16 Pro coûte **6349,00 TND** (prix terminal).",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.9843673534016174,
+        "llm_context_precision_without_reference": 0.49999999995,
+        "context_recall": 0.0
+      }
     },
     {
       "id": "ragas-cross-rupture",
       "domain": "inventory_playbook",
-      "n_contexts": 0,
-      "rag_relevant": false,
-      "answer": "Je ne peux pas répondre sans contexte sur les alternatives disponibles. Veuillez fournir les options de stock ou promotions en cours.",
-      "scores": {}
+      "n_contexts": 4,
+      "rag_relevant": true,
+      "answer": "Propose le Galaxy S25 en commande avec livraison sous 48h.",
+      "scores": {
+        "faithfulness": 0.0,
+        "answer_relevancy": 0.4954576867581986,
+        "llm_context_precision_without_reference": 0.3333333333,
+        "context_recall": 0.3333333333333333
+      }
     }
   ],
-  "run_at": "2026-07-21T13:02:57"
+  "run_at": "2026-07-24T14:02:17"
 }

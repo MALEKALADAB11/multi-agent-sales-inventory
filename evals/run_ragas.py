@@ -99,7 +99,7 @@ def _mean(values: list) -> float | None:
 
 
 def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
-        use_embeddings: bool = True) -> dict:
+        use_embeddings: bool = True, max_workers: int = 2) -> dict:
     from ragas import EvaluationDataset, SingleTurnSample, evaluate
     from ragas.metrics import (
         Faithfulness,
@@ -169,12 +169,26 @@ def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
 
     callback = _langfuse_callback(session_id=f"eval-ragas-{store_id}")
     print(f"\n  Évaluation RAGAS ({len(samples)} cas × {len(metrics)} métriques)…")
+
+    # Concurrence bridée. Par défaut RAGAS lance 16 jobs de juge en parallèle,
+    # ce que le quota Mistral ne suit pas : sur un premier run, 20 des 32 jobs
+    # sont tombés en 429 ou timeout et les moyennes ne portaient plus que sur
+    # une poignée de cas — un score calculé sur les survivants d'un rate-limit
+    # ne mesure pas la qualité du RAG. Peu de workers, des reprises longues.
+    from ragas.run_config import RunConfig
+    run_config = RunConfig(
+        max_workers = max_workers,
+        timeout     = 180,
+        max_retries = 10,
+        max_wait    = 90,
+    )
     result = evaluate(
         dataset=EvaluationDataset(samples=samples),
         metrics=metrics,
         llm=backends.llm,
         embeddings=backends.embeddings,
         callbacks=[callback] if callback else None,
+        run_config=run_config,
     )
     df = result.to_pandas()
 
@@ -188,6 +202,11 @@ def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
         rows.append({**m, "scores": scores})
 
     means = {name: _mean([r["scores"].get(name) for r in rows]) for name in metric_names}
+    # Un job de juge qui tombe (429, timeout) laisse un NaN. La moyenne se
+    # calcule alors sur les cas survivants : sans ce compteur, un score obtenu
+    # sur 2 cas sur 8 se lit comme un résultat complet.
+    scored = {name: sum(1 for r in rows if r["scores"].get(name) is not None)
+              for name in metric_names}
 
     summary = {
         "suite": "ragas",
@@ -199,6 +218,7 @@ def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
         "context_coverage": coverage,
         "metrics": metric_names,
         "means": means,
+        "scored_cases": scored,
         "details": rows,
     }
 
@@ -207,7 +227,12 @@ def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
     print("=" * 62)
     for name in metric_names:
         val = means[name]
-        print(f"  {name:<42} {val if val is not None else '—'}")
+        n_ok = scored[name]
+        flag = "" if n_ok == len(cases) else f"   ⚠ {n_ok}/{len(cases)} cas notés"
+        print(f"  {name:<42} {val if val is not None else '—'}{flag}")
+    if any(scored[n] < len(cases) for n in metric_names):
+        print("\n  Des cas n'ont pas pu être notés (quota du juge) — relancer avec "
+              "--max-workers 1 avant d'interpréter ces moyennes.")
 
     save_results("ragas", summary)
     try:
@@ -226,10 +251,12 @@ if __name__ == "__main__":
     parser.add_argument("--hour", type=int, default=15)
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--no-embeddings", action="store_true")
+    parser.add_argument("--max-workers", type=int, default=2,
+                        help="jobs de juge en parallèle (bas = moins de 429)")
     args = parser.parse_args()
 
     s = run(store_id=args.store, hour=args.hour, top_k=args.top_k,
-            use_embeddings=not args.no_embeddings)
+            use_embeddings=not args.no_embeddings, max_workers=args.max_workers)
     if s.get("error"):
         sys.exit(2)
     # Seuil défendable : faithfulness est la métrique anti-hallucination clé.
