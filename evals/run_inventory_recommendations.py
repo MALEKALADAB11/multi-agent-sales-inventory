@@ -44,7 +44,18 @@ import json
 import re
 
 from evals.common import load_dataset, save_results
-from evals.judge import INVENTORY_CRITERIA, judge_inventory_answer
+from evals.judge import INVENTORY_CRITERIA, judge_inventory_answer, judge_roster
+
+# Statuts des contrôles du juge. `NON_VERIFIE` existe pour une raison précise :
+# un contrôle qui n'a pas tourné rendait `None`, et `report.py` imprimait alors
+# une section vide — impossible à distinguer d'un « rien à signaler ». Un
+# contrôle absent doit être aussi visible qu'un contrôle échoué, sinon la seule
+# garantie que le juge discrimine vraiment disparaît sans bruit du rapport.
+OK, ECHEC, NON_VERIFIE = "OK", "ECHEC", "NON_VERIFIE"
+
+
+def _not_verified(reason: str) -> dict:
+    return {"status": NON_VERIFIE, "reason": reason}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -120,10 +131,16 @@ def run_sanity_checks(cases: list[dict], decide_llm, decide_rule_based) -> dict:
     print("  SANITY CHECKS — le juge discrimine-t-il vraiment ?")
     print("=" * 62)
 
-    results = {"richesse": None, "ancrage": None}
+    results = {
+        "richesse": _not_verified("contrôle non exécuté"),
+        "ancrage":  _not_verified("contrôle non exécuté"),
+        "judge_roster": judge_roster(),
+    }
 
     # ── richesse : LLM vs rule-based sur un cas fallback_anchor ─────────────
     anchor_cases = [c for c in cases if c.get("compare_fallback")]
+    if not anchor_cases:
+        results["richesse"] = _not_verified("aucun cas `compare_fallback` dans le dataset")
     if anchor_cases:
         case = anchor_cases[0]
         state = build_state(case)
@@ -145,21 +162,25 @@ def run_sanity_checks(cases: list[dict], decide_llm, decide_rule_based) -> dict:
             r_rb = j_rb.scores.get("richesse")
             discriminates = (r_llm is not None and r_rb is not None and r_llm > r_rb)
             results["richesse"] = {
+                "status": OK if discriminates else ECHEC,
                 "case_id": case["id"], "llm_score": r_llm, "rule_based_score": r_rb,
                 "discriminates": discriminates,
+                "judges": [j_llm.judge_model, j_rb.judge_model],
             }
-            status = "OK" if discriminates else "ATTENTION"
-            print(f"  [{status}] richesse — LLM={r_llm} vs rule-based={r_rb} (cas: {case['id']})")
+            print(f"  [{OK if discriminates else ECHEC}] richesse — "
+                  f"LLM={r_llm} vs rule-based={r_rb} (cas: {case['id']})")
             if not discriminates:
                 print("    → le juge ne distingue pas un texte templaté d'une vraie analyse ;"
                       " affiner _INVENTORY_JUDGE_SYSTEM avec un exemple concret de texte 'à trous'.")
         else:
-            print(f"  [SKIP] richesse — juge indisponible ({j_llm.error or j_rb.error})")
-    else:
-        print("  [SKIP] richesse — aucun cas `compare_fallback` dans le dataset")
+            reason = f"juge indisponible ({j_llm.error or j_rb.error})"
+            results["richesse"] = _not_verified(reason)
+            print(f"  [{NON_VERIFIE}] richesse — {reason}")
 
     # ── ancrage : corruption manuelle d'un chiffre dans une vraie sortie ────
     plain_cases = [c for c in cases if not c.get("compare_fallback")]
+    if not plain_cases:
+        results["ancrage"] = _not_verified("aucun cas hors `compare_fallback` dans le dataset")
     if plain_cases:
         case = plain_cases[0]
         state = build_state(case)
@@ -170,7 +191,9 @@ def run_sanity_checks(cases: list[dict], decide_llm, decide_rule_based) -> dict:
         corrupted_text = _corrupt_one_number(original_text)
 
         if corrupted_text is None:
-            print("  [SKIP] ancrage — aucun nombre trouvé à corrompre dans la sortie LLM")
+            results["ancrage"] = _not_verified(
+                "aucun nombre à corrompre dans la sortie LLM")
+            print(f"  [{NON_VERIFIE}] ancrage — aucun nombre trouvé à corrompre dans la sortie LLM")
         else:
             j_orig = judge_inventory_answer(case["scenario"], original_text, context=context,
                                             expected_behaviors=case.get("expected_behaviors"))
@@ -182,16 +205,20 @@ def run_sanity_checks(cases: list[dict], decide_llm, decide_rule_based) -> dict:
                 a_corrupt = j_corrupt.scores.get("ancrage")
                 discriminates = (a_orig is not None and a_corrupt is not None and a_orig > a_corrupt)
                 results["ancrage"] = {
+                    "status": OK if discriminates else ECHEC,
                     "case_id": case["id"], "original_score": a_orig, "corrupted_score": a_corrupt,
                     "discriminates": discriminates,
+                    "judges": [j_orig.judge_model, j_corrupt.judge_model],
                 }
-                status = "OK" if discriminates else "ATTENTION"
-                print(f"  [{status}] ancrage — original={a_orig} vs corrompu={a_corrupt} (cas: {case['id']})")
+                print(f"  [{OK if discriminates else ECHEC}] ancrage — "
+                      f"original={a_orig} vs corrompu={a_corrupt} (cas: {case['id']})")
                 if not discriminates:
                     print("    → le juge n'a pas repéré le chiffre incohérent ; ajouter une"
                           " instruction explicite de recoupement chiffre par chiffre.")
             else:
-                print(f"  [SKIP] ancrage — juge indisponible ({j_orig.error or j_corrupt.error})")
+                reason = f"juge indisponible ({j_orig.error or j_corrupt.error})"
+                results["ancrage"] = _not_verified(reason)
+                print(f"  [{NON_VERIFIE}] ancrage — {reason}")
 
     return results
 
@@ -269,16 +296,24 @@ def check_judge_determinism(case: dict, recommendation_text: str, context: str,
     `judge_model` de chaque essai est rapporté pour distinguer ce cas d'une
     vraie instabilité du même juge.
     """
+    # max_retries : un 429 passager sur un seul des essais suffisait à faire
+    # tomber ok_runs sous 2 et à rendre le contrôle « non vérifié » — ce qui
+    # s'est produit au run du 26/07 alors que quatre juges étaient configurés.
+    # Le contrôle n'a que deux appels à faire, autant les faire aboutir.
     runs = []
     for _ in range(max(2, n_repeats)):
         j = judge_inventory_answer(case["scenario"], recommendation_text, context=context,
-                                   expected_behaviors=case.get("expected_behaviors"))
+                                   expected_behaviors=case.get("expected_behaviors"),
+                                   max_retries=2)
         runs.append(j)
 
     ok_runs = [j for j in runs if j.ok]
     if len(ok_runs) < 2:
-        return {"case_id": case["id"], "stable": None,
-                "reason": "moins de 2 juges disponibles pour comparer"}
+        roster = judge_roster()
+        return {**_not_verified(
+                    f"{len(ok_runs)} essai(s) abouti(s) sur {len(runs)} — "
+                    f"juges configurés : {', '.join(roster) or 'aucun'}"),
+                "case_id": case["id"], "stable": None, "judge_roster": roster}
 
     max_spread = {
         c: max(j.scores.get(c, 0) for j in ok_runs) - min(j.scores.get(c, 0) for j in ok_runs)
@@ -288,6 +323,7 @@ def check_judge_determinism(case: dict, recommendation_text: str, context: str,
     same_judge = len({j.judge_model for j in ok_runs}) == 1
 
     result = {
+        "status": OK if stable else ECHEC,
         "case_id": case["id"],
         "stable": stable,
         "same_judge_each_run": same_judge,
@@ -295,8 +331,7 @@ def check_judge_determinism(case: dict, recommendation_text: str, context: str,
         "runs": [{**j.scores, "judge_model": j.judge_model} for j in ok_runs],
     }
 
-    status = "OK" if stable else "ATTENTION"
-    print(f"  [{status}] déterminisme — {case['id']} — écart max par critère: {max_spread}"
+    print(f"  [{OK if stable else ECHEC}] déterminisme — {case['id']} — écart max par critère: {max_spread}"
           f"{'' if same_judge else '  (juges différents entre essais — comparaison moins fiable)'}")
     if not stable:
         print("    → le prompt du juge est sous-spécifié ; ajouter des exemples concrets"
@@ -321,6 +356,12 @@ def print_summary(summary: dict) -> None:
         for comp in summary["fallback_comparison"]:
             print(f"  richesse (fallback) {comp['case_id']}: LLM={comp['llm_richesse']} "
                   f"vs rule-based={comp['rule_based_richesse']}")
+    health = summary.get("judge_health") or {}
+    if health.get("n_distinct", 0) < 2:
+        print(f"  ATTENTION — {health.get('n_distinct', 0)} juge configuré "
+              f"({', '.join(health.get('roster') or []) or 'aucun'}) : ni panel ni "
+              "contrôle de déterminisme croisé possibles, le biais de ce juge unique "
+              "traverse tous les scores ci-dessus.")
 
 
 def run(use_judge: bool = True, run_sanity: bool = False, run_determinism: bool = False) -> dict:
@@ -396,6 +437,7 @@ def run(use_judge: bool = True, run_sanity: bool = False, run_determinism: bool 
         for c in INVENTORY_CRITERIA
     }
 
+    roster = judge_roster()
     summary = {
         "suite": "inventory_recommendations",
         "n_cases": len(cases),
@@ -404,6 +446,17 @@ def run(use_judge: bool = True, run_sanity: bool = False, run_determinism: bool 
         "judge_scores_mean": mean_by_criterion,
         "judge_global_mean": round(sum(j["mean"] for j in judged) / len(judged), 2) if judged else None,
         "fallback_comparison": fallback_comparison,
+        # Un seul juge configuré = pas de panel, pas de contrôle de déterminisme
+        # croisé, et un biais de juge unique qui traverse tous les scores sans
+        # que rien ne le signale. Publié à côté des notes, pas en note de bas de page.
+        "judge_health": {"roster": roster, "n_distinct": len(roster)},
+        # Toujours présents, même non demandés : c'est ce qui distingue « le juge
+        # a été validé » de « personne n'a regardé ».
+        "sanity_checks": {
+            "richesse": _not_verified("non demandé (relancer avec --sanity-check)"),
+            "ancrage":  _not_verified("non demandé (relancer avec --sanity-check)"),
+        },
+        "determinism_check": _not_verified("non demandé (relancer avec --determinism-check)"),
         "details": rows,
     }
 
@@ -424,7 +477,9 @@ def run(use_judge: bool = True, run_sanity: bool = False, run_determinism: bool 
                 case, first_scored["recommendation_text"], build_context_string(case),
             )
         else:
-            print("  [SKIP] aucun cas jugé avec succès à rejouer")
+            summary["determinism_check"] = _not_verified(
+                "aucun cas jugé avec succès à rejouer")
+            print(f"  [{NON_VERIFIE}] aucun cas jugé avec succès à rejouer")
 
     save_results("inventory_recommendations", summary)
     try:

@@ -1,0 +1,277 @@
+<mxfile host="app.diagrams.net" agent="Claude" version="24.0.0">
+  <diagram id="ooredoo-arch" name="Architecture Globale">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===================== TITLE ===================== -->
+        <mxCell id="title" value="Ooredoo — Système multi-agents Sales + Inventory (temps réel)" style="text;html=1;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="600" y="20" width="1200" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== FRONTEND ===================== -->
+        <mxCell id="fe-box" value="FRONTEND — Angular 21 (Signals)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="90" width="520" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-ws" value="websocket.service.ts&#10;(dashboard live feed)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="130" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-api" value="api.ts&#10;inventory-api.service.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="350" y="130" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-po" value="purchase-order-api.service.ts&#10;(Kanban PO)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="200" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-features" value="Features : dashboard · inventory · chat · purchase-board · monitoring · requests" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="200" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="fe-chat" value="Chat conseiller (Coach)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="265" width="480" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== FASTAPI SERVER ===================== -->
+        <mxCell id="srv-box" value="SERVEUR FastAPI — app/main.py  (uvicorn main:app)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="90" width="1000" height="290" as="geometry" />
+        </mxCell>
+        <mxCell id="srv-broadcast" value="_broadcast() — multi-connexion, alias boutique (store-lac2→I63), cache dernier payload" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="720" y="130" width="460" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="srv-payload" value="_build_payload() — metrics_update&#10;(CA, gap, urgence, forecast, hourly, advisors, stock)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="130" width="480" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="srv-routers" value="Routers REST (~90 endpoints) : auth · cycle · forecast · stores · inventory · supply(Kanban) · hitl · kpis · monitoring · supervisor · coach" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="720" y="190" width="960" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Triggers -->
+        <mxCell id="trig-box" value="DÉCLENCHEURS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="720" y="250" width="960" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="trig-cron" value="CronTrigger&#10;15 min · top-N boutiques" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="735" y="285" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="trig-sale" value="SaleEventTrigger (2 étages)&#10;Ét.1 recalcul déterministe ~20s&#10;Ét.2 cycle complet si changement" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="975" y="285" width="290" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="trig-alert" value="AlertCycleTrigger&#10;Redis alerts:store:*:stock&#10;debounce 180s · URGENT/HIGH" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1285" y="285" width="290" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== REALTIME SIMULATOR ===================== -->
+        <mxCell id="sim-box" value="RealtimeSimulator — ventes temps réel&#10;on_sale / on_stockout → _on_sale()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=12;align=center;" vertex="1" parent="1">
+          <mxGeometry x="80" y="420" width="360" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== SUPERVISOR AGENT ===================== -->
+        <mxCell id="sup-box" value="SupervisorAgent — Méta-orchestrateur LangGraph (supervisor_agent.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="520" y="440" width="1180" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-init" value="initialize_state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="560" y="480" width="150" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- 4 parallel branches -->
+        <mxCell id="br-sales" value="sales_branch&#10;Analyste → Stratège&#10;(CycleOrchestrator)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="560" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="br-knowledge" value="knowledge_branch&#10;RAG Milvus&#10;(scripts de vente)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="830" y="560" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="br-context" value="context_branch&#10;météo · fériés · events&#10;(fetch_full_context)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="560" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="br-inv" value="inventory_branch&#10;analyze_store (fast)&#10;décisions stock + alertes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="560" width="250" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sup-merge" value="merge_outputs  (fan-in RetailState)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="820" y="665" width="560" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-coach" value="coach_agent — scoring cross-domaine (rank_products, 6 critères)&#10;→ coach_recommendation + scored_products" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="820" y="725" width="560" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-guard" value="guardrail_agent — APPROVE / REWRITE / ESCALATE / BLOCK" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="800" width="560" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-notify" value="notify_frontend&#10;(broadcast WS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="855" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-hitl" value="human_validation&#10;(HITL escalate)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="900" y="855" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-fallback" value="safe_fallback&#10;(block)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="855" width="150" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="sup-mem" value="save_memory → coach_interactions (RAG futur)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="855" width="330" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== SALES AGENTS DETAIL ===================== -->
+        <mxCell id="sa-box" value="AGENTS SALES (LangGraph)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="80" y="950" width="760" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="sa-analyst" value="Analyste (déterministe, &lt;1s, 0 LLM)&#10;receive_pos → validate → load_memory → ts_analyst&#10;→ compare_memory → build_strategy_query → save&#10;ts_engine : Holt-Winters + EOD hybride + gap horaire" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="100" y="985" width="350" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="sa-stratege" value="Stratège (Reflexion + LLM)&#10;fetch_context → rag_search → analyze_context&#10;→ generate_strategy → build_output → self_critique&#10;(consomme la rag_query de l'Analyste = séquentiel)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="470" y="985" width="350" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="sa-coach" value="Coach (coach_chat.py) — conseiller conversationnel RAG&#10;intent → loaders contexte ∥ → RAG cross-domaine [S/I/P/D] → Stratège câblé → substituts anti-hallucination → LLM (retry 4 niveaux : Mistral→OpenRouter→Ollama)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="100" y="1110" width="720" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="sa-guard" value="Guardrail — validation (APPROVE/REWRITE/ESCALATE/BLOCK)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="100" y="1195" width="720" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="sa-cycle" value="CycleOrchestrator (graph.py) : Analyste → Stratège → Coach + trace Langfuse hiérarchique" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="100" y="1240" width="720" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== INVENTORY AGENTS DETAIL ===================== -->
+        <mxCell id="ia-box" value="AGENTS INVENTORY (LangGraph)  —  InventoryOrchestrator : batch parallèle 8 workers" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="880" y="950" width="820" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-analysis" value="Analysis&#10;fetch → compute → reason&#10;EOQ, reorder point, safety stock,&#10;risque (DB-first, LLM=évaluateur)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="900" y="990" width="250" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-context" value="Context&#10;fetch_signals → interpret&#10;uplifts historiques events/promos&#10;→ demand_uplift_pct (7j)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="990" width="250" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-decision" value="Decision&#10;constraints_check → decide&#10;ORDER/HOLD/MONITOR/EXPEDITE&#10;→ recommendations + PO SUGGERE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="990" width="240" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-parallel" value="[Analysis ∥ Context]  →  Decision   (par SKU)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="900" y="1095" width="780" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-kanban" value="Kanban PO (supply_routes) : SUGGERE → SOUMIS → CONFIRME → RECU&#10;auto-confirm >24h · po_ws_bus broadcast · approbation humaine" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="900" y="1140" width="780" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-sensing" value="Demand sensing (forecasting) : baseline MSTL + correction XGBoost → inventory.demand_forecast" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="900" y="1205" width="780" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="ia-mcp" value="MCP server 'inventory-advisor' (stdio) : get_stock_status · get_forecast_summary · suggest/move_purchase_order" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="900" y="1245" width="780" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== INFRA / DATA LAYER ===================== -->
+        <mxCell id="infra-box" value="INFRASTRUCTURE / DONNÉES" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1760" y="440" width="560" height="835" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-pg" value="PostgreSQL&#10;schémas : sales · inventory · supply · monitoring · public&#10;trigger trg_sync_stock_on_sale (décrément stock)&#10;Alembic 0001→0013 = source de vérité" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="490" width="520" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-redis" value="Redis pub/sub — bus d'alertes&#10;alerts:store:*:stock / :sales / :cross&#10;découple producteurs (sim, DecisionAgent) / consommateur (AlertCycleTrigger)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="610" width="520" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-milvus" value="Milvus — RAG vectoriel&#10;scripts [S] · playbooks [I] · fiches produit [P] · décisions [D]&#10;fallback lexical corpus embarqué (jamais à vide)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="720" width="520" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-llm" value="LLM APIs (multi-fournisseurs)&#10;Mistral (primaire) · Groq · OpenRouter · Ollama&#10;retry en cascade + fallback déterministe" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="830" width="520" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-lf" value="Langfuse — observabilité&#10;trace hiérarchique par cycle (spans agents + LLM)&#10;best-effort (silencieux si down)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="940" width="520" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-prov" value="Providers données&#10;postgres_provider (POS, historique, forecast)&#10;inventory_repo / supply_repo / stock_tools" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="1040" width="520" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="infra-state" value="RetailState (TypedDict partagé)&#10;reducers : agents_invoked(+) · metrics(merge) · errors(+)&#10;chaque node = delta uniquement" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;spacingLeft=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="1150" width="520" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- ===================== EDGES ===================== -->
+        <!-- Frontend <-> Server -->
+        <mxCell id="e1" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="fe-ws" target="srv-broadcast">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e1lbl" value="WS /ws/store/{id}" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e1"><mxGeometry x="-0.2" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+        <mxCell id="e2" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="fe-api" target="srv-routers">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e2lbl" value="REST GET/POST" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e2"><mxGeometry x="-0.2" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+        <mxCell id="e3" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;strokeWidth=2;" edge="1" parent="1" source="fe-chat" target="srv-routers">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e3lbl" value="POST /coach/chat · /stream (SSE)" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e3"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+
+        <!-- Simulator -->
+        <mxCell id="e4" style="endArrow=classic;html=1;strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="sim-box" target="srv-broadcast">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e4lbl" value="_on_sale → WS realtime_stock_update" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e4"><mxGeometry x="-0.2" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+        <mxCell id="e5" style="endArrow=classic;html=1;strokeColor=#b85450;strokeWidth=2;dashed=1;" edge="1" parent="1" source="sim-box" target="trig-sale">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e5lbl" value="notify_sale()" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e5"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+        <mxCell id="e6" style="endArrow=classic;html=1;strokeColor=#b85450;strokeWidth=2;dashed=1;" edge="1" parent="1" source="sim-box" target="infra-redis">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e6lbl" value="publish_stock_alert" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e6"><mxGeometry x="-0.5" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+
+        <!-- Triggers -> Supervisor -->
+        <mxCell id="e7" style="endArrow=classic;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" parent="1" source="trig-cron" target="sup-box">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="endArrow=classic;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" parent="1" source="trig-sale" target="sup-box">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="e8lbl" value="run_cycle" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e8"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+        <mxCell id="e9" style="endArrow=classic;html=1;strokeColor=#d79b00;strokeWidth=2;" edge="1" parent="1" source="trig-alert" target="sup-box">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-redis-alert" style="endArrow=classic;html=1;strokeColor=#666666;strokeWidth=2;dashed=1;" edge="1" parent="1" source="infra-redis" target="trig-alert">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell id="eralbl" value="psubscribe :stock" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e-redis-alert"><mxGeometry x="-0.4" relative="1" as="geometry" /></mxCell>
+        </mxCell>
+
+        <!-- Supervisor internal -->
+        <mxCell id="e10" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-init" target="br-sales"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-init" target="br-knowledge"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-init" target="br-context"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-init" target="br-inv"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="br-sales" target="sup-merge"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e15" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="br-knowledge" target="sup-merge"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="br-context" target="sup-merge"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e17" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="br-inv" target="sup-merge"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-merge" target="sup-coach"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e19" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-coach" target="sup-guard"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e20" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-guard" target="sup-notify"><mxGeometry relative="1" as="geometry" /><mxCell id="e20l" value="approve" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e20"><mxGeometry x="-0.4" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e21" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-guard" target="sup-hitl"><mxGeometry relative="1" as="geometry" /><mxCell id="e21l" value="escalate" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e21"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e22" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-guard" target="sup-fallback"><mxGeometry relative="1" as="geometry" /><mxCell id="e22l" value="block" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e22"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e23" style="endArrow=classic;html=1;strokeColor=#9673a6;dashed=1;" edge="1" parent="1" source="sup-guard" target="sup-coach"><mxGeometry relative="1" as="geometry" /><mxCell id="e23l" value="rewrite (1x)" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e23"><mxGeometry x="0.7" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e24" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-notify" target="sup-mem"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e25" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-hitl" target="sup-mem"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e26" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="sup-fallback" target="sup-mem"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- notify_frontend -> broadcast -->
+        <mxCell id="e27" style="endArrow=classic;html=1;strokeColor=#82b366;strokeWidth=2;dashed=1;" edge="1" parent="1" source="sup-notify" target="srv-broadcast"><mxGeometry relative="1" as="geometry" /><mxCell id="e27l" value="WS coach_recommendation / metrics_update" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e27"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell></mxCell>
+
+        <!-- branches -> agent detail -->
+        <mxCell id="e28" style="endArrow=classic;html=1;strokeColor=#d6b656;strokeWidth=2;dashed=1;" edge="1" parent="1" source="br-sales" target="sa-box"><mxGeometry relative="1" as="geometry" /><mxCell id="e28l" value="délègue" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e28"><mxGeometry x="-0.4" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e29" style="endArrow=classic;html=1;strokeColor=#82b366;strokeWidth=2;dashed=1;" edge="1" parent="1" source="br-inv" target="ia-box"><mxGeometry relative="1" as="geometry" /><mxCell id="e29l" value="analyze_store" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e29"><mxGeometry x="-0.4" relative="1" as="geometry" /></mxCell></mxCell>
+
+        <!-- agent detail internal -->
+        <mxCell id="e30" style="endArrow=classic;html=1;strokeColor=#d6b656;" edge="1" parent="1" source="sa-analyst" target="sa-stratege"><mxGeometry relative="1" as="geometry" /><mxCell id="e30l" value="rag_query" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e30"><mxGeometry x="-0.2" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e31" style="endArrow=classic;html=1;strokeColor=#82b366;" edge="1" parent="1" source="ia-analysis" target="ia-decision"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e32" style="endArrow=classic;html=1;strokeColor=#82b366;" edge="1" parent="1" source="ia-context" target="ia-decision"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e33" style="endArrow=classic;html=1;strokeColor=#82b366;dashed=1;" edge="1" parent="1" source="ia-decision" target="ia-kanban"><mxGeometry relative="1" as="geometry" /><mxCell id="e33l" value="PO SUGGERE" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e33"><mxGeometry x="-0.3" relative="1" as="geometry" /></mxCell></mxCell>
+
+        <!-- Kanban -> frontend PO -->
+        <mxCell id="e34" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#6c8ebf;strokeWidth=2;dashed=1;exitX=0;exitY=0.5;entryX=0.5;entryY=1;" edge="1" parent="1" source="ia-kanban" target="fe-po"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="60" y="1167" /></Array></mxGeometry><mxCell id="e34l" value="WS po_suggested / approve (REST)" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e34"><mxGeometry x="-0.4" relative="1" as="geometry" /></mxCell></mxCell>
+
+        <!-- infra connections -->
+        <mxCell id="e35" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="ia-sensing" target="infra-pg"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e36" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="sa-coach" target="infra-milvus"><mxGeometry relative="1" as="geometry" /><mxCell id="e36l" value="RAG retrieve" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e36"><mxGeometry x="0.5" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e37" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="sa-stratege" target="infra-llm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e38" style="endArrow=classic;html=1;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="sup-box" target="infra-lf"><mxGeometry relative="1" as="geometry" /><mxCell id="e38l" value="traces" style="edgeLabel;html=1;fontSize=10;" connectable="0" vertex="1" parent="e38"><mxGeometry x="-0.5" relative="1" as="geometry" /></mxCell></mxCell>
+        <mxCell id="e39" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="srv-routers" target="infra-prov"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- legend -->
+        <mxCell id="legend" value="LÉGENDE&#10;— Bleu : Frontend Angular      — Vert : Serveur / Inventory&#10;— Violet : SupervisorAgent      — Jaune : Agents Sales / RetailState&#10;— Orange : Déclencheurs         — Rouge : Simulateur temps réel&#10;— Gris : Infra / données        — Pointillé : canal async (WS/Redis/pub-sub)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;align=left;spacingLeft=10;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="520" width="410" height="150" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

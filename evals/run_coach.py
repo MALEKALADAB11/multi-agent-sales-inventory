@@ -52,15 +52,33 @@ def _check(name: str, reply: str, api: dict) -> bool | None:
     return None
 
 
-def _api_context(api: dict) -> str:
-    """Contexte que le système déclare avoir utilisé — référence d'ancrage du juge."""
+def _api_context(api: dict) -> tuple[str, str]:
+    """Référence d'ancrage du juge → (contexte, niveau).
+
+    'full'    : `grounding` renvoyé par l'API (activé par `debug_grounding`) —
+                le bloc de prompt EXACT que le modèle a reçu. Seul régime dans
+                lequel `ancrage` mesure vraiment quelque chose : un chiffre
+                absent de ce bloc est, par construction, inventé.
+    'partial' : repli sur `context_used` + listes annexes. C'est un résumé de
+                KPIs ; le prompt réel contient en plus le catalogue, les
+                substituts et les scripts RAG. Tout chiffre venu de là est
+                compté à tort comme halluciné — d'où les 60 % d'hallucinations
+                du run du 16/07, qui mesuraient ce trou, pas le coach.
+    'none'    : aucune référence — `ancrage` n'est pas interprétable.
+    """
+    g = api.get("grounding")
+    if isinstance(g, dict) and g.get("situation_block"):
+        parts = [f"{k}:\n{v}" for k, v in g.items() if v]
+        return "\n\n".join(parts), "full"
+
     parts = []
     if api.get("context_used"):
         parts.append("context_used: " + json.dumps(api["context_used"], ensure_ascii=False))
     for key in ("sources", "rag_scripts", "inventory_alerts", "agent_recos"):
         if api.get(key):
             parts.append(f"{key}: " + json.dumps(api[key], ensure_ascii=False)[:1500])
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    return text, ("partial" if text else "none")
 
 
 def run(base_url: str, use_judge: bool = True, store_id: str = "I63") -> dict:
@@ -79,7 +97,11 @@ def run(base_url: str, use_judge: bool = True, store_id: str = "I63") -> dict:
                     f"{base_url}/api/v1/coach/chat",
                     json={"message": case["question"],
                           "advisor_name": "EvalBot",
-                          "store_id": store_id},
+                          "store_id": store_id,
+                          # Renvoie le bloc de prompt réel ET court-circuite le
+                          # cache de dedup : sans ça un second run noterait des
+                          # réponses en cache, sans contexte.
+                          "debug_grounding": True},
                 )
                 api = resp.json() if resp.status_code == 200 else {}
                 error = "" if resp.status_code == 200 else f"HTTP {resp.status_code}"
@@ -109,16 +131,20 @@ def run(base_url: str, use_judge: bool = True, store_id: str = "I63") -> dict:
                         check_stats["passed" if verdict else "failed"] += 1
 
                 if use_judge:
+                    context, ctx_level = _api_context(api)
+                    row["context_level"] = ctx_level
+                    row["context_chars"] = len(context)
                     j = judge_answer(
                         case["question"], reply,
-                        context=_api_context(api),
+                        context=context,
                         expected_behaviors=case.get("expected_behaviors"),
                     )
                     if j.ok:
                         row["judge"] = {**j.scores, "mean": j.mean,
                                         "hallucination": j.hallucination,
                                         "verdict": j.verdict,
-                                        "judge_model": j.judge_model}
+                                        "judge_model": j.judge_model,
+                                        "context_level": ctx_level}
                         judged.append(row["judge"])
                         hallucinations += int(j.hallucination)
                     else:
@@ -131,10 +157,24 @@ def run(base_url: str, use_judge: bool = True, store_id: str = "I63") -> dict:
             rows.append(row)
 
     n_ok = sum(1 for r in rows if not r["error"])
+
+    # `ancrage` et l'hallucination qui en découle se mesurent en recoupant les
+    # chiffres avec le contexte : sur un cas 'partial'/'none' le juge pénalise
+    # ce qu'il ne peut pas voir. Les moyenner avec les cas 'full' produirait un
+    # chiffre qui ne décrit ni l'un ni l'autre — on les calcule sur la seule
+    # base 'full', et on publie la taille de cette base.
+    grounded = [j for j in judged if j.get("context_level") == "full"]
+    def _mean_of(pool: list[dict], crit: str):
+        vals = [j[crit] for j in pool if j.get(crit) is not None]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
     mean_by_criterion = {
-        c: round(sum(j[c] for j in judged) / len(judged), 2) if judged else None
+        c: _mean_of(grounded if c == "ancrage" else judged, c)
         for c in CRITERIA
     }
+    hallucinations = sum(1 for j in grounded if j.get("hallucination"))
+    ctx_levels = {lvl: sum(1 for r in rows if r.get("context_level") == lvl)
+                  for lvl in ("full", "partial", "none")}
     total_checks = check_stats["passed"] + check_stats["failed"]
 
     summary = {
@@ -147,7 +187,9 @@ def run(base_url: str, use_judge: bool = True, store_id: str = "I63") -> dict:
         "checks_pass_rate": round(check_stats["passed"] / total_checks, 3) if total_checks else None,
         "judge_scores_mean": mean_by_criterion,
         "judge_global_mean": round(sum(j["mean"] for j in judged) / len(judged), 2) if judged else None,
-        "hallucination_rate": round(hallucinations / len(judged), 3) if judged else None,
+        "hallucination_rate": round(hallucinations / len(grounded), 3) if grounded else None,
+        "context_levels": ctx_levels,
+        "ancrage_basis": {"level": "full", "n": len(grounded), "n_judged": len(judged)},
         "rag_used_rate": round(sum(1 for r in rows if r.get("rag_used")) / max(1, n_ok), 3),
         "details": rows,
     }
@@ -163,7 +205,16 @@ def run(base_url: str, use_judge: bool = True, store_id: str = "I63") -> dict:
         print(f"  juge (0-5)      " + "  ".join(
             f"{c}={mean_by_criterion[c]}" for c in CRITERIA))
         print(f"  score global    {summary['judge_global_mean']}/5")
-        print(f"  hallucinations  {summary['hallucination_rate']:.1%}")
+        if grounded:
+            print(f"  hallucinations  {summary['hallucination_rate']:.1%} "
+                  f"(sur {len(grounded)}/{len(judged)} cas à contexte complet)")
+        else:
+            print("  hallucinations  NON MESURÉ — aucun cas avec contexte complet.")
+            print("    → l'API n'a pas renvoyé `grounding` : serveur à jour "
+                  "(`debug_grounding`) ? Sans lui, `ancrage` n'est pas interprétable.")
+        if ctx_levels["partial"] or ctx_levels["none"]:
+            print(f"  contexte        full={ctx_levels['full']} "
+                  f"partial={ctx_levels['partial']} none={ctx_levels['none']}")
 
     save_results("coach_e2e", summary)
     try:

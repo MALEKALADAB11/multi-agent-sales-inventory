@@ -579,6 +579,9 @@ def get_orchestrator_fast():
         # matters more than per-SKU LLM reasoning. Pass fast=False on the
         # batch endpoint (see analyze_store) to opt into the full-LLM
         # orchestrator above instead.
+        # NB: create_orchestrator n'a pas de paramètre `fast` — le mode rapide
+        # se choisit ici, par use_llm=False, et côté appelant par
+        # analyze_store(fast=...) qui sélectionne l'un des deux singletons.
         _orchestrator_fast = create_orchestrator(use_llm=False)
     return _orchestrator_fast
 
@@ -597,6 +600,14 @@ class BatchAnalyzeRequest(BaseModel):
     store_id: str = Field(default_factory=lambda: DEFAULT_STORE_ID)
     business_objective: str = Field(default="balanced")
     skus: Optional[List[str]] = None
+
+
+class JudgeRequest(BaseModel):
+    """Évaluation qualité (LLM-as-judge) d'une reco déjà produite par /analyze.
+    Le frontend renvoie le `raw` et l'`item` reçus de /analyze : on ne rejoue
+    pas le pipeline, on ne fait que l'appel juge (rapide) sur ces données."""
+    raw:  Dict[str, Any]
+    item: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +834,81 @@ def _to_inventory_item(
                 pass  # Non-fatal — frontend defaults to pending
 
     return item
+
+
+# Grille du juge inventaire (français) → axes attendus par le radar frontend.
+# Voir evals/judge.py::INVENTORY_CRITERIA et le mockup "Jugement IA".
+_JUDGE_AXIS_MAP = {
+    "clarte":        "clarity",
+    "coherence":     "coherence",
+    "completude":    "completeness",
+    "actionabilite": "actionability",
+    "richesse":      "richness",
+    "ancrage":       "grounding",
+}
+
+
+def _attach_inventory_judge(result: Dict[str, Any], item: Dict[str, Any]) -> None:
+    """Fait noter le recommendation_text du DecisionAgent par le LLM-as-judge
+    (evals.judge.judge_inventory_answer) et attache les 6 scores (0-5) à
+    item['judge'] pour alimenter le radar "Jugement IA" du frontend.
+
+    Best-effort : réservé au deep-dive single-SKU (POST /analyze) — jamais au
+    batch, un appel LLM de juge par SKU y serait prohibitif. Toute erreur ou
+    indisponibilité laisse item['judge'] = None → le radar reste masqué, aucune
+    valeur inventée.
+    """
+    item["judge"] = None
+    dec = (result.get("decision_result") or {}).get("decision") or {}
+    rec_text = str(dec.get("recommendation_text") or "").strip()
+    if not rec_text:
+        return
+    try:
+        import json as _json
+        from evals.judge import judge_inventory_answer
+
+        analysis  = result.get("analysis_report") or {}
+        context_r = result.get("context_result") or {}
+        adjusted  = (result.get("decision_result") or {}).get("adjusted_metrics") or {}
+
+        scenario = (
+            f"{item.get('name')} ({item.get('sku')}) — stock {item.get('stock')} u, "
+            f"risque {item.get('riskLevel')}, couverture {item.get('daysOfStock')} j, "
+            f"délai fournisseur {item.get('leadTimeDays')} j, action recommandée "
+            f"{dec.get('action')}."
+        )
+        context = "\n\n".join([
+            "baseline_report: "  + _json.dumps(analysis,  ensure_ascii=False, default=str),
+            "context_report: "   + _json.dumps(context_r, ensure_ascii=False, default=str),
+            "adjusted_metrics: " + _json.dumps(adjusted,  ensure_ascii=False, default=str),
+        ])
+
+        # max_retries=1 : un seul réessai pour absorber un 429 « per-minute »
+        # transitoire. Inutile d'insister davantage : quand le quota QUOTIDIEN
+        # free-tier est épuisé (cycles de fond), aucun réessai ne passera —
+        # l'endpoint est non bloquant, on abandonne vite et le radar reste masqué.
+        j = judge_inventory_answer(scenario, rec_text, context=context, max_retries=1)
+        if not j.ok or not j.scores:
+            logger.info("[judge] juge indisponible SKU=%s: %s", item.get("sku"), j.error)
+            return
+
+        axes = {
+            en: int(j.scores[fr])
+            for fr, en in _JUDGE_AXIS_MAP.items()
+            if isinstance(j.scores.get(fr), (int, float))
+        }
+        if len(axes) < len(_JUDGE_AXIS_MAP):
+            return
+
+        item["judge"] = {
+            **axes,
+            "overall":     round(sum(axes.values()) / len(axes), 2),
+            "verdict":     j.verdict,
+            "judge_model": j.judge_model,
+        }
+    except Exception:
+        logger.warning("[analyze] LLM judge en échec SKU=%s", item.get("sku"), exc_info=True)
+        item["judge"] = None
 
 
 def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dict[str, Any]]:
@@ -1077,10 +1163,27 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=result["error"])
 
     [result] = _enrich_with_product_master([result])
+    item = _to_inventory_item(result, preloaded_stock=None, product_lookup=None)
+    # NB : le LLM-as-judge n'est PLUS appelé ici (il bloquerait l'ouverture de
+    # la modale). Le frontend appelle POST /judge juste après, en repassant ce
+    # `raw` + `item`, pour remplir le radar sans latence sur /analyze.
     return {
         "raw":  result,
-        "item": _to_inventory_item(result, preloaded_stock=None, product_lookup=None),
+        "item": item,
     }
+
+
+@router.post("/judge")
+def judge_single(req: JudgeRequest) -> Dict[str, Any]:
+    """Note qualité (6 axes 0-5) de la reco produite par /analyze.
+
+    Appel séparé et non bloquant : le frontend l'invoque après avoir affiché la
+    recommandation, avec le `raw` + `item` déjà reçus. Aucun rejeu du pipeline —
+    juste l'appel LLM du juge. Best-effort : renvoie {"judge": null} si le juge
+    est indisponible."""
+    item = dict(req.item)
+    _attach_inventory_judge(req.raw, item)
+    return {"judge": item.get("judge")}
 
 
 def analyze_store(

@@ -1588,6 +1588,16 @@ async def coach_chat(request: Request, body: dict):
     advisor_name = (body.get("advisor_name") or "Conseiller").strip()
     store_id     = _normalize_store(body.get("store_id") or DEFAULT_STORE_ID)
     ctx          = body.get("context") or {}
+    # Bloc de grounding : le texte EXACT injecté dans le prompt (situation
+    # cross-domaine + catalogue). Réservé au harnais d'évaluation, qui note
+    # `ancrage` en recoupant chaque chiffre de la réponse avec ce que le modèle
+    # avait réellement sous les yeux. `context_used` ne suffit pas : c'est un
+    # résumé de KPIs, alors que le prompt contient aussi le catalogue, les
+    # substituts, les scripts RAG et les sorties d'agents. Juger l'ancrage sur
+    # le résumé revient à compter comme halluciné tout chiffre venu du reste —
+    # c'est ce qui produisait 60 % d'« hallucinations » sur des données vraies.
+    debug_grounding = bool(body.get("debug_grounding"))
+    _grounding: dict | None = None
 
     if not message:
         return JSONResponse({"reply": "", "mode": "empty"})
@@ -1603,7 +1613,10 @@ async def coach_chat(request: Request, body: dict):
             raise
 
     # ── Dedup cache ──────────────────────────────────────────────────────────
-    cached = _cache_get(advisor_name, store_id, message)
+    # Contourné en mode évaluation : un second run noterait la réponse mise en
+    # cache au premier, sans grounding et sans passer par le modèle — on
+    # mesurerait le cache, pas le coach.
+    cached = None if debug_grounding else _cache_get(advisor_name, store_id, message)
     if cached:
         logger.info("[COACH] DEDUP hit '%s'", message[:40])
         return JSONResponse({
@@ -1745,6 +1758,15 @@ async def coach_chat(request: Request, body: dict):
         substitutes_block=substitutes_block,
     )
     user_message = f"{situation_block}\n\nQUESTION DU CONSEILLER : {message}"
+
+    if debug_grounding:
+        _grounding = {
+            "situation_block": situation_block,
+            "catalog":         catalog,
+            "rag_block":       rag_block,
+            "agent_block":     agent_block,
+            "substitutes_block": substitutes_block,
+        }
 
     # Paramètres LLM selon intent
     if qtype in ("script", "objectif"):
@@ -2079,6 +2101,9 @@ async def coach_chat(request: Request, body: dict):
         "guardrail_status": _grd.get("status", "APPROVE"),
         "guardrail_issues": _grd.get("issues", []),
         "requires_hitl":    _grd.get("requires_human_validation", False),
+        # Absent des réponses normales : quelques Ko de prompt qui n'ont rien à
+        # faire dans le payload du frontend.
+        **({"grounding": _grounding} if _grounding else {}),
     })
 
 

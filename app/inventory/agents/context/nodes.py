@@ -14,6 +14,8 @@ from decimal import Decimal
 from threading import Lock
 from typing import Any, Dict
 
+from app.core.shutdown import is_shutting_down, is_shutdown_error
+
 try:
     from app.inventory.config.inventory_settings import SIGNAL_WEIGHTS
 except ImportError:
@@ -188,15 +190,39 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "market_offers": _fetch_market_offers,
     }
     results: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(fn): name for name, fn in tasks.items()}
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                results[name] = future.result()
-            except Exception as e:
-                logger.warning("[Context/fetch] parallel task '%s' failed: %s", name, e)
-                results[name] = [] if name in ("promotions", "holidays", "events", "market_offers") else {}
+
+    def _fallback(name: str):
+        return [] if name in ("promotions", "holidays", "events", "market_offers") else {}
+
+    # Pendant l'arrêt du processus, submit() lève RuntimeError ("cannot schedule
+    # new futures after interpreter shutdown") : on récupère les signaux en
+    # séquentiel plutôt que de perdre tout le contexte du SKU.
+    pending: Dict[str, Any] = dict(tasks)
+    if not is_shutting_down():
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {}
+            for name, fn in tasks.items():
+                try:
+                    futures[pool.submit(fn)] = name
+                except RuntimeError as e:
+                    if not is_shutdown_error(e):
+                        raise
+                    break
+            for future in as_completed(futures):
+                name = futures[future]
+                pending.pop(name, None)
+                try:
+                    results[name] = future.result()
+                except Exception as e:
+                    logger.warning("[Context/fetch] parallel task '%s' failed: %s", name, e)
+                    results[name] = _fallback(name)
+
+    for name, fn in pending.items():
+        try:
+            results[name] = fn()
+        except Exception as e:
+            logger.warning("[Context/fetch] task '%s' failed: %s", name, e)
+            results[name] = _fallback(name)
 
     historical_patterns = results.get("historical", {})
     promotions          = results.get("promotions", [])

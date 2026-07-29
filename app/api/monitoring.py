@@ -11,7 +11,7 @@ import time
 from decimal import Decimal
 from datetime import datetime, date
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from app.core.config import DEFAULT_STORE_ID
 
@@ -856,3 +856,230 @@ async def get_dependencies():
         "dependencies": deps, "nb_ok": sum(1 for d in deps.values() if d.get("status")=="ok"),
         "nb_total": len(deps), "updated_at": datetime.utcnow().isoformat(),
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Page SUPERVISION MÉTIER — feedback humain + qualité IA (juge live + RAGAS)
+# Source : feedback_service (agent_feedback/hitl_reviews/purchase_orders),
+#          quality_service (public.recommendation_scores), evals/ (juge + RAGAS).
+# Aucune donnée mockée.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Cache process du résumé LLM : évite un appel modèle à chaque affichage.
+_SUMMARY_CACHE: dict = {}
+
+
+@router.get("/feedback/overview")
+async def feedback_overview(store_id: str = None, window_days: int = 30,
+                            baseline_days: int = 90):
+    """Cartes KPI : acceptation 30j, rejet vs moyenne 3 mois, volumes, score qualité."""
+    from app.core.feedback_service import get_feedback_overview
+    from app.core.quality_service import get_judge_summary
+    sid = store_id or None
+    ov = get_feedback_overview(store_id=sid, window_days=window_days, baseline_days=baseline_days)
+    judge = get_judge_summary(store_id=sid, days=window_days)
+    ov["quality"] = {
+        "overall_mean": judge.get("overall_mean"),
+        "overall_pct": judge.get("overall_pct"),
+        "n_scored": judge.get("n_scored"),
+    }
+    ov["updated_at"] = datetime.utcnow().isoformat()
+    return JSONResponse(_clean(ov))
+
+
+def _inventory_reco_group(store_id: str, days: int) -> list:
+    """Approuvé/Rejeté des recommandations de réappro (inventory.recommendations.status).
+    approved/executed = accepté ; rejected/cancelled = rejeté ; pending ignoré.
+    Une seule barre : le type d'action (ORDER/EXPEDITE) et l'urgence ne sont pas
+    persistés en colonne — seul le statut de décision l'est."""
+    from app.core.agent_logger import _get_conn
+    from psycopg2.extras import RealDictCursor
+    accepted = rejected = 0
+    try:
+        conn = _get_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            store_clause = "AND store_id = %(sid)s" if store_id else ""
+            cur.execute(f"""
+                SELECT status, COUNT(*) AS cnt
+                FROM inventory.recommendations
+                WHERE created_at >= NOW() - (%(days)s || ' days')::interval
+                  {store_clause}
+                GROUP BY status
+            """, {"sid": store_id, "days": days})
+            for r in cur.fetchall():
+                st = (r["status"] or "").lower()
+                if st in ("approved", "executed"):
+                    accepted += int(r["cnt"])
+                elif st in ("rejected", "cancelled"):
+                    rejected += int(r["cnt"])
+        conn.close()
+    except Exception:
+        pass
+    if accepted == 0 and rejected == 0:
+        return []
+    return [{"key": "reco_stock", "label": "Recommandations réappro", "domain": "stock",
+             "accepted": accepted, "rejected": rejected}]
+
+
+@router.get("/feedback/breakdown")
+async def feedback_breakdown(store_id: str = None, days: int = 30):
+    """Approuvé/Rejeté par boucle de feedback réelle, taggé par domaine
+    (sales / stock) pour le filtre de la page Supervision."""
+    from app.core.feedback_service import get_feedback_stats
+    s = get_feedback_stats(store_id=store_id or None, days=days)
+    groups = [
+        {"key": "incitations", "label": "Incitations coach", "domain": "sales",
+         "accepted": int(s["incitations"]["followed"]),
+         "rejected": int(s["incitations"]["ignored"])},
+        {"key": "hitl", "label": "Stratégies HITL", "domain": "sales",
+         "accepted": int(s["hitl"]["approved"]),
+         "rejected": int(s["hitl"]["rejected"])},
+        {"key": "po", "label": "PO stock", "domain": "stock",
+         "accepted": int(s["po"].get("accepted", 0)),
+         "rejected": int(s["po"].get("cancelled", 0))},
+    ]
+    # Détail stock : décisions sur les recommandations de réappro
+    groups.extend(_inventory_reco_group(store_id or None, days))
+    return JSONResponse(_clean({
+        "days": days, "groups": groups,
+        "updated_at": datetime.utcnow().isoformat(),
+    }))
+
+
+def _summary_llm(overview: dict) -> dict:
+    """Résumé narratif FR via LLM (evals.common). Repli learning_context si indispo."""
+    ov = overview
+    facts = (
+        f"- Décidés sur {ov['window_days']}j : {ov['decided']} "
+        f"({ov['accepted']} acceptés / {ov['rejected']} rejetés).\n"
+        f"- Taux d'acceptation : {ov.get('accept_rate')}%.\n"
+        f"- Taux de rejet : {ov.get('reject_rate')}% "
+        f"(moyenne 3 mois : {ov.get('baseline_reject_rate')}%, "
+        f"écart {ov.get('reject_delta')} pt).\n"
+        f"- Par boucle : incitations {ov['by_loop']['incitations']}, "
+        f"HITL {ov['by_loop']['hitl']}, PO {ov['by_loop']['po']}.\n"
+        f"- Raisons de rejet récentes : "
+        f"{' | '.join(ov.get('recent_rejections') or []) or 'aucune'}."
+    )
+    try:
+        from evals.common import load_providers, chat
+        provider = model = None
+        for name in ("mistral", "groq", "openrouter"):
+            p = load_providers().get(name)
+            if p and p.available:
+                provider, model = p, p.models[-1]
+                break
+        if provider is None:
+            raise RuntimeError("aucun provider LLM disponible")
+        messages = [
+            {"role": "system", "content":
+                "Tu es analyste supervision d'un système multi-agents retail Ooredoo Tunisie. "
+                "On te donne des statistiques de feedback humain sur les recommandations des "
+                "agents (ventes + stock). Rédige un résumé de supervision en français, 3 à 4 "
+                "phrases, factuel et actionnable : ce qui va, ce qui inquiète (rejets vs moyenne, "
+                "boucle la plus rejetée), et une piste d'amélioration. Pas de puces, un paragraphe."},
+            {"role": "user", "content": f"STATISTIQUES :\n{facts}"},
+        ]
+        r = chat(provider, model, messages, temperature=0.4, max_tokens=300, max_retries=1)
+        if r.ok:
+            return {"text": r.text, "source": f"{provider.name}/{model}"}
+    except Exception as e:
+        pass
+    # Repli : le bloc texte déjà construit pour les prompts agents.
+    try:
+        from app.core.feedback_service import get_learning_context_sync
+        txt = get_learning_context_sync(store_id=None, days=overview["window_days"])
+        return {"text": txt or "Pas encore assez de feedback pour un résumé.",
+                "source": "fallback:learning_context"}
+    except Exception:
+        return {"text": "Résumé indisponible.", "source": "unavailable"}
+
+
+@router.get("/feedback/summary")
+async def feedback_summary(store_id: str = None, regenerate: int = 0, window_days: int = 30):
+    """Résumé automatique (LLM) de la situation feedback. Caché ; regenerate=1 force."""
+    from app.core.feedback_service import get_feedback_overview
+    sid = store_id or None
+    key = f"{sid}:{window_days}"
+    if not regenerate and key in _SUMMARY_CACHE:
+        return JSONResponse(_SUMMARY_CACHE[key])
+    ov = get_feedback_overview(store_id=sid, window_days=window_days)
+    result = _summary_llm(ov)
+    result["generated_at"] = datetime.utcnow().isoformat()
+    _SUMMARY_CACHE[key] = result
+    return JSONResponse(result)
+
+
+@router.get("/quality/judge")
+async def quality_judge(store_id: str = None, days: int = 30):
+    """Résumé des scores du juge LLM (inventaire + vente)."""
+    from app.core.quality_service import get_judge_summary
+    res = get_judge_summary(store_id=store_id or None, days=days)
+    res["updated_at"] = datetime.utcnow().isoformat()
+    return JSONResponse(_clean(res))
+
+
+@router.post("/quality/judge/run")
+async def quality_judge_run(background: BackgroundTasks, store_id: str = None, limit: int = 20):
+    """Lance le scoring des recommandations non notées (tâche de fond, hors cycle)."""
+    from app.core.quality_service import score_recent_recommendations
+    background.add_task(score_recent_recommendations, store_id or None, limit)
+    return JSONResponse({"status": "scheduled", "store_id": store_id, "limit": limit,
+                         "note": "scoring juge lancé en tâche de fond — recharger /quality/judge dans quelques instants"})
+
+
+def _read_ragas_result() -> dict:
+    """Dernier résultat RAGAS sauvegardé par evals.run_ragas (results/ragas.json)."""
+    try:
+        import json as _json
+        from evals.common import RESULTS_DIR
+        path = RESULTS_DIR / "ragas.json"
+        if not path.exists():
+            return {"available": False, "reason": "aucun run RAGAS enregistré"}
+        with open(path, encoding="utf-8") as f:
+            data = _json.load(f)
+        return {
+            "available": not bool(data.get("error")),
+            "error": data.get("error"),
+            "means": data.get("means"),
+            "metrics": data.get("metrics"),
+            "scored_cases": data.get("scored_cases"),
+            "n_cases": data.get("n_cases"),
+            "context_coverage": data.get("context_coverage"),
+            "judge_model": data.get("judge_model"),
+            "embed_model": data.get("embed_model"),
+            "run_at": data.get("run_at"),
+        }
+    except Exception as e:
+        return {"available": False, "reason": str(e)[:160]}
+
+
+def _run_ragas_task(store_id: str):
+    try:
+        from evals.run_ragas import run as run_ragas
+        # max_workers=1 (défaut de run_ragas : 2). Déclenché depuis /monitoring,
+        # le juge RAGAS partage le quota Mistral avec les agents qui servent les
+        # requêtes en cours : à 2 workers, les jobs tombaient en 429/timeout
+        # (cf. logs du 28/07, 8 jobs perdus sur 32) et les moyennes ne portaient
+        # plus que sur les survivants. En tâche de fond, la durée importe moins
+        # que la complétude des scores.
+        run_ragas(store_id=store_id, max_workers=1)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("[Supervision] RAGAS run: %s", e)
+
+
+@router.get("/quality/ragas")
+async def quality_ragas():
+    """Dernier résultat de l'évaluation RAGAS de la chaîne RAG (vente)."""
+    res = _read_ragas_result()
+    res["updated_at"] = datetime.utcnow().isoformat()
+    return JSONResponse(res)
+
+
+@router.post("/quality/ragas/run")
+async def quality_ragas_run(background: BackgroundTasks, store_id: str = DEFAULT_STORE_ID):
+    """Lance l'évaluation RAGAS en tâche de fond (lourd : Milvus + Ollama + LLM)."""
+    background.add_task(_run_ragas_task, store_id)
+    return JSONResponse({"status": "scheduled", "store_id": store_id,
+                         "note": "RAGAS lancé en tâche de fond — recharger /quality/ragas dans 1-3 min"})
