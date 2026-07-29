@@ -252,7 +252,15 @@ if FAIL:
     for status, name, detail in RESULTS:
         if status == "FAIL":
             print(f"  FAIL  {name} — {detail}")
-    sys.exit(1)
-else:
+
+# sys.exit() seulement en exécution directe. Ce fichier est un script, pas un
+# module pytest (corps exécuté à l'import, DB réelle requise) : il est exclu de
+# la collecte par tests/conftest.py, mais un `sys.exit` au niveau module tuait
+# tout runner qui l'importerait quand même — `pytest tests` s'arrêtait sur
+# `INTERNALERROR> SystemExit: 1` sans exécuter le reste de la suite.
+if __name__ == "__main__":
+    if not FAIL:
+        print("All tests passed!")
+    sys.exit(1 if FAIL else 0)
+elif not FAIL:
     print("All tests passed!")
-    sys.exit(0)

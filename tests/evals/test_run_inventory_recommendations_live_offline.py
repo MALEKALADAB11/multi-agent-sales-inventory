@@ -48,6 +48,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _app_stubs  # noqa: E402
+
 
 def _install_fake_orchestrator_module():
     """Injecte un module factice pour app.inventory.services.orchestrator,
@@ -97,16 +102,28 @@ def _install_fake_orchestrator_module():
     orch_mod = types.ModuleType("app.inventory.services.orchestrator")
     orch_mod.create_orchestrator = _fake_create_orchestrator
 
-    for name, mod in [
-        ("app", types.ModuleType("app")),
-        ("app.inventory", types.ModuleType("app.inventory")),
-        ("app.inventory.services", types.ModuleType("app.inventory.services")),
-        ("app.inventory.services.orchestrator", orch_mod),
-    ]:
-        sys.modules.setdefault(name, mod)
+    # Seule la feuille est bouchonnée, et le bouchon est défait par
+    # tearDownModule — voir _app_stubs pour le pourquoi (un faux paquet `app`
+    # laissé dans sys.modules cassait la collecte de toute la suite).
+    return _app_stubs.install({"app.inventory.services.orchestrator": orch_mod})
 
 
-_install_fake_orchestrator_module()
+_stubs = None
+
+
+def setUpModule():
+    # Installé ici et pas à l'import : pytest importe tous les fichiers de test
+    # avant d'en exécuter un seul, donc un bouchon posé à l'import resterait
+    # actif pendant l'import des fichiers suivants. `rirl` importe
+    # create_orchestrator paresseusement (dans run()), le bouchon arrive à temps.
+    global _stubs
+    _stubs = _install_fake_orchestrator_module()
+
+
+def tearDownModule():
+    if _stubs is not None:
+        _stubs.restore()
+
 
 from evals import run_inventory_recommendations_live as rirl  # noqa: E402
 from evals.judge import INVENTORY_CRITERIA, Judgment  # noqa: E402

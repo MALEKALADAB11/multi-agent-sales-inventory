@@ -14,7 +14,7 @@ import json
 import logging
 import threading
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
 import asyncpg
 from dotenv import load_dotenv
@@ -1704,10 +1704,17 @@ class SyncInventoryRepo:
         agent_run_id:        Optional[str] = None,
         urgency:             Optional[str] = None,
         alert_id:            Optional[int] = None,
+        context_snapshot:    Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """
         Insert or refresh one row in inventory.recommendations.
         Only called for ORDER / EXPEDITE actions — HOLD / MONITOR produce no row.
+
+        context_snapshot fige les rapports amont (baseline / context / adjusted)
+        avec la ligne : sans eux, le juge LLM qui note `ancrage` en direct
+        (app/core/quality_service.py) ne peut recouper aucun chiffre du texte et
+        signale des hallucinations sur des données réelles. Optionnel — une
+        décision reste persistée si le snapshot manque (migration 0016).
 
         Chaîne causale : si alert_id n'est pas fourni, la recommandation est
         rattachée automatiquement à l'alerte 'pending' la plus récente du même
@@ -1732,8 +1739,8 @@ class SyncInventoryRepo:
                     INSERT INTO inventory.recommendations
                         (sku, store_id, agent_run_id, recommendation_type,
                          recommendation_text, suggested_quantity, confidence, urgency,
-                         alert_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                         context_snapshot, alert_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
                             COALESCE(%s, (SELECT a.id FROM inventory.alerts a
                                           WHERE a.sku = %s AND a.store_id = %s
                                             AND a.status = 'pending'
@@ -1746,6 +1753,10 @@ class SyncInventoryRepo:
                         suggested_quantity  = EXCLUDED.suggested_quantity,
                         confidence          = EXCLUDED.confidence,
                         urgency             = EXCLUDED.urgency,
+                        -- Le snapshot suit toujours le texte : rafraîchir l'un
+                        -- sans l'autre ferait juger la nouvelle recommandation
+                        -- sur le contexte de la précédente.
+                        context_snapshot    = EXCLUDED.context_snapshot,
                         alert_id            = COALESCE(EXCLUDED.alert_id,
                                                        inventory.recommendations.alert_id),
                         created_at          = NOW()
@@ -1758,6 +1769,8 @@ class SyncInventoryRepo:
                     suggested_quantity,
                     confidence,
                     urgency,
+                    json.dumps(context_snapshot, ensure_ascii=False, default=str)
+                    if context_snapshot else None,
                     alert_id, sku, store_id,
                 ))
                 row = cur.fetchone()

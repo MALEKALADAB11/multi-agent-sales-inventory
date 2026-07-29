@@ -18,7 +18,20 @@ import pytest
 from app.inventory.repositories.supply_repo import (  # noqa: E402
     SyncPurchaseOrderRepo,
     PurchaseOrderTransitionError,
+    urgency_to_priorite,
 )
+
+
+def test_urgency_to_priorite_mapping():
+    """L'urgence du DecisionAgent alimente la priorité affichée sur le Kanban."""
+    assert urgency_to_priorite("immediate") == "URGENTE"
+    assert urgency_to_priorite("this_week") == "HAUTE"
+    assert urgency_to_priorite("this_month") == "NORMAL"
+    assert urgency_to_priorite("none") == "BASSE"
+    # Absente ou inconnue → NORMAL (défaut sûr, jamais d'exception)
+    assert urgency_to_priorite(None) == "NORMAL"
+    assert urgency_to_priorite("") == "NORMAL"
+    assert urgency_to_priorite("bizarre") == "NORMAL"
 
 
 def _cursor_mock(fetchone_results):
@@ -67,7 +80,7 @@ def test_create_suggestion_inserts_with_suggere_and_agent_source(mock_connect):
     mock_connect.return_value = _conn_mock(main_cursor)
 
     with patch.object(SyncPurchaseOrderRepo, "get_purchase_order_by_recommendation", return_value=None):
-        result = SyncPurchaseOrderRepo.create_suggestion_from_recommendation("reco-1", agent_run_id="run-1")
+        result = SyncPurchaseOrderRepo.create_suggestion_from_recommendation("reco-1")
 
     assert result["po_id"] == "po-1"
     assert result["product_name"] == "Terminal X"
@@ -76,7 +89,8 @@ def test_create_suggestion_inserts_with_suggere_and_agent_source(mock_connect):
     sql, params = insert_call.args
     assert "SUGGERE" in sql and "'AGENT'" in sql
     assert params[0] == "SKU123"  # sku
-    assert "run-1" in params      # agent_decision_id
+    # urgency 'immediate' → priorité URGENTE persistée sur le BC (fix 2026-07-28)
+    assert "URGENTE" in params
 
 
 @patch("app.inventory.repositories.supply_repo.psycopg2.connect")

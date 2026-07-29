@@ -64,7 +64,11 @@ class Judgment:
 
     @property
     def mean(self) -> float:
-        vals = [self.scores.get(c) for c in CRITERIA if self.scores.get(c) is not None]
+        # Moyenne sur les critères réellement présents, pas sur CRITERIA :
+        # `scores` est déjà filtré sur la grille utilisée à la construction, et
+        # figer la grille coach ici rendait 0.0 pour tout jugement inventaire —
+        # ce qui écrasait silencieusement `panel_disagreement` sur ce domaine.
+        vals = [v for v in (self.scores or {}).values() if v is not None]
         return round(sum(vals) / len(vals), 2) if vals else 0.0
 
 
@@ -78,6 +82,19 @@ def _judge_candidates(avoid_model: str = "") -> list[tuple[Provider, str]]:
         if p and p.available and idx < len(p.models) and p.models[idx] != avoid_model:
             out.append((p, p.models[idx]))
     return out
+
+
+def judge_roster(avoid_model: str = "") -> list[str]:
+    """Étiquettes `provider/model` des juges mobilisables, dans l'ordre d'essai.
+
+    CONFIGURATION, pas disponibilité réelle : un modèle listé ici a une clé API
+    dans `.env`, rien de plus — il peut très bien répondre 429 au premier appel.
+    Sert à décider AVANT de dépenser du quota si un contrôle a seulement un sens :
+    le contrôle de déterminisme et le panel exigent ≥ 2 juges distincts, et avec
+    un seul configuré ils ne mesurent rien. Mieux vaut l'annoncer que rendre un
+    `null` que le rapport affichera comme une case vide.
+    """
+    return [f"{p.name}/{m}" for p, m in _judge_candidates(avoid_model)]
 
 
 def judge_answer(
@@ -141,6 +158,7 @@ def judge_panel(
     avoid_model: str = "",
     n_judges: int = 2,
     max_retries: int = 0,
+    judge_fn=None,
 ) -> list[Judgment]:
     """Fait noter la même réponse par `n_judges` juges DISTINCTS.
 
@@ -148,14 +166,20 @@ def judge_panel(
     provider) passent entiers dans le classement. Deux juges de providers
     différents permettent de moyenner et surtout de mesurer leur désaccord —
     un écart élevé signale un score peu fiable, pas un modèle mauvais.
+
+    `judge_fn` choisit la grille : `judge_answer` (coach, défaut) ou
+    `judge_inventory_answer`. Les deux ont la même signature, seuls le prompt
+    système et la liste de critères changent — le panel n'a donc rien à savoir
+    du domaine qu'il fait noter.
     """
+    judge_fn = judge_fn or judge_answer
     used: list[str] = []
     panel: list[Judgment] = []
     for _ in range(max(1, n_judges)):
-        j = judge_answer(question, answer, context=context,
-                         expected_behaviors=expected_behaviors,
-                         avoid_model=avoid_model, skip_models=tuple(used),
-                         max_retries=max_retries)
+        j = judge_fn(question, answer, context=context,
+                     expected_behaviors=expected_behaviors,
+                     avoid_model=avoid_model, skip_models=tuple(used),
+                     max_retries=max_retries)
         if not j.ok:
             break
         panel.append(j)
