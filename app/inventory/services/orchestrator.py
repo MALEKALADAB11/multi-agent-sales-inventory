@@ -31,6 +31,16 @@ WHAT WAS SLOW AND WHY:
 
 5. Redis Alert Bus: CRITICAL/EXPEDITE decisions now dispatched async
    via dispatch_alerts_sync() without blocking the pipeline.
+
+6. "cannot schedule new futures after interpreter shutdown" on every SKU
+   The startup pre-warm runs a multi-minute batch in a background thread.
+   Stopping uvicorn mid-run put CPython into its exit sequence, which flips
+   concurrent.futures' global shutdown flag — every per-SKU nested pool then
+   failed to submit at once, one ERROR per SKU.
+   FIX: the pipeline is now shutdown-aware (app/core/shutdown.py). Workers
+   stop pulling new SKUs once shutdown starts, and phase 1 offloads only the
+   context agent (1 thread instead of 2), falling back to a plain sequential
+   run when no thread can be scheduled.
 """
 
 import sys
@@ -38,6 +48,8 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+
+from app.core.shutdown import is_shutting_down, is_shutdown_error
 
 
 logger = logging.getLogger(__name__)
@@ -255,6 +267,11 @@ class InventoryOrchestrator:
         decision_agent = self._decision_agent
 
         def _worker(sku: str) -> Dict[str, Any]:
+            # Le processus s'arrête : ne pas entamer un nouveau SKU. Sans ce
+            # garde-fou, chaque worker allait au bout et échouait sur son pool
+            # imbriqué ("cannot schedule new futures after interpreter shutdown").
+            if is_shutting_down():
+                return {"sku": sku, "store_id": store_id, "skipped": "shutdown"}
             try:
                 return self._run_pipeline(
                     sku, store_id, resolved_objective, agent_run_id,
@@ -266,12 +283,24 @@ class InventoryOrchestrator:
                     batch_id=batch_id,
                 )
             except Exception as exc:
+                if is_shutdown_error(exc) or is_shutting_down():
+                    logger.info("[Orchestrator] SKU %s abandonné (arrêt en cours)", sku)
+                    return {"sku": sku, "store_id": store_id, "skipped": "shutdown"}
                 logger.error("[Orchestrator] SKU %s worker error: %s", sku, exc)
                 return {"sku": sku, "store_id": store_id, "error": str(exc)}
 
         results_dict: Dict[str, Dict] = {}
+        aborted = False
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            future_to_sku = {pool.submit(_worker, sku): sku for sku in skus}
+            future_to_sku: Dict[Future, str] = {}
+            for sku in skus:
+                try:
+                    future_to_sku[pool.submit(_worker, sku)] = sku
+                except RuntimeError as exc:
+                    if not is_shutdown_error(exc):
+                        raise
+                    aborted = True
+                    break
             for future in as_completed(future_to_sku):
                 sku = future_to_sku[future]
                 try:
@@ -280,27 +309,45 @@ class InventoryOrchestrator:
                     logger.error("[Orchestrator] future raised for SKU %s: %s", sku, exc)
                     results_dict[sku] = {"sku": sku, "store_id": store_id, "error": str(exc)}
 
-        results  = [results_dict.get(s, {"sku": s, "error": "missing"}) for s in skus]
+        interrupted = aborted or is_shutting_down()
+        if interrupted:
+            logger.warning(
+                "[Orchestrator] Batch interrompu par l'arrêt du processus — %d/%d SKUs traités",
+                len(results_dict), len(skus),
+            )
+
+        # Un SKU non soumis pendant un arrêt n'est pas une erreur métier :
+        # il est marqué `skipped` pour ne pas faire passer le run en "failed".
+        _missing = {"skipped": "shutdown"} if interrupted else {"error": "missing"}
+        results  = [
+            results_dict.get(s, {"sku": s, "store_id": store_id, **_missing}) for s in skus
+        ]
         critical = sum(1 for r in results if r.get("analysis_report", {}).get("risk_assessment", {}).get("level") == "CRITICAL")
         high     = sum(1 for r in results if r.get("analysis_report", {}).get("risk_assessment", {}).get("level") == "HIGH")
         errors   = sum(1 for r in results if "error" in r)
+        skipped  = sum(1 for r in results if r.get("skipped"))
 
         _batch_ms = int((_time.time() - _batch_t0) * 1000)
         logger.info(
-            "[Orchestrator] Batch done — CRITICAL:%d HIGH:%d Errors:%d / %d SKUs (%dms)",
-            critical, high, errors, len(skus), _batch_ms,
+            "[Orchestrator] Batch done — CRITICAL:%d HIGH:%d Errors:%d Skipped:%d / %d SKUs (%dms)",
+            critical, high, errors, skipped, len(skus), _batch_ms,
         )
         if _LF_AVAILABLE:
             log_batch_end(batch_id, store_id, critical, high, errors, _batch_ms)
 
         if _DB_AVAILABLE and agent_run_id:
             try:
+                _msgs = []
+                if errors:
+                    _msgs.append(f"{errors} SKU(s) failed")
+                if skipped:
+                    _msgs.append(f"{skipped} SKU(s) skipped (shutdown)")
                 SyncInventoryRepo.complete_agent_run(
                     run_id=agent_run_id,
                     status="failed" if errors == len(skus) else "completed",
-                    items_processed=len(skus) - errors,
+                    items_processed=len(skus) - errors - skipped,
                     alerts_generated=critical + high,
-                    error_message=f"{errors} SKU(s) failed" if errors else None,
+                    error_message="; ".join(_msgs) or None,
                 )
                 logger.info("[Orchestrator] batch agent_run closed: %s", agent_run_id)
             except Exception as exc:
@@ -340,6 +387,11 @@ class InventoryOrchestrator:
         # Ces deux agents sont indépendants — aucun n'a besoin de la sortie
         # de l'autre. Les exécuter en parallèle coupe le temps par SKU ~2×
         # pour les runs LLM-enabled.
+        #
+        # Seul le contexte est déporté sur un thread : l'analyse tourne dans le
+        # thread courant, qui sinon attendrait les bras croisés. Même
+        # parallélisme, moitié moins de threads (1 au lieu de 2 par SKU), et
+        # une seule soumission susceptible d'échouer à l'arrêt du processus.
 
         analysis_span = lf_trace.agent_span(
             "analysis",
@@ -353,25 +405,34 @@ class InventoryOrchestrator:
         analysis_report: Dict[str, Any] = {}
         context_report:  Dict[str, Any] = {}
 
-        with ThreadPoolExecutor(max_workers=2) as inner_pool:
-            analysis_future: Future = inner_pool.submit(
-                analysis_agent.run,
-                sku, store_id, business_objective, agent_run_id,
-                preloaded_stock=preloaded_stock,
-                preloaded_product=(
-                    preloaded_products.get(sku) if preloaded_products else None
-                ),
-                lf_span=analysis_span,
-            )
-            context_future: Future = inner_pool.submit(
-                context_agent.run,
-                sku, store_id, agent_run_id,
-                lf_span=context_span,
-            )
+        def _run_context():
+            return context_agent.run(sku, store_id, agent_run_id, lf_span=context_span)
 
-            # Collect analysis result
+        # Pendant l'arrêt de l'interpréteur, submit() lève RuntimeError : on
+        # bascule alors sur une exécution séquentielle plutôt que de perdre le SKU.
+        inner_pool: Optional[ThreadPoolExecutor] = None
+        context_future: Optional[Future] = None
+        if not is_shutting_down():
             try:
-                raw                       = analysis_future.result()
+                inner_pool     = ThreadPoolExecutor(max_workers=1, thread_name_prefix="inv-ctx")
+                context_future = inner_pool.submit(_run_context)
+            except RuntimeError as exc:
+                if not is_shutdown_error(exc):
+                    raise
+                logger.debug("[Orchestrator] SKU=%s contexte en séquentiel (arrêt en cours)", sku)
+                context_future = None
+
+        try:
+            # Analyse dans le thread courant, en parallèle du contexte.
+            try:
+                raw                       = analysis_agent.run(
+                    sku, store_id, business_objective, agent_run_id,
+                    preloaded_stock=preloaded_stock,
+                    preloaded_product=(
+                        preloaded_products.get(sku) if preloaded_products else None
+                    ),
+                    lf_span=analysis_span,
+                )
                 result["analysis_report"] = raw.get("analysis_report", {})
                 analysis_report           = result["analysis_report"]
                 if analysis_span:
@@ -389,7 +450,7 @@ class InventoryOrchestrator:
 
             # Collect context result (non-blocking for decision pipeline)
             try:
-                ctx_raw                  = context_future.result()
+                ctx_raw                  = context_future.result() if context_future else _run_context()
                 result["context_result"] = ctx_raw
                 context_report           = ctx_raw.get("context_report", {})
                 if context_span:
@@ -403,6 +464,9 @@ class InventoryOrchestrator:
                 result["context_result"] = {"sku": sku, "store_id": store_id, "error": str(exc)}
                 if context_span:
                     context_span.end(error=str(exc))
+        finally:
+            if inner_pool is not None:
+                inner_pool.shutdown(wait=False)
 
         if not analysis_report:
             result["decision_result"] = {

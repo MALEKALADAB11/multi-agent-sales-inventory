@@ -1,74 +1,43 @@
 {
-  "total": 2,
+  "total": 1,
   "events": [
     {
-      "title": "HONOR",
+      "title": "[Go Back]",
       "type": "promotion",
       "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-29T14:56:45.851182"
-    },
-    {
-      "title": "[Go Back]",
-      "type": "tarif",
-      "category": "internet",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-29T14:56:49.016996"
+      "date": "2026-07-29T21:10:34.730917"
     }
   ],
   "active": [
     {
-      "title": "HONOR",
+      "title": "[Go Back]",
       "type": "promotion",
       "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-29T14:56:45.851182"
-    },
-    {
-      "title": "[Go Back]",
-      "type": "tarif",
-      "category": "internet",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-29T14:56:49.016996"
+      "date": "2026-07-29T21:10:34.730917"
     }
   ],
   "promotions": [
     {
-      "title": "HONOR",
+      "title": "[Go Back]",
       "type": "promotion",
       "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
-      "is_active": true,
-      "scraped": true,
-      "date": "2026-07-29T14:56:45.851182"
-    }
-  ],
-  "new_offers": [],
-  "tarifs": [
-    {
-      "title": "[Go Back]",
-      "type": "tarif",
-      "category": "internet",
       "price": "",
       "details": "",
       "is_active": true,
       "scraped": true,
-      "date": "2026-07-29T14:56:49.016996"
+      "date": "2026-07-29T21:10:34.730917"
     }
   ],
+  "new_offers": [],
+  "tarifs": [],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-29T14:59:02.480186"
+  "fetched_at": "2026-07-29T21:10:41.868715"
 }

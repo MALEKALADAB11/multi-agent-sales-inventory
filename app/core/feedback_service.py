@@ -187,6 +187,64 @@ def get_feedback_stats(store_id: Optional[str] = None, days: int = 14) -> Dict[s
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Vue d'ensemble pour la page Supervision (fenêtre courante vs baseline)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _decided_totals(stats: Dict[str, Any]) -> tuple[int, int]:
+    """Consolide les 3 boucles de feedback en (acceptés, rejetés) décidés."""
+    inc = stats["incitations"]
+    hitl = stats["hitl"]
+    po = stats["po"]
+    accepted = int(inc["followed"]) + int(hitl["approved"]) + int(po.get("accepted", 0))
+    rejected = int(inc["ignored"]) + int(hitl["rejected"]) + int(po.get("cancelled", 0))
+    return accepted, rejected
+
+
+def get_feedback_overview(
+    store_id: Optional[str] = None,
+    window_days: int = 30,
+    baseline_days: int = 90,
+) -> Dict[str, Any]:
+    """
+    Cartes KPI de la page Supervision : taux d'acceptation et de rejet sur la
+    fenêtre courante (30j par défaut), comparés au taux de rejet moyen sur la
+    baseline 3 mois (90j). Consolide les 3 boucles humaines réelles
+    (incitations coach, HITL stratèges, PO stock) — aucune donnée mockée.
+    """
+    cur = get_feedback_stats(store_id=store_id, days=window_days)
+    base = get_feedback_stats(store_id=store_id, days=baseline_days)
+
+    a_c, r_c = _decided_totals(cur)
+    a_b, r_b = _decided_totals(base)
+    dec_c = a_c + r_c
+    dec_b = a_b + r_b
+
+    accept_rate = round(a_c / dec_c * 100, 1) if dec_c else None
+    reject_rate = round(r_c / dec_c * 100, 1) if dec_c else None
+    baseline_reject_rate = round(r_b / dec_b * 100, 1) if dec_b else None
+    reject_delta = (round(reject_rate - baseline_reject_rate, 1)
+                    if (reject_rate is not None and baseline_reject_rate is not None) else None)
+
+    return {
+        "window_days": window_days,
+        "baseline_days": baseline_days,
+        "decided": dec_c,
+        "accepted": a_c,
+        "rejected": r_c,
+        "accept_rate": accept_rate,
+        "reject_rate": reject_rate,
+        "baseline_reject_rate": baseline_reject_rate,
+        "reject_delta": reject_delta,          # + = plus de rejets que la moyenne 3 mois
+        "by_loop": {
+            "incitations": cur["incitations"],
+            "hitl": cur["hitl"],
+            "po": cur["po"],
+        },
+        "recent_rejections": cur["recent_rejections"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Contexte d'apprentissage pour les prompts agents
 # ═══════════════════════════════════════════════════════════════════════════
 

@@ -69,6 +69,18 @@ def get_llm(
 
     logger.info("[LLMFactory] provider=%s role=%s temperature=%s", provider, role, temperature)
 
+    # Retries internes du SDK désactivés par défaut sur les clients API.
+    # Le SDK OpenAI respecte l'en-tête `Retry-After` : sur un 429 de quota
+    # journalier (openrouter free-models-per-day), il attend 21 s puis
+    # réessaie — deux fois — avant que l'exception remonte. La bascule de
+    # `get_llm_with_fallback` (provider suivant) et celle de ChatGroqMultiKey
+    # (clé suivante) sont notre mécanisme de reprise : les faire attendre
+    # ~40 s pour un quota qui ne se libérera pas avant demain bloque le
+    # pipeline pour rien. Un appelant qui veut des retries passe max_retries.
+    # Ollama est exclu : ChatOllama n'accepte pas ce paramètre.
+    if provider != "ollama":
+        kwargs.setdefault("max_retries", 0)
+
     # ══════════════════════════════════════════════════════════════════════════
     # OPENROUTER — recommandé (accès unifié Claude/Gemini/Llama)
     # ══════════════════════════════════════════════════════════════════════════

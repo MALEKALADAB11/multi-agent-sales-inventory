@@ -73,6 +73,37 @@ logger = logging.getLogger(__name__)
 logging.getLogger("langfuse").setLevel(logging.CRITICAL)
 logging.getLogger("backoff").setLevel(logging.CRITICAL)
 
+
+class _ProactorSocketNoiseFilter(logging.Filter):
+    """Filtre le bruit de la boucle Proactor (Windows) dans logs/errors.log.
+
+    Quand un client abandonne une connexion entre le SYN et l'accept() —
+    rechargement du dashboard Angular, HMR, onglet fermé, WebSocket coupé —
+    IocpProactor.accept() se réveille sur une socket déjà morte et asyncio
+    journalise en ERROR, avec traceback :
+
+        Accept failed on a socket / Task exception was never retrieved
+        OSError: [WinError 64] Le nom réseau spécifié n'est plus disponible
+
+    Le serveur continue d'accepter normalement : c'est un événement réseau
+    côté client, pas une erreur applicative. Non filtré, chaque rechargement
+    de page ajoute 10 lignes à errors.log et noie les vraies erreurs.
+    On ne masque que les codes Windows « le pair est parti » ; toute autre
+    OSError d'asyncio reste journalisée.
+    """
+
+    # 64 nom réseau plus disponible · 121 timeout sémaphore · 995 I/O annulée
+    # 1236 connexion abandonnée localement · 10054 reset par le pair
+    _PEER_GONE = {64, 121, 995, 1236, 10054}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        return not (isinstance(exc, OSError)
+                    and getattr(exc, "winerror", None) in self._PEER_GONE)
+
+
+logging.getLogger("asyncio").addFilter(_ProactorSocketNoiseFilter())
+
 # ── Registry multi-connexions (remplace _active_stores slot unique) ───────────
 # store_id → set of active WebSocket connections
 _store_connections: Dict[str, Set[WebSocket]] = {}
@@ -302,7 +333,10 @@ async def startup_event():
         except Exception as e:
             logger.warning("⚠️ Inventory cache pre-warm failed: %s", e)
 
-    asyncio.create_task(asyncio.to_thread(_prewarm_inventory))
+    # Gardée sur app.state pour être annulée à l'arrêt : sinon le batch continue
+    # pendant la sortie de l'interpréteur et chaque SKU échoue sur
+    # "cannot schedule new futures after interpreter shutdown".
+    app.state.prewarm_fast_task = asyncio.create_task(asyncio.to_thread(_prewarm_inventory))
 
     timefm = TimesFMTools(model_path="./models/timefm")
     await timefm.load_model()
@@ -627,7 +661,7 @@ async def startup_event():
                 logger.warning("⚠️ Prechauffage inventory %s echoue: %s", store_id, e)
 
     if os.getenv("INVENTORY_PREWARM", "true").lower() == "true":
-        asyncio.create_task(_prewarm_inventory())
+        app.state.prewarm_task = asyncio.create_task(_prewarm_inventory())
         logger.info("✅ Préchauffage cache inventory programmé")
 
     logger.info("🚀 All systems started — v5.0.0")
@@ -635,6 +669,17 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    # Signalé en premier : les batchs inventory en vol (préchauffage) le lisent
+    # et s'arrêtent d'eux-mêmes au lieu d'être coupés par la sortie de
+    # l'interpréteur, un RuntimeError par SKU.
+    from app.core.shutdown import request_shutdown
+    request_shutdown()
+
+    for _attr in ("prewarm_task", "prewarm_fast_task"):
+        task = getattr(app.state, _attr, None)
+        if task is not None and not task.done():
+            task.cancel()
+
     simulator = getattr(app.state, "simulator", None)
     if simulator: simulator.stop()
     sale_trigger = getattr(app.state, "sale_trigger", None)

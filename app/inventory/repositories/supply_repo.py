@@ -33,6 +33,21 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 
 _TERMINAL_RECEIVED = {"RECU", "RECU_PARTIEL"}
 
+# Urgence temporelle du DecisionAgent → priorité affichée sur le Kanban Achats.
+# Le front attend {URGENTE, HAUTE, NORMAL, BASSE} (purchase-board priorityColor).
+_URGENCY_TO_PRIORITE = {
+    "immediate":  "URGENTE",
+    "this_week":  "HAUTE",
+    "this_month": "NORMAL",
+    "none":       "BASSE",
+}
+
+
+def urgency_to_priorite(urgency: Optional[str]) -> str:
+    """Mappe l'urgence d'une recommandation vers une priorité de BC.
+    Défaut NORMAL si l'urgence est absente ou inconnue."""
+    return _URGENCY_TO_PRIORITE.get((urgency or "").strip().lower(), "NORMAL")
+
 
 class PurchaseOrderTransitionError(Exception):
     """Raised when a requested statut transition is not in ALLOWED_TRANSITIONS."""
@@ -440,21 +455,22 @@ class SyncPurchaseOrderRepo:
                 # NB : ne pas écrire agent_decision_id — c'est un uuid, alors que
                 # l'agent ne dispose que d'un agent_run_id entier. Le lien vers la
                 # décision passe par recommendation_id, qui porte la FK.
+                priorite = urgency_to_priorite(row["urgency"])
                 cur.execute("""
                     INSERT INTO supply.purchase_orders
                         (sku, supplier_id, store_id, quantite_commandee,
                          prix_unitaire_ht, montant_total_ht, statut, source,
-                         urgency, confidence,
+                         urgency, confidence, priorite,
                          date_livraison_prevue, recommendation_id)
                     VALUES
                         (%s, %s, %s, %s, %s, %s, 'SUGGERE', 'AGENT',
-                         %s, %s,
+                         %s, %s, %s,
                          CURRENT_DATE + (%s || ' days')::interval, %s)
                     RETURNING *
                 """, (
                     row["sku"], supplier_id, row["store_id"], qty,
                     unit_cost, total_cost,
-                    row["urgency"], row["confidence"],
+                    row["urgency"], row["confidence"], priorite,
                     lead_days, recommendation_id,
                 ))
                 created = dict(cur.fetchone())

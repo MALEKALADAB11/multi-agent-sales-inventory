@@ -218,6 +218,14 @@ class InventoryDecisionAgent:
                 store_id=store_id,
                 decision=decision,
                 agent_run_id=agent_run_id or own_run_id,
+                context_snapshot=self._build_context_snapshot(
+                    sku=sku,
+                    store_id=store_id,
+                    business_objective=business_objective,
+                    baseline_report=analysis_report,
+                    context_report=ctx,
+                    adjusted_metrics=adjusted_metrics,
+                ),
             )
 
             # Auto-suggest on the purchase-order Kanban — the card appears the
@@ -332,12 +340,45 @@ class InventoryDecisionAgent:
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _build_context_snapshot(
+        *,
+        sku:                str,
+        store_id:           str,
+        business_objective: str,
+        baseline_report:    Dict[str, Any],
+        context_report:     Dict[str, Any],
+        adjusted_metrics:   Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Fige, avec la recommandation, les données que l'agent avait sous les yeux.
+
+        Sert un seul consommateur : le juge LLM qui note `ancrage` en direct
+        (app/core/quality_service.py). Ce critère consiste à retrouver chaque
+        chiffre du texte dans les données de la décision — sans ces rapports, le
+        juge n'a rien à recouper et note bas des chiffres corrects.
+
+        Les clés reprennent volontairement celles de `build_context_string()`
+        dans evals/run_inventory_recommendations.py : c'est ce qui permet de
+        comparer une note obtenue en production à une note du banc hors-ligne.
+        Les renommer ici casse cette comparabilité sans rien signaler.
+        """
+        return {
+            "sku":                sku,
+            "store_id":           store_id,
+            "business_objective": business_objective,
+            "baseline_report":    baseline_report or {},
+            "context_report":     context_report or {},
+            "adjusted_metrics":   adjusted_metrics or {},
+        }
+
     def _persist_recommendation(
         self,
-        sku:          str,
-        store_id:     str,
-        decision:     Dict[str, Any],
-        agent_run_id: Optional[str],
+        sku:              str,
+        store_id:         str,
+        decision:         Dict[str, Any],
+        agent_run_id:     Optional[str],
+        context_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """
         Write to inventory.recommendations if the action is actionable (ORDER/EXPEDITE).
@@ -371,6 +412,8 @@ class InventoryDecisionAgent:
                 recommendation_text=decision.get("recommendation_text", ""),
                 suggested_quantity=decision.get("order_qty"),
                 confidence=confidence_to_float(decision.get("confidence", "low")),
+                urgency=decision.get("urgency"),
+                context_snapshot=context_snapshot,
             )
 
             if rec_id:

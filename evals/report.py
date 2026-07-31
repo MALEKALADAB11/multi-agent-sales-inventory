@@ -7,10 +7,18 @@ report.py — Agrège evals/results/*.json en un rapport Markdown unique.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from evals.common import RESULTS_DIR
 from evals.judge import CRITERIA, INVENTORY_CRITERIA
+
+# Au-delà, un résultat décrit une version du système qui n'existe peut-être plus.
+# Le rapport agrège des bancs lancés à des dates différentes : sans cette
+# annotation, un run vieux de six semaines se lit comme la mesure du jour.
+STALE_AFTER_DAYS = 14
+
+_RUN_DATES: list[tuple[str, str]] = []   # (banc, run_at) collectés à la volée
 
 
 def _load(name: str) -> dict | None:
@@ -18,11 +26,40 @@ def _load(name: str) -> dict | None:
     if not path.exists():
         return None
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if isinstance(data, dict) and data.get("run_at"):
+        _RUN_DATES.append((name, str(data["run_at"])))
+    return data
 
 
 def _pct(x) -> str:
     return f"{x:.1%}" if isinstance(x, (int, float)) else "—"
+
+
+def _age_days(run_at: str) -> int | None:
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return (datetime.now() - datetime.strptime(run_at[:19], fmt)).days
+        except ValueError:
+            continue
+    return None
+
+
+def _check_line(label: str, check: dict | None, detail: str = "") -> str:
+    """Rend un contrôle du juge — y compris quand il n'a PAS tourné.
+
+    Un contrôle absent est rendu explicitement `NON VÉRIFIÉ` avec sa raison :
+    l'ancienne version imprimait une ligne vide, indiscernable d'un contrôle
+    passé. C'est précisément le cas où le lecteur doit se méfier des scores.
+    """
+    if not check:
+        return f"- ⬜ {label} — **NON VÉRIFIÉ** (aucun résultat enregistré)"
+    status = check.get("status")
+    if status == "NON_VERIFIE" or status is None:
+        return (f"- ⬜ {label} — **NON VÉRIFIÉ** "
+                f"({check.get('reason', 'raison non renseignée')})")
+    mark = "✅" if status == "OK" else "⚠️"
+    return f"- {mark} {label} — {detail}" if detail else f"- {mark} {label} — {status}"
 
 
 def build() -> str:
@@ -91,13 +128,37 @@ def build() -> str:
             f"- **Taux d'usage du RAG** : {_pct(c.get('rag_used_rate'))}",
         ]
         if c.get("judge_global_mean") is not None:
-            lines += [
-                f"- **Score juge global** : {c['judge_global_mean']}/5",
-                f"- **Taux d'hallucination** : {_pct(c.get('hallucination_rate'))}",
-                "", "| Critère (0–5) | Moyenne |", "|---|---|",
-            ]
+            basis = c.get("ancrage_basis") or {}
+            n_full, n_judged = basis.get("n"), basis.get("n_judged")
+            lines += [f"- **Score juge global** : {c['judge_global_mean']}/5"]
+            if n_full:
+                lines.append(
+                    f"- **Taux d'hallucination** : {_pct(c.get('hallucination_rate'))} "
+                    f"_(sur {n_full}/{n_judged} cas où le juge a reçu le prompt réel)_")
+            else:
+                lines.append(
+                    "- **Taux d'hallucination** : ⬜ **NON MESURÉ** — aucun cas avec le "
+                    "contexte d'ancrage complet. `ancrage` et l'hallucination qui en "
+                    "découle exigent le bloc de prompt réel (`debug_grounding`) ; sans "
+                    "lui le juge pénalise des chiffres qu'il ne peut pas voir.")
+            lvl = c.get("context_levels") or {}
+            if lvl:
+                lines.append(
+                    f"- **Contexte fourni au juge** : complet={lvl.get('full', 0)} · "
+                    f"partiel={lvl.get('partial', 0)} · absent={lvl.get('none', 0)}")
+            lines += ["", "| Critère (0–5) | Moyenne |", "|---|---|"]
             for crit in CRITERIA:
-                lines.append(f"| {crit} | {c['judge_scores_mean'].get(crit)} |")
+                val = c["judge_scores_mean"].get(crit)
+                # `ancrage` est le seul critère dont la note dépend de ce que le
+                # juge a reçu comme contexte : la publier sans dire sur quelle
+                # base elle a été calculée, c'est publier deux mesures
+                # différentes sous le même nom.
+                if crit == "ancrage":
+                    suffix = (" _(cas à contexte complet)_" if n_full
+                              else " ⚠️ _mesuré sans le contexte réel — non interprétable_")
+                else:
+                    suffix = ""
+                lines.append(f"| {crit} | {val if val is not None else '—'}{suffix} |")
         lines.append("")
 
     ir = _load("inventory_recommendations")
@@ -121,17 +182,33 @@ def build() -> str:
                     f"- `{comp['case_id']}` — LLM={comp['llm_richesse']} "
                     f"vs rule-based={comp['rule_based_richesse']}"
                 )
-        sanity = ir.get("sanity_checks")
-        if sanity:
-            lines += ["", "**Sanity checks du juge** :"]
-            r = sanity.get("richesse")
-            if r:
-                mark = "✅" if r.get("discriminates") else "⚠️"
-                lines.append(f"- {mark} richesse — LLM={r['llm_score']} vs rule-based={r['rule_based_score']}")
-            a = sanity.get("ancrage")
-            if a:
-                mark = "✅" if a.get("discriminates") else "⚠️"
-                lines.append(f"- {mark} ancrage — original={a['original_score']} vs corrompu={a['corrupted_score']}")
+        sanity = ir.get("sanity_checks") or {}
+        det = ir.get("determinism_check")
+        lines += ["", "**Validation du juge** — sans ces trois contrôles au vert, "
+                  "les moyennes ci-dessus ne sont pas interprétables :"]
+        r = sanity.get("richesse")
+        lines.append(_check_line(
+            "richesse discrimine (LLM vs fallback templaté)", r,
+            f"LLM={r.get('llm_score')} vs rule-based={r.get('rule_based_score')}"
+            if r and r.get("status") in ("OK", "ECHEC") else ""))
+        a = sanity.get("ancrage")
+        lines.append(_check_line(
+            "ancrage discrimine (chiffre corrompu)", a,
+            f"original={a.get('original_score')} vs corrompu={a.get('corrupted_score')}"
+            if a and a.get("status") in ("OK", "ECHEC") else ""))
+        lines.append(_check_line(
+            "déterminisme (même texte rejoué)", det,
+            f"écart max par critère {det.get('max_spread_by_criterion')}"
+            if det and det.get("status") in ("OK", "ECHEC") else ""))
+
+        health = ir.get("judge_health") or {}
+        if health:
+            n = health.get("n_distinct", 0)
+            roster = ", ".join(f"`{m}`" for m in health.get("roster") or []) or "aucun"
+            lines.append(f"- {'✅' if n >= 2 else '⚠️'} juges configurés : {n} ({roster})")
+            if n < 2:
+                lines.append("  ⚠️ Un seul juge : ni panel ni déterminisme croisé — "
+                             "son biais propre traverse tous les scores de cette section.")
         lines.append("")
 
     irl = _load("inventory_recommendations_live")
@@ -225,7 +302,41 @@ def build() -> str:
         "du modèle évalué du rôle de juge. Retrieval mesuré par propriétés "
         "(domaine, tokens, abstention) plutôt que par doc_id figé, le corpus étant vivant._",
     ]
+
+    # Bandeau de fraîcheur, inséré juste sous le titre une fois tous les bancs lus.
+    lines[1:1] = _freshness_block()
     return "\n".join(lines)
+
+
+def _freshness_block() -> list[str]:
+    """Date de chaque banc + marquage des runs périmés.
+
+    Les bancs se lancent séparément (l'un demande le serveur, l'autre Milvus,
+    l'autre du quota LLM) : un REPORT.md peut donc juxtaposer un guardrail du
+    jour et un coach d'il y a six semaines. Sans ces dates, tout se lit comme
+    une photo prise au même instant.
+    """
+    if not _RUN_DATES:
+        return []
+    out = ["", "| Banc | Dernier run | Âge |", "|---|---|---|"]
+    stale = []
+    for name, run_at in sorted(_RUN_DATES):
+        age = _age_days(run_at)
+        if age is None:
+            age_txt = "—"
+        elif age > STALE_AFTER_DAYS:
+            age_txt = f"⚠️ {age} j"
+            stale.append(name)
+        else:
+            age_txt = f"{age} j"
+        out.append(f"| `{name}` | {run_at} | {age_txt} |")
+    if stale:
+        out += ["", f"⚠️ Périmés (> {STALE_AFTER_DAYS} j) : "
+                + ", ".join(f"`{s}`" for s in stale)
+                + " — ces sections décrivent une version antérieure du système, "
+                  "à relancer avant toute conclusion."]
+    out.append("")
+    return out
 
 
 def main():

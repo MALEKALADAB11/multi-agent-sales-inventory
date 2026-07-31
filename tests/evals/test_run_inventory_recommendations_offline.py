@@ -45,6 +45,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _app_stubs  # noqa: E402
+
 
 def _install_fake_app_modules():
     """Injecte des modules factices dans sys.modules pour
@@ -97,19 +102,32 @@ def _install_fake_app_modules():
     llm_factory_mod = types.ModuleType("app.inventory.utils.llm_factory")
     llm_factory_mod.get_smart_llm = lambda: object()
 
-    for name, mod in [
-        ("app", types.ModuleType("app")),
-        ("app.inventory", types.ModuleType("app.inventory")),
-        ("app.inventory.agents", types.ModuleType("app.inventory.agents")),
-        ("app.inventory.agents.decision", types.ModuleType("app.inventory.agents.decision")),
-        ("app.inventory.agents.decision.nodes", nodes_mod),
-        ("app.inventory.utils", types.ModuleType("app.inventory.utils")),
-        ("app.inventory.utils.llm_factory", llm_factory_mod),
-    ]:
-        sys.modules.setdefault(name, mod)
+    # Seules les feuilles sont bouchonnées, et les bouchons sont défaits par
+    # tearDownModule — voir _app_stubs pour le pourquoi (un faux paquet `app`
+    # laissé dans sys.modules cassait la collecte de toute la suite).
+    return _app_stubs.install({
+        "app.inventory.agents.decision.nodes": nodes_mod,
+        "app.inventory.utils.llm_factory":     llm_factory_mod,
+    })
 
 
-_install_fake_app_modules()
+_stubs = None
+
+
+def setUpModule():
+    # Installé ici et pas à l'import : pytest importe tous les fichiers de test
+    # avant d'en exécuter un seul, donc un bouchon posé à l'import resterait
+    # actif pendant l'import des fichiers suivants — qui lieraient le faux
+    # llm_factory au lieu du vrai. `rir` importe app.* paresseusement (dans
+    # build_recommendation()), le bouchon arrive à temps.
+    global _stubs
+    _stubs = _install_fake_app_modules()
+
+
+def tearDownModule():
+    if _stubs is not None:
+        _stubs.restore()
+
 
 from evals import run_inventory_recommendations as rir  # noqa: E402
 from evals.judge import INVENTORY_CRITERIA, Judgment  # noqa: E402

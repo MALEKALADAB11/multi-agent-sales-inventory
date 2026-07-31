@@ -1,5 +1,16 @@
 # Rapport d'évaluation LLM — Système multi-agents Ooredoo
 
+| Banc | Dernier run | Âge |
+|---|---|---|
+| `coach_e2e` | 2026-07-16T21:25:43 | 11 j |
+| `guardrail` | 2026-07-16T21:14:01 | 11 j |
+| `inventory_recommendations` | 2026-07-28T12:25:45 | 0 j |
+| `inventory_recommendations_live` | 2026-07-26T14:50:20 | 1 j |
+| `model_benchmark` | 2026-07-21T13:02:06 | 6 j |
+| `rag_retrieval` | 2026-07-28T12:42:10 | 0 j |
+| `ragas` | 2026-07-24T14:02:17 | 3 j |
+
+
 _Guardrail exécuté le 2026-07-16T21:14:01_
 
 ## 1. Guardrail Agent (jeu adversarial)
@@ -28,6 +39,17 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 | Pureté | 100.0% | aucun contenu interdit remonté |
 | Abstention | 100.0% | sait dire « rien de pertinent » (anti-hallucination) |
 
+## 2bis. RAG — RAGAS (métriques officielles)
+
+Chaîne retriever + génération ancrée, juge `mistral/mistral-large-latest`, embeddings `ollama/bge-m3`, sur 8 cas.
+
+| Métrique RAGAS | Score /1 | Lecture |
+|---|---|---|
+| faithfulness | 0.719 | Faithfulness — la réponse ne dit rien hors des contextes |
+| answer_relevancy | 0.677 | Answer relevancy — la réponse traite bien la question |
+| llm_context_precision_without_reference | 0.806 | Context precision — contextes remontés utiles |
+| context_recall | 0.167 | Context recall — contextes couvrant la référence |
+
 ## 3. Coach — bout-en-bout (API réelle)
 
 - **Taux de réponse** : 100.0% (20/20)
@@ -35,12 +57,12 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 - **Checks déterministes** (remise interdite, fuite de prompt, refus hors-sujet, français) : 88.5%
 - **Taux d'usage du RAG** : 0.0%
 - **Score juge global** : 3.44/5
-- **Taux d'hallucination** : 60.0%
+- **Taux d'hallucination** : ⬜ **NON MESURÉ** — aucun cas avec le contexte d'ancrage complet. `ancrage` et l'hallucination qui en découle exigent le bloc de prompt réel (`debug_grounding`) ; sans lui le juge pénalise des chiffres qu'il ne peut pas voir.
 
 | Critère (0–5) | Moyenne |
 |---|---|
 | pertinence | 2.95 |
-| ancrage | 2.7 |
+| ancrage | 2.7 ⚠️ _mesuré sans le contexte réel — non interprétable_ |
 | actionnabilite | 3.4 |
 | langue | 4.15 |
 | securite | 4.0 |
@@ -48,22 +70,26 @@ _Guardrail exécuté le 2026-07-16T21:14:01_
 ## 3bis. DecisionAgent inventaire — recommendation_text (LLM-as-judge)
 
 - **Cas évalués** : 15/15 (100.0%)
-- **Score juge global** : 4.0/5
+- **Score juge global** : 4.85/5
 
 | Critère (0–5) | Moyenne |
 |---|---|
-| clarte | 4.86 |
-| coherence | 5.0 |
-| completude | 4.71 |
+| clarte | 5.0 |
+| coherence | 4.93 |
+| completude | 4.93 |
 | actionabilite | 5.0 |
-| richesse | 4.43 |
-| ancrage | 4.0 |
+| richesse | 4.67 |
+| ancrage | 4.6 |
 
 **Ancre `richesse`** (LLM vs fallback rule-based) :
 - `critical_stockout-02` — LLM=5 vs rule-based=5
-- `hold_overstock-01` — LLM=3 vs rule-based=4
+- `hold_overstock-01` — LLM=4 vs rule-based=5
 
-**Sanity checks du juge** :
+**Validation du juge** — sans ces trois contrôles au vert, les moyennes ci-dessus ne sont pas interprétables :
+- ⚠️ richesse discrimine (LLM vs fallback templaté) — LLM=5 vs rule-based=5
+- ✅ ancrage discrimine (chiffre corrompu) — original=5 vs corrompu=1
+- ✅ déterminisme (même texte rejoué) — écart max par critère {'clarte': 0, 'coherence': 0, 'completude': 0, 'actionabilite': 0, 'richesse': 0, 'ancrage': 0}
+- ✅ juges configurés : 4 (`mistral/mistral-large-latest`, `groq/openai/gpt-oss-120b`, `groq/llama-3.3-70b-versatile`, `openrouter/nvidia/nemotron-3-super-120b-a12b:free`)
 
 ## 3ter. DecisionAgent inventaire — échantillon réel (LLM-as-judge)
 
