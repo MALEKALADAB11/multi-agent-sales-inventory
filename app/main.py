@@ -629,6 +629,23 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"⚠️ Auto-confirmation BC non démarrée: {e}")
 
+    # ── Tendance % critique : snapshot horaire pour le mini chart dashboard ──
+    # Écrit dans inventory.critical_trend_history (migration 0017) en lisant
+    # le cache analyze_store() déjà chaud — ne recalcule jamais rien. Voir
+    # app/inventory/services/critical_trend_snapshot.py pour le détail.
+    try:
+        from app.inventory.services.critical_trend_snapshot import (
+            snapshot_loop, SNAPSHOT_INTERVAL_MINUTES, FORCE_ACTIVITY,
+        )
+        asyncio.create_task(snapshot_loop(active_stores))
+        logger.info(
+            "✅ Snapshot tendance %% critique programmé (%d min, %d magasin(s)%s)",
+            SNAPSHOT_INTERVAL_MINUTES, len(active_stores),
+            " — ⚠️ FORCE_ACTIVITY ON, désactiver après la démo" if FORCE_ACTIVITY else "",
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Snapshot tendance % critique non démarré: {e}")
+
     # ── Préchauffage du cache inventory ──────────────────────────────────────
     # Le pipeline a froid coute ~3 min sur I63 (143 SKUs), dont l'essentiel en
     # ajustement statsforecast. Le dashboard, lui, abandonne chaque tentative
@@ -752,6 +769,82 @@ def _make_fallback_summary(gap_pct, urgency, cr, dt, feo):
     if urgency == "MEDIUM":
         return f"Gap {gap_pct:.1f}% à surveiller. CA {cr:,.0f}/{dt:,.0f} TND. Forecast EOD: {feo:,.0f} TND."
     return f"Performance correcte — gap {gap_pct:.1f}%. CA {cr:,.0f}/{dt:,.0f} TND."
+
+
+def _generate_fallback_alerts(gap_pct: float, urgency: str, store_id: str) -> list:
+    """Génère des alertes basiques quand le cycle échoue."""
+    from datetime import datetime
+    alerts = []
+    now_str = datetime.now().strftime("%H:%M")
+    
+    # Alert gap si gap significatif
+    if gap_pct > 30:
+        alerts.append({
+            "id": f"alert-gap-{now_str}",
+            "type": "gap",
+            "level": "critical" if gap_pct > 50 else "warning",
+            "icon": "🚨" if gap_pct > 50 else "⚠️",
+            "title": f"Gap {gap_pct:.0f}% — données cycle indisponibles",
+            "message": "Le cycle agent a échoué. Vérifier les logs.",
+            "action": "Relancer le cycle manuellement",
+            "cta": "Demander au coach",
+            "timestamp": now_str
+        })
+    
+    # Alert stock critique si possible (requête DB simple)
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "localhost"),
+            port=int(os.getenv("POSTGRES_PORT", 5432)),
+            dbname=os.getenv("POSTGRES_DB", "ooredoo_sales"),
+            user=os.getenv("POSTGRES_USER", "postgres"),
+            password=os.getenv("POSTGRES_PASSWORD", "root")
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT sl.sku, COALESCE(p.nom, sl.sku::text) as product_name,
+                   COALESCE(sl.quantity_available, sl.quantity, 0) as stock_qty
+            FROM inventory.stock_levels sl
+            LEFT JOIN sales.produits p ON p.sku = sl.sku
+            WHERE sl.store_id = %s AND COALESCE(sl.quantity_available, sl.quantity, 0) <= 3
+            LIMIT 3
+        """, (store_id,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        if rows:
+            for sku, pname, qty in rows:
+                alerts.append({
+                    "id": f"alert-stock-{sku}-{now_str}",
+                    "type": "stock",
+                    "level": "critical" if qty == 0 else "warning",
+                    "icon": "📦",
+                    "title": f"Stock {'rupture' if qty == 0 else 'critique'} — {pname}",
+                    "message": f"{qty} unité(s) restante(s)" if qty > 0 else f"Rupture — {pname}",
+                    "action": "Vérifier réapprovisionnement",
+                    "cta": "Demander au coach",
+                    "timestamp": now_str
+                })
+    except Exception:
+        pass
+    
+    # Si aucune alerte générée, alerte info générique
+    if not alerts:
+        alerts.append({
+            "id": f"alert-info-{now_str}",
+            "type": "info",
+            "level": "info",
+            "icon": "ℹ️",
+            "title": "Données cycle partielles",
+            "message": "Certaines données sont indisponibles.",
+            "action": "Vérifier l'état du système",
+            "cta": "Demander au coach",
+            "timestamp": now_str
+        })
+    
+    return alerts
 
 
 def _compute_heatmap(urgency):
@@ -966,7 +1059,7 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         "focus_produits":     supervisor_result.get("focus_produits", []),
         "rag_used":           supervisor_result.get("rag_used", False),
         "nb_rag_scripts":     supervisor_result.get("nb_rag_scripts", 0),
-        "real_time_alerts":   supervisor_result.get("real_time_alerts", []),
+        "real_time_alerts":   supervisor_result.get("real_time_alerts", []) or _generate_fallback_alerts(gap_pct, urg_level, store_id),
     }
 
     # Enrichissement dashboard — sorties du raisonnement unifié multi-domaine

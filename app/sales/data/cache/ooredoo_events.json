@@ -1,43 +1,106 @@
 {
-  "total": 1,
+  "total": 3,
   "events": [
     {
-      "title": "[Go Back]",
+      "title": "Activation SIM 4G frais offerts",
       "type": "promotion",
-      "category": "promotion",
-      "price": "",
-      "details": "",
+      "category": "SIM Kit Ooredoo 4G",
+      "price": "-100%",
+      "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-29T21:10:34.730917"
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
+    },
+    {
+      "title": "Pack Postpayé été — 2 mois offerts",
+      "type": "promotion",
+      "category": "Forfait Postpayé Essentiel",
+      "price": "-17%",
+      "details": "Valable jusqu'au 2026-08-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
+    },
+    {
+      "title": "Rentrée anticipée : forfait étudiant -15%",
+      "type": "promotion",
+      "category": "Forfait étudiant Ooredoo",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-09-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
     }
   ],
   "active": [
     {
-      "title": "[Go Back]",
+      "title": "Activation SIM 4G frais offerts",
       "type": "promotion",
-      "category": "promotion",
-      "price": "",
-      "details": "",
+      "category": "SIM Kit Ooredoo 4G",
+      "price": "-100%",
+      "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-29T21:10:34.730917"
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
+    },
+    {
+      "title": "Pack Postpayé été — 2 mois offerts",
+      "type": "promotion",
+      "category": "Forfait Postpayé Essentiel",
+      "price": "-17%",
+      "details": "Valable jusqu'au 2026-08-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
+    },
+    {
+      "title": "Rentrée anticipée : forfait étudiant -15%",
+      "type": "promotion",
+      "category": "Forfait étudiant Ooredoo",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-09-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
     }
   ],
   "promotions": [
     {
-      "title": "[Go Back]",
+      "title": "Activation SIM 4G frais offerts",
       "type": "promotion",
-      "category": "promotion",
-      "price": "",
-      "details": "",
+      "category": "SIM Kit Ooredoo 4G",
+      "price": "-100%",
+      "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
-      "scraped": true,
-      "date": "2026-07-29T21:10:34.730917"
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
+    },
+    {
+      "title": "Pack Postpayé été — 2 mois offerts",
+      "type": "promotion",
+      "category": "Forfait Postpayé Essentiel",
+      "price": "-17%",
+      "details": "Valable jusqu'au 2026-08-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
+    },
+    {
+      "title": "Rentrée anticipée : forfait étudiant -15%",
+      "type": "promotion",
+      "category": "Forfait étudiant Ooredoo",
+      "price": "-15%",
+      "details": "Valable jusqu'au 2026-09-15",
+      "is_active": true,
+      "scraped": false,
+      "date": "2026-08-02T15:41:12.596833"
     }
   ],
   "new_offers": [],
   "tarifs": [],
-  "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-07-29T21:10:41.868715"
+  "source": "fallback (erreur)",
+  "fetched_at": "2026-08-02T15:41:12.629828",
+  "degraded": true,
+  "degraded_reason": "erreur",
+  "fail_streak": 2
 }

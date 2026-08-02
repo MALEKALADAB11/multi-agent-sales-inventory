@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from app.inventory.services.orchestrator import create_orchestrator
 from app.inventory.tools.internal.stock_tools import _DataCache
@@ -527,21 +527,21 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
         if days_remaining < lead_time_avg:
             risk_level = "critical"
             rationale = (
-                f"Stock ({days_remaining:.1f}d) will run out before next order "
-                f"(lead time {lead_time_avg:.0f}d). Stockout imminent."
+                f"Stock ({days_remaining:.1f}j) épuisé avant la prochaine livraison "
+                f"(délai fournisseur {lead_time_avg:.0f}j). Rupture imminente."
             )
         elif days_remaining < lead_time_avg + lt_var:
             risk_level = "high"
             rationale = (
-                f"Stock ({days_remaining:.1f}d) within lead time variability window "
-                f"({lead_time_avg:.0f}d ± {lead_time_std:.1f}d)."
+                f"Stock ({days_remaining:.1f}j) dans la fenêtre de variabilité du délai "
+                f"fournisseur ({lead_time_avg:.0f}j ± {lead_time_std:.1f}j)."
             )
         elif days_remaining < lead_time_avg * 2.5:
             risk_level = "medium"
-            rationale = f"Stock ({days_remaining:.1f}d) below 2.5× lead time. Monitor."
+            rationale = f"Stock ({days_remaining:.1f}j) inférieur à 2,5× le délai fournisseur. À surveiller."
         else:
             risk_level = "ok"
-            rationale = f"Stock ({days_remaining:.1f}d) exceeds 2.5× lead time. Well covered."
+            rationale = f"Stock ({days_remaining:.1f}j) supérieur à 2,5× le délai fournisseur. Bien couvert."
 
         return risk_level, round(days_remaining, 1), coverage_ratio, rationale
 
@@ -950,26 +950,26 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
         if risk == "critical":
             alert_type = "stockout_risk"   # DB constraint value
             urgency    = "critical"
-            title      = f"Stockout imminent: {name}"
+            title      = f"Rupture imminente : {name}"
             message    = (
-                f"{name} — only {stock:.0f} units left, "
-                f"{days:.1f} days of stock remaining"
+                f"{name} — plus que {stock:.0f} unité(s) en stock, "
+                f"{days:.1f} jour(s) de stock restant"
             )
         elif risk == "high":
             alert_type = "below_minimum"   # DB constraint value
             urgency    = "high"
-            title      = f"Low stock: {name}"
+            title      = f"Stock faible : {name}"
             message    = (
-                f"{name} — {days:.1f}d of stock within lead-time "
-                f"variability window ({lt:.0f}d avg)"
+                f"{name} — {days:.1f}j de stock dans la fenêtre de variabilité "
+                f"du délai fournisseur ({lt:.0f}j en moyenne)"
             )
         elif item.get("overstockFlag"):
             alert_type = "overstock"       # DB constraint value
             urgency    = "medium"
-            title      = f"Overstock: {name}"
+            title      = f"Surstock : {name}"
             message    = (
-                f"{name} — {stock:.0f} units on hand exceeds normal range. "
-                f"{days:.1f}d of stock, consider redistribution or promotion."
+                f"{name} — {stock:.0f} unités en stock dépassent la fourchette normale. "
+                f"{days:.1f}j de couverture, envisager une redistribution ou une promotion."
             )
 
         if not alert_type:
@@ -1099,6 +1099,56 @@ def _build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@router.post("/chat")
+async def inventory_chat(request: Request, body: dict) -> Dict[str, Any]:
+    """
+    Chat Stock — jusqu'ici 404 (aucune route ne backait
+    POST /api/inventory/chat, cf. post-mortem « Coach Chat — Agent Stock vs
+    Ventes »). Le mode Ventes répond déjà correctement aux questions stock et
+    cross-domaine car /api/v1/coach/chat charge systématiquement le contexte
+    inventaire + RAG stock, quel que soit le domaine détecté. On délègue donc
+    à EXACTEMENT la même logique plutôt que d'en réécrire une nouvelle, et on
+    reforme juste la réponse au contrat attendu par le frontend
+    (InventoryChatResponse : answer/intent/sku/data_source/timestamp).
+
+    Limite connue : pas de verrouillage de SKU multi-tour côté serveur — `sku`
+    ci-dessous n'est que l'écho du sku_context envoyé par le frontend, pas une
+    résolution réelle depuis le message. À construire plus tard si besoin
+    (matching nom produit → SKU via le catalogue + persistance par tour).
+    """
+    import json as _json
+    from datetime import datetime as _dt
+    from app.sales.coaching.agents.coach.coach_chat import coach_chat as _sales_coach_chat
+
+    message     = (body.get("message") or "").strip()
+    store_id    = body.get("store_id") or DEFAULT_STORE_ID
+    sku_context = body.get("sku_context")
+
+    coach_body = {
+        "message":      message,
+        "advisor_name": "Conseiller",
+        "store_id":     store_id,
+        "context":      {"domain": "stock"},
+    }
+
+    try:
+        resp = await _sales_coach_chat(request, coach_body)
+        data = _json.loads(resp.body)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[INVENTORY CHAT] delegation to coach failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Coach backend unavailable")
+
+    return {
+        "answer":      data.get("reply", ""),
+        "intent":      data.get("question_type") or data.get("mode") or "free_question",
+        "sku":         sku_context,
+        "data_source": "cache" if data.get("source") == "cache" else "fresh_analysis",
+        "timestamp":   _dt.now().isoformat(),
+    }
+
 
 @router.get("/stores")
 def list_stores() -> Dict[str, Any]:
@@ -1400,6 +1450,38 @@ def get_summary(
     """Summary only — benefits from the same store cache."""
     payload = analyze_store(store_id, business_objective, page=1, page_size=0)
     return payload["summary"]
+
+
+@router.get("/store/{store_id}/critical-trend")
+def get_critical_trend(
+    store_id: str,
+    hours_back: int = Query(default=48, ge=1, le=24 * 14),
+) -> Dict[str, Any]:
+    """
+    Évolution du % de produits critiques sur les `hours_back` dernières
+    heures — alimente le mini chart "Tendance du risque" du dashboard.
+
+    Lit uniquement inventory.critical_trend_history (peuplée en tâche de
+    fond, une ligne/heure/magasin, cf. critical_trend_snapshot.py). Ne
+    déclenche jamais de recalcul du pipeline : si aucun snapshot n'existe
+    encore (service démarré depuis moins d'une heure), `data` est vide et
+    le frontend affiche l'état "en attente de données".
+    """
+    from app.inventory.repositories.inventory_repo import SyncInventoryRepo
+    rows = SyncInventoryRepo.get_critical_trend_history(store_id, hours_back)
+    return {
+        "store_id":   store_id,
+        "hours_back": hours_back,
+        "data": [
+            {
+                "hour":         r["snapshot_time"].isoformat(),
+                "total_skus":   r["total_skus"],
+                "critical_skus": r["critical_count"],
+                "critical_pct": float(r["critical_pct"]),
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/forecast/{store_id}/{sku}")
@@ -1883,10 +1965,10 @@ def sync_alerts_to_db(store_id: str) -> Dict[str, Any]:
         # Use DB constraint values (stockout_risk / below_minimum), NOT frontend vocab
         if risk == "critical":
             atype, severity = "stockout_risk", "critical"
-            action = f"{name} has {stock} units ({days:.1f}d left). Order immediately."
+            action = f"{name} : {stock} unité(s) en stock ({days:.1f}j restant(s)). Commander immédiatement."
         elif risk == "high":
             atype, severity = "below_minimum", "high"
-            action = f"{name} has {days:.1f}d of stock vs {lt:.0f}d lead time. Place order soon."
+            action = f"{name} : {days:.1f}j de stock vs {lt:.0f}j de délai fournisseur. Commander bientôt."
         else:
             continue
 
