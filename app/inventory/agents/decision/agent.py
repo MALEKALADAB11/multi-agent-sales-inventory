@@ -131,7 +131,7 @@ class InventoryDecisionAgent:
 
         self.graph = InventoryDecisionAgent._compiled_graphs[use_llm]
 
-    def run(
+    async def run(
         self,
         sku:                str,
         store_id:           str,
@@ -194,6 +194,9 @@ class InventoryDecisionAgent:
 
             adjusted_metrics = self._compute_adjusted_metrics(analysis_report, ctx)
 
+            # Fetch complementary products for cross-sell recommendations
+            complementary_products = await self._get_complementary_products(sku, store_id)
+
             _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
             result = self.graph.invoke(
                 {
@@ -206,6 +209,7 @@ class InventoryDecisionAgent:
                     "adjusted_metrics":       adjusted_metrics,
                     "decision":               {},
                     "constraints_violations": [],
+                    "complementary_products": complementary_products,
                 },
                 config={"callbacks": _callbacks} if _callbacks else {},
             )
@@ -242,6 +246,7 @@ class InventoryDecisionAgent:
                 "decision":               decision,
                 "adjusted_metrics":       adjusted_metrics,
                 "recommendation_id":      recommendation_id,
+                "complementary_products": complementary_products,
                 "constraints_violations": result.get("constraints_violations", []),
             }
 
@@ -429,6 +434,45 @@ class InventoryDecisionAgent:
                 sku, store_id, e,
             )
             return None
+
+    async def _get_complementary_products(self, sku: str, store_id: str) -> list:
+        """
+        Fetch complementary products for cross-sell recommendations.
+        Uses the ComplementaryProductsService with hybrid approach.
+        Never raises — returns empty list on failure.
+        """
+        try:
+            from app.inventory.services.complementary_products import ComplementaryProductsService
+            from app.core.db import get_async_pool
+
+            pool = await get_async_pool()
+            service = ComplementaryProductsService(pool)
+
+            complements = await service.find_complementary(
+                sku=int(sku),
+                store_id=store_id,
+                limit=3
+            )
+
+            # Convert to dict format for state
+            return [
+                {
+                    "sku": c.sku,
+                    "product_name": c.product_name,
+                    "gamme": c.gamme,
+                    "confidence": c.confidence,
+                    "lift": c.lift,
+                    "source": c.source,
+                    "reason": c.reason
+                }
+                for c in complements
+            ]
+        except Exception as e:
+            logger.warning(
+                "[DecisionAgent] _get_complementary_products failed for %s@%s: %s",
+                sku, store_id, e,
+            )
+            return []
 
     def _suggest_purchase_order(self, recommendation_id: str) -> None:
         """

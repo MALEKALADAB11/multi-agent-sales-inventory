@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/v1/feedback", tags=["feedback"])
 
 class FeedbackPayload(BaseModel):
     store_id: str
-    source: str = Field(pattern="^(incitation|hitl|po)$")
+    source: str = Field(pattern="^(incitation|hitl|po|reco)$")
     decision: str = Field(pattern="^(followed|ignored|approved|rejected)$")
     ref_id: Optional[str] = None
     sku: Optional[int] = None

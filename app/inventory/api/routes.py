@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from app.inventory.services.orchestrator import create_orchestrator
 from app.inventory.tools.internal.stock_tools import _DataCache
@@ -95,6 +95,60 @@ def _get_cached(store_id: str, objective: str) -> Optional[Dict[str, Any]]:
 def _set_cache(store_id: str, objective: str, data: Dict[str, Any]) -> None:
     _store_cache[_cache_key(store_id, objective)] = {"data": data, "ts": time.time()}
     logger.info("Cache SET  %s", _cache_key(store_id, objective))
+
+
+def _patch_cached_recommendation(store_id: str, sku: Any, recommendation_id: str, status: str) -> None:
+    """
+    Best-effort in-memory patch so an approve/reject decision shows up on the
+    very next GET /store/{id}, instead of waiting up to CACHE_TTL (1h) for
+    the cached snapshot to expire.
+
+    Root cause this works around: PATCH /recommendations/{id} only writes to
+    Postgres. _store_cache holds a full item snapshot — including
+    recommendationStatus — computed once when the pipeline last ran, and
+    then served as-is for up to an hour. Without this patch, the frontend's
+    rehydration (inventory.ts _applyAgentPayload, which trusts
+    recommendationStatus to restore approve/reject state after navigation or
+    refresh) keeps seeing the pre-decision status and the decision appears
+    to "not have saved".
+    """
+    sku_str = str(sku) if sku is not None else None
+    for entry in _store_cache.values():
+        data = entry.get("data") or {}
+        if data.get("store_id") != store_id:
+            continue
+        for item in data.get("items") or []:
+            same_rec = item.get("recommendationId") and str(item["recommendationId"]) == str(recommendation_id)
+            same_sku = sku_str is not None and str(item.get("sku")) == sku_str
+            if same_rec or same_sku:
+                item["recommendationStatus"] = status
+
+
+def _merge_item_into_cache(store_id: str, business_objective: str, item: Dict[str, Any]) -> None:
+    """
+    Upserts one item (produced by POST /analyze) into the cached GET
+    /store/{id} snapshot, so a freshly-computed LLM analysis isn't silently
+    discarded the moment the user navigates away.
+
+    Root cause this works around: POST /analyze was "Not cached" — every
+    open of a recommendation's full report re-ran the entire LLM pipeline
+    for that SKU (observed 20+ minutes under load) even if it had just been
+    analyzed a minute earlier, because the result was never written back
+    into _store_cache and the batch list only reflects what was cached at
+    the last pipeline run.
+    """
+    entry = _store_cache.get(_cache_key(store_id, business_objective))
+    if not entry:
+        return
+    items = entry["data"].get("items")
+    if items is None:
+        return
+    sku_str = str(item.get("sku"))
+    for idx, existing in enumerate(items):
+        if str(existing.get("sku")) == sku_str:
+            items[idx] = item
+            return
+    items.append(item)
 
 
 # ---------------------------------------------------------------------------
@@ -527,21 +581,21 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
         if days_remaining < lead_time_avg:
             risk_level = "critical"
             rationale = (
-                f"Stock ({days_remaining:.1f}d) will run out before next order "
-                f"(lead time {lead_time_avg:.0f}d). Stockout imminent."
+                f"Stock ({days_remaining:.1f}j) épuisé avant la prochaine livraison "
+                f"(délai fournisseur {lead_time_avg:.0f}j). Rupture imminente."
             )
         elif days_remaining < lead_time_avg + lt_var:
             risk_level = "high"
             rationale = (
-                f"Stock ({days_remaining:.1f}d) within lead time variability window "
-                f"({lead_time_avg:.0f}d ± {lead_time_std:.1f}d)."
+                f"Stock ({days_remaining:.1f}j) dans la fenêtre de variabilité du délai "
+                f"fournisseur ({lead_time_avg:.0f}j ± {lead_time_std:.1f}j)."
             )
         elif days_remaining < lead_time_avg * 2.5:
             risk_level = "medium"
-            rationale = f"Stock ({days_remaining:.1f}d) below 2.5× lead time. Monitor."
+            rationale = f"Stock ({days_remaining:.1f}j) inférieur à 2,5× le délai fournisseur. À surveiller."
         else:
             risk_level = "ok"
-            rationale = f"Stock ({days_remaining:.1f}d) exceeds 2.5× lead time. Well covered."
+            rationale = f"Stock ({days_remaining:.1f}j) supérieur à 2,5× le délai fournisseur. Bien couvert."
 
         return risk_level, round(days_remaining, 1), coverage_ratio, rationale
 
@@ -656,10 +710,124 @@ RISK_SCORE_MAP = {
 }
 
 
+def _preload_complementary_products_batch(
+    skus: List[str],
+    store_id: str,
+    limit_per_sku: int = 3,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Bulk, LLM-free complementary-products lookup for an entire batch — same
+    single-query pattern as the stock/product pre-fetch above (no N+1).
+
+    This data comes straight from inventory.product_associations, pre-computed
+    offline by db/seeds/seed_product_associations.py. It never involves an
+    LLM call, so it has no business being gated behind the DecisionAgent
+    (the "smart"/LLM tier) — that coupling is why complementary products used
+    to only show up for the 3 LLM-prefetched items or a manually opened SKU.
+    This runs during the fast/rule-based batch pipeline too, so every item
+    gets its cross-sell section on first load.
+
+    Returns {sku_str: [ {sku, product_name, gamme, confidence, lift, source,
+    reason}, ... ]}. Never raises — returns {} on any DB failure, so a slow/
+    down DB never blocks the batch pipeline.
+    """
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        import os
+        import psycopg2
+        import psycopg2.extras
+
+        sku_ints = []
+        for s in skus:
+            try:
+                sku_ints.append(int(s))
+            except (TypeError, ValueError):
+                continue
+        if not sku_ints:
+            return {}
+
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
+            port=int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
+            dbname=os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
+            user=os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+            password=os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
+            connect_timeout=5,
+        )
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Store-specific rows sort first (is_store_specific DESC), then
+                # by confidence/lift — top N per sku1 are picked below.
+                cur.execute("""
+                    SELECT
+                        pa.sku1, pa.sku2, p.nom AS product_name, pa.gamme2,
+                        pa.confidence, pa.lift,
+                        (pa.store_id = %(store_id)s) AS is_store_specific
+                    FROM inventory.product_associations pa
+                    JOIN sales.produits p ON pa.sku2 = p.sku
+                    WHERE pa.sku1 = ANY(%(skus)s)
+                      AND (pa.store_id = %(store_id)s OR pa.store_id IS NULL)
+                      AND pa.confidence >= 0.1
+                    ORDER BY pa.sku1, is_store_specific DESC, pa.confidence DESC, pa.lift DESC
+                """, {"skus": sku_ints, "store_id": store_id})
+
+                for row in cur.fetchall():
+                    sku_key = str(row["sku1"])
+                    bucket = result.setdefault(sku_key, [])
+                    if len(bucket) >= limit_per_sku:
+                        continue
+                    # A global row for a sku2 already covered by a store-specific
+                    # row is redundant — ORDER BY already put store-specific first.
+                    if any(b["sku"] == row["sku2"] for b in bucket):
+                        continue
+                    bucket.append({
+                        "sku":          row["sku2"],
+                        "product_name": row["product_name"],
+                        "gamme":        row["gamme2"],
+                        "confidence":   float(row["confidence"]),
+                        "lift":         float(row["lift"]) if row["lift"] is not None else 0.0,
+                        "source":       "data",
+                        "reason":       f"Vendus ensemble {float(row['confidence']):.0%} du temps",
+                    })
+
+                # ── Gamme-level business-rule fallback for SKUs with no data rows ──
+                missing = [s for s in sku_ints if str(s) not in result]
+                if missing:
+                    cur.execute(
+                        "SELECT sku, gamme_libelle FROM sales.produits WHERE sku = ANY(%s)",
+                        (missing,),
+                    )
+                    from app.inventory.services.complementary_products import ComplementaryProductsService
+                    for row in cur.fetchall():
+                        gamme = row["gamme_libelle"]
+                        rules = ComplementaryProductsService.BUSINESS_RULES.get(gamme, [])[:limit_per_sku]
+                        if rules:
+                            result[str(row["sku"])] = [
+                                {
+                                    "sku":          None,
+                                    "product_name": f"Produits {g}",
+                                    "gamme":        g,
+                                    "confidence":   0.5,
+                                    "lift":         1.0,
+                                    "source":       "business_rule",
+                                    "reason":       f"Règle métier : {g} complète logiquement {gamme}",
+                                }
+                                for g in rules
+                            ]
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("[_preload_complementary_products_batch] failed for %s: %s", store_id, exc)
+        return {}
+
+    return result
+
+
 def _to_inventory_item(
     result: Dict[str, Any],
     preloaded_stock: Dict[str, int] = None,
     product_lookup: Dict[str, Any] = None,
+    preloaded_complements: Dict[str, List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if "error" in result:
         return {"sku": result.get("sku", ""), "error": result["error"]}
@@ -802,6 +970,8 @@ def _to_inventory_item(
         "escalateToHuman":        False,
         "escalationReason":       None,
         "tradeOffs":              None,
+        "complementaryProducts":  [],   # cross-sell — separate section, never merged into recommendationDetail
+        "reasoningSource":        None,  # "llm" | "rule_based_fallback" — lets the frontend skip a redundant /analyze call
     }
 
     # Patch in decision agent fields after item dict is built.
@@ -809,6 +979,30 @@ def _to_inventory_item(
     # remain valid when decision_result is missing (fast/rule-based path).
     decision_result = result.get("decision_result", {}) or {}
     dec             = decision_result.get("decision", {}) or {}
+
+    # Cross-sell — attached independently of `dec`/LLM status. On the smart
+    # (LLM) tier this comes straight from decision_result (DecisionAgent
+    # already called ComplementaryProductsService). On the fast/rule-based
+    # batch tier decision_result is empty, so fall back to the bulk-preloaded
+    # lookup built once for the whole batch — same data source, no LLM
+    # either way, just fetched at a different point in the pipeline.
+    comp_products = decision_result.get("complementary_products")
+    if not comp_products and preloaded_complements:
+        comp_products = preloaded_complements.get(str(sku), [])
+    comp_products = comp_products or []
+
+    item["complementaryProducts"] = [
+        {
+            "sku":         c.get("sku"),
+            "productName": c.get("product_name"),
+            "gamme":       c.get("gamme"),
+            "confidence":  c.get("confidence"),
+            "lift":        c.get("lift"),
+            "source":      c.get("source"),   # "data" | "business_rule"
+            "reason":      c.get("reason"),
+        }
+        for c in comp_products
+    ]
 
     if dec:
         item["recommendation"]       = dec.get("action")
@@ -820,6 +1014,7 @@ def _to_inventory_item(
         item["escalateToHuman"]      = bool(dec.get("escalate_to_human", False))
         item["escalationReason"]     = dec.get("escalation_reason")
         item["tradeOffs"]            = dec.get("trade_offs")
+        item["reasoningSource"]      = dec.get("reasoning_source")
 
         # Pull the live status from DB so the frontend can rehydrate UI state.
         # get_latest_recommendation returns the most recent row for this SKU.
@@ -950,26 +1145,26 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
         if risk == "critical":
             alert_type = "stockout_risk"   # DB constraint value
             urgency    = "critical"
-            title      = f"Stockout imminent: {name}"
+            title      = f"Rupture imminente : {name}"
             message    = (
-                f"{name} — only {stock:.0f} units left, "
-                f"{days:.1f} days of stock remaining"
+                f"{name} — plus que {stock:.0f} unité(s) en stock, "
+                f"{days:.1f} jour(s) de stock restant"
             )
         elif risk == "high":
             alert_type = "below_minimum"   # DB constraint value
             urgency    = "high"
-            title      = f"Low stock: {name}"
+            title      = f"Stock faible : {name}"
             message    = (
-                f"{name} — {days:.1f}d of stock within lead-time "
-                f"variability window ({lt:.0f}d avg)"
+                f"{name} — {days:.1f}j de stock dans la fenêtre de variabilité "
+                f"du délai fournisseur ({lt:.0f}j en moyenne)"
             )
         elif item.get("overstockFlag"):
             alert_type = "overstock"       # DB constraint value
             urgency    = "medium"
-            title      = f"Overstock: {name}"
+            title      = f"Surstock : {name}"
             message    = (
-                f"{name} — {stock:.0f} units on hand exceeds normal range. "
-                f"{days:.1f}d of stock, consider redistribution or promotion."
+                f"{name} — {stock:.0f} unités en stock dépassent la fourchette normale. "
+                f"{days:.1f}j de couverture, envisager une redistribution ou une promotion."
             )
 
         if not alert_type:
@@ -1100,6 +1295,56 @@ def _build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 # Routes
 # ---------------------------------------------------------------------------
 
+@router.post("/chat")
+async def inventory_chat(request: Request, body: dict) -> Dict[str, Any]:
+    """
+    Chat Stock — jusqu'ici 404 (aucune route ne backait
+    POST /api/inventory/chat, cf. post-mortem « Coach Chat — Agent Stock vs
+    Ventes »). Le mode Ventes répond déjà correctement aux questions stock et
+    cross-domaine car /api/v1/coach/chat charge systématiquement le contexte
+    inventaire + RAG stock, quel que soit le domaine détecté. On délègue donc
+    à EXACTEMENT la même logique plutôt que d'en réécrire une nouvelle, et on
+    reforme juste la réponse au contrat attendu par le frontend
+    (InventoryChatResponse : answer/intent/sku/data_source/timestamp).
+
+    Limite connue : pas de verrouillage de SKU multi-tour côté serveur — `sku`
+    ci-dessous n'est que l'écho du sku_context envoyé par le frontend, pas une
+    résolution réelle depuis le message. À construire plus tard si besoin
+    (matching nom produit → SKU via le catalogue + persistance par tour).
+    """
+    import json as _json
+    from datetime import datetime as _dt
+    from app.sales.coaching.agents.coach.coach_chat import coach_chat as _sales_coach_chat
+
+    message     = (body.get("message") or "").strip()
+    store_id    = body.get("store_id") or DEFAULT_STORE_ID
+    sku_context = body.get("sku_context")
+
+    coach_body = {
+        "message":      message,
+        "advisor_name": "Conseiller",
+        "store_id":     store_id,
+        "context":      {"domain": "stock"},
+    }
+
+    try:
+        resp = await _sales_coach_chat(request, coach_body)
+        data = _json.loads(resp.body)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[INVENTORY CHAT] delegation to coach failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Coach backend unavailable")
+
+    return {
+        "answer":      data.get("reply", ""),
+        "intent":      data.get("question_type") or data.get("mode") or "free_question",
+        "sku":         sku_context,
+        "data_source": "cache" if data.get("source") == "cache" else "fresh_analysis",
+        "timestamp":   _dt.now().isoformat(),
+    }
+
+
 @router.get("/stores")
 def list_stores() -> Dict[str, Any]:
     """
@@ -1155,7 +1400,25 @@ def list_skus(store_id: Optional[str] = Query(default=None)) -> Dict[str, List[s
 
 @router.post("/analyze")
 def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
-    """Single-SKU on-demand analysis. Not cached."""
+    """
+    Single-SKU on-demand analysis (LLM).
+
+    Reuses a previously-computed LLM result for this SKU when one is already
+    sitting in the store cache, instead of always re-running the full
+    pipeline (previously ~20 min under load on every single open of a
+    recommendation's report, even seconds after the same SKU had just been
+    analyzed). See _merge_item_into_cache for how results get persisted.
+    """
+    cached_store = _get_cached(req.store_id, req.business_objective)
+    if cached_store:
+        for existing in cached_store.get("items", []):
+            if str(existing.get("sku")) == str(req.sku) and existing.get("llmAnalyzed"):
+                logger.info(
+                    "analyze_single: reusing cached LLM result for %s/%s",
+                    req.store_id, req.sku,
+                )
+                return {"raw": None, "item": existing}
+
     result = get_orchestrator().analyze_sku(
         req.sku, req.store_id, req.business_objective
     )
@@ -1164,6 +1427,16 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
 
     [result] = _enrich_with_product_master([result])
     item = _to_inventory_item(result, preloaded_stock=None, product_lookup=None)
+    # Marks this item as having gone through the real (non-fast/rule-based)
+    # pipeline, so a later GET /store/{id} or repeat /analyze call for the
+    # same SKU can tell it apart from the batch's rule-based version and
+    # reuse it instead of discarding it / re-running the LLM.
+    item["llmAnalyzed"] = True
+
+    # Persist into the store cache so this analysis survives navigation
+    # instead of being silently thrown away the moment the modal closes.
+    _merge_item_into_cache(req.store_id, req.business_objective, item)
+
     # NB : le LLM-as-judge n'est PLUS appelé ici (il bloquerait l'ouverture de
     # la modale). Le frontend appelle POST /judge juste après, en repassant ce
     # `raw` + `item`, pour remplir le radar sans latence sur /analyze.
@@ -1326,7 +1599,28 @@ def analyze_store(
         except Exception:
             product_lookup = {}
 
-        items = [_to_inventory_item(r, preloaded_stock=preloaded_stock, product_lookup=product_lookup) for r in results]
+        # ── Pre-fetch complementary products for all SKUs in ONE DB query ──
+        # Same reasoning as the stock pre-fetch above: this is pure DB lookup
+        # (inventory.product_associations), no LLM involved, so it must not
+        # wait for the DecisionAgent to run. Runs on every pipeline call —
+        # fast (rule-based) included — so the section is populated on first
+        # load, not just for the 3 LLM-prefetched SKUs.
+        preloaded_complements: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            preloaded_complements = _preload_complementary_products_batch(skus, store_id, limit_per_sku=3)
+            logger.info("Pre-fetched complementary products for %d/%d SKUs", len(preloaded_complements), len(skus))
+        except Exception as exc:
+            logger.warning("Complementary products batch pre-fetch failed (%s) — sections will be empty until LLM tier runs", exc)
+
+        items = [
+            _to_inventory_item(
+                r,
+                preloaded_stock=preloaded_stock,
+                product_lookup=product_lookup,
+                preloaded_complements=preloaded_complements,
+            )
+            for r in results
+        ]
         alerts  = _build_alerts(items, store_id=store_id)
         payload = {
             "store_id":           store_id,
@@ -1400,6 +1694,38 @@ def get_summary(
     """Summary only — benefits from the same store cache."""
     payload = analyze_store(store_id, business_objective, page=1, page_size=0)
     return payload["summary"]
+
+
+@router.get("/store/{store_id}/critical-trend")
+def get_critical_trend(
+    store_id: str,
+    hours_back: int = Query(default=48, ge=1, le=24 * 14),
+) -> Dict[str, Any]:
+    """
+    Évolution du % de produits critiques sur les `hours_back` dernières
+    heures — alimente le mini chart "Tendance du risque" du dashboard.
+
+    Lit uniquement inventory.critical_trend_history (peuplée en tâche de
+    fond, une ligne/heure/magasin, cf. critical_trend_snapshot.py). Ne
+    déclenche jamais de recalcul du pipeline : si aucun snapshot n'existe
+    encore (service démarré depuis moins d'une heure), `data` est vide et
+    le frontend affiche l'état "en attente de données".
+    """
+    from app.inventory.repositories.inventory_repo import SyncInventoryRepo
+    rows = SyncInventoryRepo.get_critical_trend_history(store_id, hours_back)
+    return {
+        "store_id":   store_id,
+        "hours_back": hours_back,
+        "data": [
+            {
+                "hour":         r["snapshot_time"].isoformat(),
+                "total_skus":   r["total_skus"],
+                "critical_skus": r["critical_count"],
+                "critical_pct": float(r["critical_pct"]),
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/forecast/{store_id}/{sku}")
@@ -1813,13 +2139,27 @@ async def update_recommendation(
             recommendation_id, req.status, req.decided_by or "unknown",
         )
 
+        # Fetched once here and reused below for both the cache patch and the
+        # feedback record — avoids a second DB round-trip.
+        reco = SyncInventoryRepo.get_recommendation_by_id(recommendation_id) or {}
+
+        # See _patch_cached_recommendation docstring: without this, the
+        # decision is correctly saved in Postgres but the frontend won't see
+        # it reflected until the in-memory cache expires (up to 1h).
+        if reco.get("store_id"):
+            _patch_cached_recommendation(
+                store_id=str(reco["store_id"]),
+                sku=reco.get("sku"),
+                recommendation_id=recommendation_id,
+                status=req.status,
+            )
+
         # Boucle de feedback : la décision humaine (Approuver/Rejeter dans la
         # page Inventory) est journalisée dans public.agent_feedback puis
         # réinjectée dans les prompts DecisionAgent/Stratège par
         # feedback_service.get_learning_context_sync. Jamais bloquant.
         try:
             from app.core.feedback_service import record_feedback
-            reco = SyncInventoryRepo.get_recommendation_by_id(recommendation_id) or {}
             record_feedback(
                 store_id=str(reco.get("store_id") or "unknown"),
                 source="reco",
@@ -1883,10 +2223,10 @@ def sync_alerts_to_db(store_id: str) -> Dict[str, Any]:
         # Use DB constraint values (stockout_risk / below_minimum), NOT frontend vocab
         if risk == "critical":
             atype, severity = "stockout_risk", "critical"
-            action = f"{name} has {stock} units ({days:.1f}d left). Order immediately."
+            action = f"{name} : {stock} unité(s) en stock ({days:.1f}j restant(s)). Commander immédiatement."
         elif risk == "high":
             atype, severity = "below_minimum", "high"
-            action = f"{name} has {days:.1f}d of stock vs {lt:.0f}d lead time. Place order soon."
+            action = f"{name} : {days:.1f}j de stock vs {lt:.0f}j de délai fournisseur. Commander bientôt."
         else:
             continue
 
@@ -1918,3 +2258,39 @@ def debug_stock(store_id: str, sku: str) -> Dict[str, Any]:
             "db_stock_current":  db_row.get("stock_current") if db_row else None,
             "db_row_found":      db_row is not None,
             "csv_last_snapshot": csv_stock}
+
+
+@router.get("/complementary/{sku}")
+async def get_complementary_products(
+    sku: int,
+    store_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=5, ge=1, le=10)
+) -> Dict[str, Any]:
+    """
+    Get complementary/cross-sell products for a given SKU.
+    Uses hybrid approach: data-driven rules from sales_history + business rules.
+    """
+    from app.inventory.services.complementary_products import ComplementaryProductsService
+    from app.core.db import get_async_pool
+    
+    pool = await get_async_pool()
+    service = ComplementaryProductsService(pool)
+    
+    complements = await service.find_complementary(sku, store_id, limit)
+    
+    return {
+        "sku": sku,
+        "store_id": store_id,
+        "complementary_products": [
+            {
+                "sku": c.sku,
+                "product_name": c.product_name,
+                "gamme": c.gamme,
+                "confidence": c.confidence,
+                "lift": c.lift,
+                "source": c.source,
+                "reason": c.reason
+            }
+            for c in complements
+        ]
+    }

@@ -1004,6 +1004,92 @@ class SyncInventoryRepo:
         finally:
             conn.close()
 
+    # ── Tendance % critique (chart 24-48h) ──────────────────────────────────
+    # Table peuplée par app.inventory.services.critical_trend_snapshot en
+    # tâche de fond — voir migration 0017 pour le raisonnement complet.
+
+    @staticmethod
+    def insert_critical_trend_snapshot(
+        store_id: str,
+        total_skus: int,
+        critical_count: int,
+        high_count: int,
+        critical_pct: float,
+        snapshot_time=None,
+    ) -> bool:
+        """
+        Écrit une ligne de snapshot. Appelé par le job horaire en usage normal
+        (snapshot_time=None → NOW() côté SQL).
+
+        snapshot_time accepte un datetime explicite pour le backfill de démo
+        (scripts/backfill_critical_trend_demo.py) — permet d'insérer des
+        points dans le passé sans attendre le job en conditions réelles.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return False
+        try:
+            with conn.cursor() as cur:
+                if snapshot_time is not None:
+                    cur.execute("""
+                        INSERT INTO inventory.critical_trend_history
+                            (store_id, snapshot_time, total_skus, critical_count, high_count, critical_pct)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (store_id, snapshot_time, total_skus, critical_count, high_count, critical_pct))
+                else:
+                    cur.execute("""
+                        INSERT INTO inventory.critical_trend_history
+                            (store_id, total_skus, critical_count, high_count, critical_pct)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (store_id, total_skus, critical_count, high_count, critical_pct))
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.insert_critical_trend_snapshot(%s): %s", store_id, exc
+            )
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_critical_trend_history(store_id: str, hours_back: int = 48) -> list[dict]:
+        """
+        Snapshots pour ce magasin sur les `hours_back` dernières heures,
+        triés du plus ancien au plus récent (ordre direct d'affichage sur
+        un chart gauche → droite).
+
+        Ne recalcule jamais rien : simple lecture de la table peuplée par
+        le job de fond. Si le service vient de démarrer (< 1h), la liste
+        peut être vide ou courte — c'est au frontend de gérer un chart
+        avec peu de points.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return []
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT snapshot_time, total_skus, critical_count,
+                           high_count, critical_pct
+                    FROM inventory.critical_trend_history
+                    WHERE store_id = %s
+                      AND snapshot_time >= NOW() - (%s || ' hours')::interval
+                    ORDER BY snapshot_time ASC
+                """, (store_id, hours_back))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.get_critical_trend_history(%s): %s", store_id, exc
+            )
+            return []
+        finally:
+            conn.close()
+
     @staticmethod
     def get_products_batch(skus: list) -> dict:
         """

@@ -1,5 +1,5 @@
 {
-  "total": 8,
+  "total": 3,
   "events": [
     {
       "title": "Activation SIM 4G frais offerts",
@@ -9,17 +9,7 @@
       "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes accessoires -25%",
-      "type": "promotion",
-      "category": "Accessoires Oraimo (tous)",
-      "price": "-25%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     },
     {
       "title": "Pack Postpayé été — 2 mois offerts",
@@ -29,27 +19,7 @@
       "details": "Valable jusqu'au 2026-08-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Flexi+ 5G — Data ×2 pendant 3 mois",
-      "type": "promotion",
-      "category": "Forfait Flexi 5G",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Promo Flexi 25Go → 50Go même prix",
-      "type": "promotion",
-      "category": "Forfait Flexi 25Go",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     },
     {
       "title": "Rentrée anticipée : forfait étudiant -15%",
@@ -59,27 +29,7 @@
       "details": "Valable jusqu'au 2026-09-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes Été 2026 — Terminaux Samsung -10%",
-      "type": "promotion",
-      "category": "Samsung Galaxy (tous modèles)",
-      "price": "-10%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes Été 2026 — Infinix / Tecno -8%",
-      "type": "promotion",
-      "category": "Infinix / Tecno (tous modèles)",
-      "price": "-8%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     }
   ],
   "active": [
@@ -91,17 +41,7 @@
       "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes accessoires -25%",
-      "type": "promotion",
-      "category": "Accessoires Oraimo (tous)",
-      "price": "-25%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     },
     {
       "title": "Pack Postpayé été — 2 mois offerts",
@@ -111,27 +51,7 @@
       "details": "Valable jusqu'au 2026-08-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Flexi+ 5G — Data ×2 pendant 3 mois",
-      "type": "promotion",
-      "category": "Forfait Flexi 5G",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Promo Flexi 25Go → 50Go même prix",
-      "type": "promotion",
-      "category": "Forfait Flexi 25Go",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     },
     {
       "title": "Rentrée anticipée : forfait étudiant -15%",
@@ -141,27 +61,7 @@
       "details": "Valable jusqu'au 2026-09-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes Été 2026 — Terminaux Samsung -10%",
-      "type": "promotion",
-      "category": "Samsung Galaxy (tous modèles)",
-      "price": "-10%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes Été 2026 — Infinix / Tecno -8%",
-      "type": "promotion",
-      "category": "Infinix / Tecno (tous modèles)",
-      "price": "-8%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     }
   ],
   "promotions": [
@@ -173,17 +73,7 @@
       "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes accessoires -25%",
-      "type": "promotion",
-      "category": "Accessoires Oraimo (tous)",
-      "price": "-25%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     },
     {
       "title": "Pack Postpayé été — 2 mois offerts",
@@ -193,27 +83,7 @@
       "details": "Valable jusqu'au 2026-08-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Flexi+ 5G — Data ×2 pendant 3 mois",
-      "type": "promotion",
-      "category": "Forfait Flexi 5G",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Promo Flexi 25Go → 50Go même prix",
-      "type": "promotion",
-      "category": "Forfait Flexi 25Go",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     },
     {
       "title": "Rentrée anticipée : forfait étudiant -15%",
@@ -223,34 +93,14 @@
       "details": "Valable jusqu'au 2026-09-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes Été 2026 — Terminaux Samsung -10%",
-      "type": "promotion",
-      "category": "Samsung Galaxy (tous modèles)",
-      "price": "-10%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
-    },
-    {
-      "title": "Soldes Été 2026 — Infinix / Tecno -8%",
-      "type": "promotion",
-      "category": "Infinix / Tecno (tous modèles)",
-      "price": "-8%",
-      "details": "Valable jusqu'au 2026-07-31",
-      "is_active": true,
-      "scraped": false,
-      "date": "2026-07-29T10:42:22.224821"
+      "date": "2026-08-03T09:34:22.213133"
     }
   ],
   "new_offers": [],
   "tarifs": [],
   "source": "fallback (aucune offre extraite)",
-  "fetched_at": "2026-07-29T10:42:22.225355",
+  "fetched_at": "2026-08-03T09:34:22.220693",
   "degraded": true,
   "degraded_reason": "aucune offre extraite",
-  "fail_streak": 16
+  "fail_streak": 2
 }
