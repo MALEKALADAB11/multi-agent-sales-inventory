@@ -132,7 +132,7 @@ async def get_stats(store_id: str = DEFAULT_STORE_ID, hours: int = 24):
 
 
 @router.get("/logs")
-async def get_logs(limit: int = 100, store_id: str = DEFAULT_STORE_ID,
+def get_logs(limit: int = 100, store_id: str = DEFAULT_STORE_ID,
                    agent: str = None, status: str = None):
     """Logs détaillés des nodes LangGraph."""
     from app.core.agent_logger import _get_conn
@@ -278,7 +278,7 @@ def _inventory_agents(conn, sid: str, hours: int, runs_per_agent: int) -> list:
 
 
 @router.get("/agents")
-async def get_agents(request: Request, store_id: str = None,
+def get_agents(request: Request, store_id: str = None,
                      hours: int = 24, logs_per_agent: int = 6):
     """
     Vue consolidée par agent pour la page Monitoring : statut temps réel,
@@ -426,7 +426,7 @@ async def get_agents(request: Request, store_id: str = None,
 
 
 @router.get("/guardrail-events")
-async def get_guardrail_events(limit: int = 20, store_id: str = DEFAULT_STORE_ID):
+def get_guardrail_events(limit: int = 20, store_id: str = DEFAULT_STORE_ID):
     """
     Historique des évaluations guardrail (agent_logs, agent_name='guardrail').
     Permet au panneau "Guardrail Events" de la page Monitoring d'afficher les
@@ -468,7 +468,7 @@ async def get_guardrail_events(limit: int = 20, store_id: str = DEFAULT_STORE_ID
 
 
 @router.get("/rag-stats")
-async def get_rag_stats(store_id: str = DEFAULT_STORE_ID, limit: int = 50):
+def get_rag_stats(store_id: str = DEFAULT_STORE_ID, limit: int = 50):
     """Statistiques RAG — pertinence et utilisation."""
     from app.core.agent_logger import _get_conn
     from psycopg2.extras import RealDictCursor
@@ -508,7 +508,7 @@ async def get_rag_stats(store_id: str = DEFAULT_STORE_ID, limit: int = 50):
 
 
 @router.get("/health")
-async def monitoring_health():
+def monitoring_health():
     """Health check du système de monitoring."""
     from app.core.agent_logger import _get_conn
     status = {"postgres": False, "milvus": False, "ollama": False}
@@ -553,7 +553,7 @@ async def monitoring_health():
 
 
 @router.post("/errors/{error_id}/resolve")
-async def resolve_error(error_id: int):
+def resolve_error(error_id: int):
     """Marque une erreur comme résolue."""
     from app.core.agent_logger import _get_conn
     try:
@@ -802,7 +802,7 @@ async def get_failure_prediction(request: Request):
 
 
 @router.get("/dependencies")
-async def get_dependencies():
+def get_dependencies():
     """Vérifie PostgreSQL, Milvus, Ollama, Redis en temps réel."""
     from app.core.agent_logger import _get_conn
     deps = {}

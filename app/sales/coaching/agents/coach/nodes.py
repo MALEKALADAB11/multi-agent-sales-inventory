@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 
 from app.core.agent_logger import AgentLogger
+from app.core.http import get_http_client
 from app.sales.core.state import SalesAgentState
 from .tools import (
     search_rag, format_rag_for_prompt, format_history_for_prompt,
@@ -205,18 +206,16 @@ async def _call_openrouter_coach(system: str, user_prompt: str,
                                   urgency: str, question_type: str) -> tuple[str, float]:
     t0 = time.time()
     try:
-        import httpx
         max_tokens  = 280 if urgency in ("HIGH","CRITICAL") else 380
         temperature = 0.20 if question_type in ("script","objection","closing") else 0.28
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(OPENROUTER_URL,
-                headers={"Authorization":f"Bearer {OPENROUTER_KEY}",
-                         "Content-Type":"application/json",
-                         "HTTP-Referer":"https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                         "X-Title":"AI Sales Coach Ooredoo"},
-                json={"model":OPENROUTER_MODEL,"max_tokens":max_tokens,"temperature":temperature,
-                      "messages":[{"role":"system","content":system},
-                                  {"role":"user","content":user_prompt}]})
+        resp = await get_http_client().post(OPENROUTER_URL, timeout=30,
+            headers={"Authorization":f"Bearer {OPENROUTER_KEY}",
+                     "Content-Type":"application/json",
+                     "HTTP-Referer":"https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                     "X-Title":"AI Sales Coach Ooredoo"},
+            json={"model":OPENROUTER_MODEL,"max_tokens":max_tokens,"temperature":temperature,
+                  "messages":[{"role":"system","content":system},
+                              {"role":"user","content":user_prompt}]})
         data = resp.json()
         if "error" in data:
             logger.warning(f"[COACH OR] {data['error'].get('message','?')[:100]}")

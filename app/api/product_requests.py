@@ -72,7 +72,7 @@ class DecideRequestBody(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("")
-async def create_request(body: CreateRequestBody, user: dict = Depends(_require_user)):
+def create_request(body: CreateRequestBody, user: dict = Depends(_require_user)):
     # Seul le terrain émet des demandes — le manager supervise et décide,
     # il ne se fait pas de demandes à lui-même.
     if user["role"] == "manager":
@@ -105,7 +105,7 @@ async def create_request(body: CreateRequestBody, user: dict = Depends(_require_
 
 
 @router.get("")
-async def list_requests(
+def list_requests(
     statut: Optional[str] = None,
     user: dict = Depends(_require_user),
 ):
@@ -134,7 +134,7 @@ async def list_requests(
 
 
 @router.patch("/{request_id}")
-async def decide_request(
+def decide_request(
     request_id: str,
     body: DecideRequestBody,
     user: dict = Depends(_require_manager),

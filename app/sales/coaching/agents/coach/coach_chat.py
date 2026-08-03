@@ -31,6 +31,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from app.core.config import DEFAULT_STORE_ID, config
+from app.core.http import get_http_client
 
 try:
     from slowapi import Limiter
@@ -1312,8 +1313,8 @@ async def _call_openrouter(
                 "temperature": temperature, "messages": messages,
                 **_NO_REASONING,
             }, ensure_ascii=False).encode("utf-8")
-            async with httpx.AsyncClient(timeout=28.0) as client:
-                resp = await client.post(OPENROUTER_URL, headers=headers, content=body)
+            resp = await get_http_client().post(
+                OPENROUTER_URL, headers=headers, content=body, timeout=28.0)
             data = resp.json()
             if "error" in data:
                 code = data["error"].get("code", 0)
@@ -1365,8 +1366,8 @@ async def _call_groq(
                     "model": model, "max_tokens": max_tokens,
                     "temperature": temperature, "messages": messages,
                 }, ensure_ascii=False).encode("utf-8")
-                async with httpx.AsyncClient(timeout=28.0) as client:
-                    resp = await client.post(GROQ_URL, headers=headers, content=body)
+                resp = await get_http_client().post(
+                    GROQ_URL, headers=headers, content=body, timeout=28.0)
                 if resp.status_code in (401, 403):
                     # Clé invalide/révoquée : inutile d'insister avec d'autres modèles
                     logger.warning("[COACH GROQ] clé #%d → %s — clé suivante", ki, resp.status_code)
@@ -1436,8 +1437,8 @@ async def _call_mistral(
                 "model": model, "max_tokens": max_tokens,
                 "temperature": temperature, "messages": messages,
             }, ensure_ascii=False).encode("utf-8")
-            async with httpx.AsyncClient(timeout=28.0) as client:
-                resp = await client.post(MISTRAL_URL, headers=headers, content=body)
+            resp = await get_http_client().post(
+                MISTRAL_URL, headers=headers, content=body, timeout=28.0)
             if resp.status_code == 429:
                 logger.warning("[COACH MISTRAL] %s → 429 rate limit", model)
                 continue
@@ -1469,9 +1470,8 @@ async def _call_mistral(
 
 async def _call_ollama_fallback(system: str, user_msg: str, max_tokens: int) -> str:
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=5) as client:
-            tags = await client.get(f"{OLLAMA_URL}/api/tags")
+        client = get_http_client()
+        tags = await client.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         models = [m["name"] for m in tags.json().get("models", [])]
         chat_model = next(
             (m for m in models if any(p in m for p in
@@ -1480,13 +1480,12 @@ async def _call_ollama_fallback(system: str, user_msg: str, max_tokens: int) -> 
         )
         if not chat_model:
             return ""
-        async with httpx.AsyncClient(timeout=22.0) as client:
-            resp = await client.post(f"{OLLAMA_URL}/api/generate", json={
-                "model":   chat_model,
-                "prompt":  f"{system}\n\n{user_msg}",
-                "stream":  False,
-                "options": {"num_predict": max_tokens, "temperature": 0.3},
-            })
+        resp = await client.post(f"{OLLAMA_URL}/api/generate", timeout=22.0, json={
+            "model":   chat_model,
+            "prompt":  f"{system}\n\n{user_msg}",
+            "stream":  False,
+            "options": {"num_predict": max_tokens, "temperature": 0.3},
+        })
         return resp.json().get("response", "").strip()
     except Exception as e:
         logger.debug("[COACH OLLAMA] %.50s", str(e))
@@ -2320,25 +2319,26 @@ async def coach_chat_stream(request: Request, body: dict):
                     **_extra,
                 }, ensure_ascii=False).encode("utf-8")
 
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    async with client.stream("POST", _url, headers=_headers, content=body) as resp:
-                        if resp.status_code >= 400:
-                            logger.warning("[COACH STREAM] %s → HTTP %s", _model, resp.status_code)
+                client = get_http_client()
+                async with client.stream("POST", _url, headers=_headers,
+                                         content=body, timeout=30.0) as resp:
+                    if resp.status_code >= 400:
+                        logger.warning("[COACH STREAM] %s → HTTP %s", _model, resp.status_code)
+                        continue
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
                             continue
-                        async for line in resp.aiter_lines():
-                            if not line.startswith("data: "):
-                                continue
-                            data_str = line[6:].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                delta = json.loads(data_str)["choices"][0]["delta"].get("content", "")
-                                if delta:
-                                    full_reply.append(delta)
-                                    yield f'data: {json.dumps({"token": delta, "done": False})}\n\n'
-                                    streamed_ok = True
-                            except Exception:
-                                continue
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            delta = json.loads(data_str)["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                full_reply.append(delta)
+                                yield f'data: {json.dumps({"token": delta, "done": False})}\n\n'
+                                streamed_ok = True
+                        except Exception:
+                            continue
                 if streamed_ok:
                     model_used = _model
             except Exception as e:

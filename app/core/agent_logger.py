@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.core.config import DEFAULT_STORE_ID
+from app.core.db import getconn as _getconn, putconn as _putconn
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", encoding="utf-8")
 
@@ -53,11 +54,70 @@ _SKIP_KEYS = frozenset({
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+class _PooledConn:
+    """
+    Connexion du pool partagé qui se comporte comme une connexion psycopg2.
+
+    Les 13 appelants de _get_conn() font tous `conn = _get_conn(); ...;
+    conn.close()`. Ce proxy garde ce contrat intact : `.close()` rend la
+    connexion au pool au lieu de la fermer, tout le reste est délégué.
+
+    Le `__del__` est un filet, pas le chemin normal : sur le chemin d'exception,
+    aucun appelant n'appelle close() (bug préexistant, qui fuyait déjà une
+    connexion OS). Sans ce filet, la fuite viderait le pool au lieu de se faire
+    ramasser par le GC de psycopg2.
+    """
+
+    __slots__ = ("_conn", "_released")
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._released = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        self._release()
+
+    def _release(self):
+        if self._released:
+            return
+        self._released = True
+        try:
+            self._conn.rollback()   # ne rend jamais une connexion en transaction
+        except Exception:
+            pass
+        _putconn(self._conn)
+
+    def __enter__(self):
+        return self._conn.__enter__()
+
+    def __exit__(self, *exc):
+        return self._conn.__exit__(*exc)
+
+    def __del__(self):
+        try:
+            self._release()
+        except Exception:
+            pass
+
+
 def _get_conn():
-    os.environ["PGCLIENTENCODING"] = "UTF8"
-    conn = psycopg2.connect(**_DB_CONFIG)
-    conn.set_client_encoding("UTF8")
-    return conn
+    """
+    Connexion du pool partagé (app.core.db), et non plus une connexion neuve.
+
+    Ce module est appelé à chaque node de chaque agent : le py-spy pris pendant
+    la fenêtre de démarrage montrait psycopg2.connect() en cours sur le
+    MainThread, c'est-à-dire un handshake TCP+auth (~30-130 ms) exécuté sur la
+    boucle d'événements, à chaque log de node.
+    """
+    conn = _getconn()
+    try:
+        conn.set_client_encoding("UTF8")
+    except Exception:
+        pass
+    return _PooledConn(conn)
 
 
 def _safe_json(obj: Any) -> str:

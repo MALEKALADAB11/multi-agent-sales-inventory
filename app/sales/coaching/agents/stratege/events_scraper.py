@@ -29,6 +29,8 @@ from datetime import date, datetime
 import asyncpg
 import httpx
 
+from app.core.http import get_http_client
+
 logger = logging.getLogger(__name__)
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:root@localhost:5432/ooredoo_sales")
@@ -66,11 +68,10 @@ def _parse_month(word: str) -> int | None:
 
 
 async def _fetch_text(url: str, timeout: float = 20.0) -> str:
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
-                                 headers={"User-Agent": UA}) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return _strip_html(resp.text)
+    resp = await get_http_client().get(
+        url, timeout=timeout, headers={"User-Agent": UA})
+    resp.raise_for_status()
+    return _strip_html(resp.text)
 
 
 # ── Parser : Festival International de Carthage ───────────────────────────────

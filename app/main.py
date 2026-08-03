@@ -692,6 +692,9 @@ async def shutdown_event():
     from app.core.db import close_async_pool
     await close_async_pool()
 
+    from app.core.http import close_http_client
+    await close_http_client()
+
     logger.info("Shutting down cleanly.")
 
 

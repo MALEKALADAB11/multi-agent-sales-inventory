@@ -29,6 +29,7 @@ WAPE 33,4 % contre 46,3 % pour Holt-Winters, mesuré à un jour sur 151 boutique
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -406,9 +407,17 @@ async def analyze_store(store_id: str, current_hour: Optional[int] = None) -> di
         # ── Modèle journalier : prévision aujourd'hui (baseline) + demain ────
         # `daily_series` s'arrête la veille de ref_date (cf. _fetch_daily_series),
         # donc la dernière observation date de ref_date - 1 jour.
-        daily_fc = forecast_daily_series(
-            daily_series, horizon=2,
-            last_date=ref_date - timedelta(days=1), store_id=sid,
+        # Seul vrai coût CPU de cette fonction : inférence XGBoost du modèle
+        # global + construction des features pandas (~190 ms mesurés, contre
+        # 3-10 ms pour chacune des requêtes SQL ci-dessus). Exécuté en ligne, il
+        # gelait la boucle d'événements à chaque appel — et analyze_store est
+        # appelé par /forecast/eod, /forecast/hourly, le node analyste ET le
+        # déclencheur de vente, donc plusieurs fois par chargement de page.
+        # asyncio.to_thread le sort de la boucle sans rien changer au résultat.
+        daily_fc = await asyncio.to_thread(
+            forecast_daily_series,
+            daily_series, 2,
+            ref_date - timedelta(days=1), sid,
         )
         eod_model     = float(daily_fc["forecast"][0])
         tomorrow_fc   = float(daily_fc["forecast"][1])

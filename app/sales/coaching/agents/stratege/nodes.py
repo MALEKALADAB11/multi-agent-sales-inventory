@@ -16,6 +16,7 @@ from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.agent_logger import AgentLogger
+from app.core.http import get_http_client
 from app.sales.core.config import get_config
 from app.sales.core.state import SalesAgentState
 from app.sales.coaching.agents.stratege.tools import fetch_full_context
@@ -523,7 +524,11 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
                     (_OR_COOLDOWN_UNTIL - time.time()) / 60)
         return "", 0.0
 
-    import httpx
+    # Client partagé, jamais reconstruit ici : le constructeur httpx est
+    # synchrone et monte un SSLContext neuf (~700 ms), ce qui gelait la boucle
+    # d'événements une fois par tentative — jusqu'à 8 fois par appel avec la
+    # rotation ci-dessous. Voir app/core/http.py.
+    client = get_http_client()
     exhausted = 0
     for model in _OR_MODEL_ROTATION:
         # Le stratège doit rendre du JSON : on l'exige du modèle plutôt que de
@@ -531,30 +536,30 @@ async def _call_openrouter_stratege(system_prompt: str, user_msg: str,
         # response_format — on retente sans dès que le serveur le refuse.
         for payload_extra in ({"response_format": {"type": "json_object"}}, {}):
             try:
-                async with httpx.AsyncClient(timeout=45) as client:
-                    resp = await client.post(
-                        OPENROUTER_URL,
-                        headers={
-                            "Authorization": f"Bearer {OPENROUTER_KEY}",
-                            "Content-Type":  "application/json",
-                            "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
-                            "X-Title":       "AI Sales Coach Ooredoo - Stratege",
-                        },
-                        json={
-                            "model":       model,
-                            "max_tokens":  800,
-                            "temperature": 0.1,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user",   "content": user_msg},
-                            ],
-                            # nemotron-3-* raisonne à voix haute et vide son budget
-                            # de tokens avant d'écrire le JSON. Le stratège applique
-                            # des règles, il n'a pas à réfléchir en anglais.
-                            "reasoning": {"enabled": False},
-                            **payload_extra,
-                        },
-                    )
+                resp = await client.post(
+                    OPENROUTER_URL,
+                    timeout=45,
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_KEY}",
+                        "Content-Type":  "application/json",
+                        "HTTP-Referer":  "https://github.com/MALEKALADAB11/multi-agent-sales-inventory",
+                        "X-Title":       "AI Sales Coach Ooredoo - Stratege",
+                    },
+                    json={
+                        "model":       model,
+                        "max_tokens":  800,
+                        "temperature": 0.1,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_msg},
+                        ],
+                        # nemotron-3-* raisonne à voix haute et vide son budget
+                        # de tokens avant d'écrire le JSON. Le stratège applique
+                        # des règles, il n'a pas à réfléchir en anglais.
+                        "reasoning": {"enabled": False},
+                        **payload_extra,
+                    },
+                )
                 data = resp.json()
                 if "error" in data:
                     code = data["error"].get("code", 0)
@@ -616,26 +621,26 @@ async def _call_mistral_stratege(system_prompt: str, user_msg: str,
     t0 = time.time()
     if not MISTRAL_KEY:
         return "", 0.0
-    import httpx
+    client = get_http_client()   # cf. commentaire dans _call_openrouter_stratege
     for model in _mistral_rotation(urgency):
         try:
-            async with httpx.AsyncClient(timeout=45) as client:
-                resp = await client.post(
-                    MISTRAL_URL,
-                    headers={
-                        "Authorization": f"Bearer {MISTRAL_KEY}",
-                        "Content-Type":  "application/json",
-                    },
-                    json={
-                        "model":       model,
-                        "max_tokens":  800,
-                        "temperature": 0.1,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user",   "content": user_msg},
-                        ],
-                    },
-                )
+            resp = await client.post(
+                MISTRAL_URL,
+                timeout=45,
+                headers={
+                    "Authorization": f"Bearer {MISTRAL_KEY}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":       model,
+                    "max_tokens":  800,
+                    "temperature": 0.1,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_msg},
+                    ],
+                },
+            )
             if resp.status_code == 429:
                 logger.warning(f"[STRATEGE MISTRAL] {model} → 429 rate limit")
                 continue

@@ -106,22 +106,27 @@ async def get_hourly_forecast(store_id: str, hours: int = 8):
     }
 
 
+# `def` volontaire à partir d'ici : corps 100 % psycopg2 bloquant, donc exécuté
+# dans le threadpool FastAPI plutôt que dans la boucle d'événements. Les routes
+# /eod et /hourly restent `async` : elles `await` réellement analyze_store().
+
+
 @router.get("/inventory/{store_id}")
-async def get_inventory(store_id: str):
+def get_inventory(store_id: str):
     """Inventaire temps réel depuis PostgreSQL."""
     svc = _get_svc(store_id)
     return {"items": svc.get_inventory(), "source": "postgresql"}
 
 
 @router.get("/alerts/{store_id}")
-async def get_alerts(store_id: str):
+def get_alerts(store_id: str):
     """Alertes stock depuis PostgreSQL."""
     svc = _get_svc(store_id)
     return {"alerts": svc.get_alerts(), "source": "postgresql"}
 
 
 @router.get("/product-mix/{store_id}")
-async def get_product_mix(store_id: str):
+def get_product_mix(store_id: str):
     """Mix produits mensuel depuis PostgreSQL."""
     from app.sales.data.json_service import _query
     cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
@@ -161,7 +166,7 @@ async def get_product_mix(store_id: str):
 
 
 @router.get("/top-products/{store_id}")
-async def get_top_products(store_id: str, limit: int = 10):
+def get_top_products(store_id: str, limit: int = 10):
     """Top produits depuis PostgreSQL."""
     from app.sales.data.json_service import _query
     cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)

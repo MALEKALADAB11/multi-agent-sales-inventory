@@ -166,7 +166,7 @@ class LoginRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/login")
-async def login(body: LoginRequest):
+def login(body: LoginRequest):
     u = body.username.strip()
     p = body.password.strip()
     if not u or not p:
@@ -208,7 +208,7 @@ async def me(creds: HTTPAuthorizationCredentials = Depends(security)):
 
 
 @router.post("/logout")
-async def logout(creds: HTTPAuthorizationCredentials = Depends(security)):
+def logout(creds: HTTPAuthorizationCredentials = Depends(security)):
     token = creds.credentials if creds else None
     if token:
         conn = _get_conn()
@@ -220,7 +220,7 @@ async def logout(creds: HTTPAuthorizationCredentials = Depends(security)):
 
 
 @router.get("/users")
-async def list_users(creds: HTTPAuthorizationCredentials = Depends(security)):
+def list_users(creds: HTTPAuthorizationCredentials = Depends(security)):
     token = creds.credentials if creds else None
     user  = _get_user_from_token(token)
     if not user or user["role"] != "manager":
@@ -239,7 +239,7 @@ async def list_users(creds: HTTPAuthorizationCredentials = Depends(security)):
 
 
 @router.post("/users/{user_id}/password")
-async def change_password(
+def change_password(
     user_id: str, body: dict,
     creds: HTTPAuthorizationCredentials = Depends(security),
 ):
@@ -264,7 +264,7 @@ async def change_password(
 
 
 @router.get("/sessions/clean")
-async def clean_sessions():
+def clean_sessions():
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute("DELETE FROM app_sessions WHERE expires_at<NOW()")

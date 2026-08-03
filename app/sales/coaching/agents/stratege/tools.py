@@ -14,6 +14,7 @@ import asyncpg
 import httpx
 
 from app.core.db import acquire
+from app.core.http import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -84,51 +85,51 @@ async def fetch_weather(store_id: str) -> dict:
     lat, lon = coords["lat"], coords["lon"]
 
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(
-                "https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude":   lat,
-                    "longitude":  lon,
-                    "current":    "temperature_2m,precipitation,weathercode,windspeed_10m",
-                    "hourly":     "temperature_2m,precipitation_probability,weathercode",
-                    "forecast_days": 1,
-                    "timezone":   "Africa/Tunis",
-                },
-            )
-            data    = resp.json()
-            current = data.get("current", {})
-            hourly  = data.get("hourly", {})
-            code    = current.get("weathercode", 1)
-            temp    = current.get("temperature_2m", 22)
-            rain    = current.get("precipitation", 0)
-            wind    = current.get("windspeed_10m", 0)
-            w       = WEATHER_CODES.get(code, {"label": "Variable", "icon": "⛅", "effect": 0.0})
-            hour    = datetime.now().hour
-            rain_probs = hourly.get("precipitation_probability", [])
-            rain_hours = [
-                (hour + i) % 24
-                for i, prob in enumerate(rain_probs[:24])
-                if prob and prob > 60
-            ]
-            summary = {
-                "weather_label":  w["label"],
-                "weather_icon":   w["icon"],
-                "weather_effect": w["effect"],
-                "temperature":    temp,
-                "precipitation":  rain,
-                "is_rainy":       code >= 61,
-                "is_sunny":       code <= 1,
-                "rain_hours":     rain_hours[:3],
-                "best_hours":     [16, 17, 19] if code <= 2 else [11, 12],
-                "is_holiday":     False,
-                "city":           coords["city"],
-            }
-            result = {"current": dict(current), "hourly": hourly, "summary": summary}
-            _weather_cache[store_id] = result
-            _weather_cache_time[store_id] = now
-            logger.info(f"[STRATEGE] Météo {coords['city']}: {w['icon']} | effet={w['effect']:+.0%}")
-            return result
+        resp = await get_http_client().get(
+            "https://api.open-meteo.com/v1/forecast",
+            timeout=6.0,
+            params={
+                "latitude":   lat,
+                "longitude":  lon,
+                "current":    "temperature_2m,precipitation,weathercode,windspeed_10m",
+                "hourly":     "temperature_2m,precipitation_probability,weathercode",
+                "forecast_days": 1,
+                "timezone":   "Africa/Tunis",
+            },
+        )
+        data    = resp.json()
+        current = data.get("current", {})
+        hourly  = data.get("hourly", {})
+        code    = current.get("weathercode", 1)
+        temp    = current.get("temperature_2m", 22)
+        rain    = current.get("precipitation", 0)
+        wind    = current.get("windspeed_10m", 0)
+        w       = WEATHER_CODES.get(code, {"label": "Variable", "icon": "⛅", "effect": 0.0})
+        hour    = datetime.now().hour
+        rain_probs = hourly.get("precipitation_probability", [])
+        rain_hours = [
+            (hour + i) % 24
+            for i, prob in enumerate(rain_probs[:24])
+            if prob and prob > 60
+        ]
+        summary = {
+            "weather_label":  w["label"],
+            "weather_icon":   w["icon"],
+            "weather_effect": w["effect"],
+            "temperature":    temp,
+            "precipitation":  rain,
+            "is_rainy":       code >= 61,
+            "is_sunny":       code <= 1,
+            "rain_hours":     rain_hours[:3],
+            "best_hours":     [16, 17, 19] if code <= 2 else [11, 12],
+            "is_holiday":     False,
+            "city":           coords["city"],
+        }
+        result = {"current": dict(current), "hourly": hourly, "summary": summary}
+        _weather_cache[store_id] = result
+        _weather_cache_time[store_id] = now
+        logger.info(f"[STRATEGE] Météo {coords['city']}: {w['icon']} | effet={w['effect']:+.0%}")
+        return result
     except Exception as e:
         logger.warning(f"[STRATEGE] Météo fallback: {e}")
         return {
@@ -164,9 +165,9 @@ async def fetch_holidays(year: int = None) -> dict:
 
     today = date.today()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp  = await client.get(f"https://date.nager.at/api/v3/PublicHolidays/{year}/TN")
-            holidays = resp.json()
+        resp = await get_http_client().get(
+            f"https://date.nager.at/api/v3/PublicHolidays/{year}/TN", timeout=5.0)
+        holidays = resp.json()
         is_today, today_hol, next_hol, min_days = False, None, None, 9999
         for h in holidays:
             try:

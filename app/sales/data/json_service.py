@@ -77,6 +77,11 @@ TARGET_UPLIFT = 1.10
 # ── Helpers SQL ───────────────────────────────────────────────────────────────
 
 def _get_conn():
+    """
+    Connexion directe hors pool. Conservée pour les appelants qui gèrent
+    eux-mêmes le cycle de vie (scripts, seeds). Le chemin chaud du dashboard
+    passe par _query(), qui utilise le pool partagé.
+    """
     os.environ['PGCLIENTENCODING'] = 'UTF8'
     conn = psycopg2.connect(**_DB_CONFIG)
     conn.set_client_encoding('UTF8')
@@ -84,16 +89,38 @@ def _get_conn():
 
 
 def _query(sql: str, params=None) -> list:
+    """
+    SELECT sur une connexion du pool partagé (app.core.db).
+
+    Auparavant chaque appel ouvrait puis fermait une connexion PostgreSQL :
+    ~30-130 ms de handshake TCP+auth par requête, et get_store_metrics() seul
+    en enchaîne quatre. Le pool ramène ce coût à zéro sur le chemin chaud.
+    Le search_path par défaut du pool est identique à celui d'une connexion
+    neuve, donc les requêtes non qualifiées (stock, boutiques) résolvent pareil.
+    """
+    from app.core.db import getconn, putconn
+
+    conn = None
     try:
-        conn = _get_conn()
+        conn = getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
-        conn.close()
+        # Termine la transaction implicite : sans ça la connexion repart au pool
+        # en « idle in transaction » et bloque VACUUM côté serveur.
+        conn.commit()
         return [dict(r) for r in rows]
     except Exception as e:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         logger.error(f"[PG] Erreur: {e} | SQL: {sql[:80]}")
         return []
+    finally:
+        if conn is not None:
+            putconn(conn)
 
 
 def _query_one(sql: str, params=None) -> dict:

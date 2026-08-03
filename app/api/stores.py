@@ -32,8 +32,16 @@ def _get_svc(store_id: str) -> JsonDataService:
     return JsonDataService(store_id=cd_dist)
 
 
+# NOTE — les routes ci-dessous sont volontairement `def` et non `async def`.
+# Elles n'utilisent que psycopg2 (bloquant). Déclarées `async`, elles
+# s'exécutaient DANS la boucle d'événements : chaque requête gelait le serveur
+# entier (autres appels HTTP, handshakes WebSocket) pendant toute la durée du
+# SQL. En `def`, FastAPI les route vers son threadpool et elles s'exécutent
+# réellement en parallèle. Ne repassez à `async def` que si le corps `await`.
+
+
 @router.get("/stores")
-async def list_stores():
+def list_stores():
     """Liste toutes les boutiques depuis PostgreSQL."""
     from app.sales.data.json_service import _query
     rows = _query("""
@@ -52,35 +60,35 @@ async def list_stores():
 
 
 @router.get("/stores/{store_id}/metrics")
-async def get_store_metrics(store_id: str):
+def get_store_metrics(store_id: str):
     """Métriques temps réel depuis PostgreSQL."""
     svc = _get_svc(store_id)
     return svc.get_store_metrics()
 
 
 @router.get("/stores/{store_id}/advisors")
-async def get_advisors(store_id: str):
+def get_advisors(store_id: str):
     """Performance agents depuis PostgreSQL."""
     svc = _get_svc(store_id)
     return {"advisors": svc.get_advisors_performance()}
 
 
 @router.get("/stores/{store_id}/context")
-async def get_context(store_id: str):
+def get_context(store_id: str):
     """Contexte boutique."""
     svc = _get_svc(store_id)
     return svc.get_context()
 
 
 @router.get("/stores/{store_id}/transactions")
-async def get_transactions(store_id: str, limit: int = 50):
+def get_transactions(store_id: str, limit: int = 50):
     """Dernières transactions du jour depuis PostgreSQL."""
     svc = _get_svc(store_id)
     return {"transactions": svc.get_transactions_today()[:limit]}
 
 
 @router.get("/stores/{store_id}/product-mix")
-async def get_product_mix(store_id: str):
+def get_product_mix(store_id: str):
     """Mix produits réel depuis PostgreSQL."""
     from app.sales.data.json_service import _query, _STORE_MAP
     cd = _STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
@@ -135,30 +143,38 @@ async def get_live_analysis(store_id: str):
     if isinstance(pos_data, Exception):
         raise HTTPException(status_code=500, detail=str(pos_data))
 
-    svc      = _get_svc(store_id)
-    advisors = svc.get_advisors_performance()
-    mix_data = svc.get_hourly_ca()
-
     ca_today = float(pos_data.get("current_revenue", 0))
     objectif = float(pos_data.get("daily_target", 1007))
     eod      = float(forecast.get("forecast_end_of_day", 0)) if not isinstance(forecast, Exception) else 0
 
-    # Product mix depuis PostgreSQL
+    # Les trois lectures ci-dessous sont du psycopg2 bloquant. Exécutées
+    # directement ici, elles gelaient la boucle d'événements ~1,5 s à chaque
+    # appel — donc aussi tous les autres appels du dashboard et les frames
+    # WebSocket. On les regroupe dans un seul aller-retour vers le threadpool.
     from app.sales.data.json_service import _query
-    mix_rows = _query("""
-        SELECT
-            COALESCE(p.categorie, 'Autre') AS product,
-            SUM(t.lig_ttc)     AS revenue,
-            COUNT(*)           AS nb_tx,
-            SUM(t.quantity) AS nb_unites
-        FROM sales.transactions t
-        LEFT JOIN sales.produits p ON t.sku = p.sku
-        WHERE t.store_id = %s
-          AND t.date_only = CURRENT_DATE
-          AND t.lig_ttc > 0
-        GROUP BY p.categorie
-        ORDER BY revenue DESC
-    """, (cd,))
+
+    def _blocking_reads():
+        svc = _get_svc(store_id)
+        return (
+            svc.get_advisors_performance(),
+            svc.get_hourly_ca(),
+            _query("""
+                SELECT
+                    COALESCE(p.categorie, 'Autre') AS product,
+                    SUM(t.lig_ttc)     AS revenue,
+                    COUNT(*)           AS nb_tx,
+                    SUM(t.quantity) AS nb_unites
+                FROM sales.transactions t
+                LEFT JOIN sales.produits p ON t.sku = p.sku
+                WHERE t.store_id = %s
+                  AND t.date_only = CURRENT_DATE
+                  AND t.lig_ttc > 0
+                GROUP BY p.categorie
+                ORDER BY revenue DESC
+            """, (cd,)),
+        )
+
+    advisors, mix_data, mix_rows = await asyncio.to_thread(_blocking_reads)
 
     total_ca = sum(float(r["revenue"]) for r in mix_rows)
     product_mix = [
@@ -234,7 +250,7 @@ async def get_live_analysis(store_id: str):
 
 
 @router.get("/stores/{store_id}/stats")
-async def get_stats(store_id: str):
+def get_stats(store_id: str):
     """Stats debug depuis PostgreSQL."""
     svc = _get_svc(store_id)
     return svc.get_stats()
