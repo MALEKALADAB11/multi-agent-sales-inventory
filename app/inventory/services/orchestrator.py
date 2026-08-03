@@ -46,6 +46,7 @@ WHAT WAS SLOW AND WHY:
 import asyncio
 import sys
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed, Future
@@ -62,22 +63,42 @@ from app.inventory.config.settings import settings
 from app.core.config import DEFAULT_STORE_ID
 
 
-def _await_sync(coro):
-    """
-    Exécute une coroutine depuis ce module, qui est entièrement synchrone.
+# ── Passerelle sync -> async ──────────────────────────────────────────────────
+#
+# Ce module est entièrement synchrone et tourne dans des threads worker, mais
+# doit appeler des coroutines (decision_agent.run await le pool asyncpg pour
+# chercher les produits complémentaires).
+#
+# Surtout PAS un asyncio.run() par appel : app.core.db indexe le pool asyncpg
+# par boucle d'événements dans une WeakKeyDictionary. Chaque boucle éphémère
+# ouvre donc un pool neuf (min_size=2) que personne ne ferme quand la boucle
+# meurt — avec 80 SKUs par run, PostgreSQL était saturé en quelques minutes
+# ("sorry, too many clients already"), y compris les slots superutilisateur.
+#
+# Une boucle unique et persistante, dans un thread dédié, garantit exactement
+# UN pool asyncpg réutilisé par tous les appels.
+_loop_lock = threading.Lock()
+_bg_loop: "asyncio.AbstractEventLoop | None" = None
 
-    Le pipeline tourne dans les threads d'un ThreadPoolExecutor, donc sans
-    boucle d'événements : asyncio.run() y convient (app.core.db sait ouvrir une
-    connexion directe quand la boucle est éphémère). Le repli sur un thread
-    dédié couvre le cas où un appelant futur invoquerait le pipeline depuis un
-    thread qui fait déjà tourner une boucle — asyncio.run() y lèverait.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        return ex.submit(asyncio.run, coro).result()
+
+def _get_bg_loop() -> "asyncio.AbstractEventLoop":
+    global _bg_loop
+    with _loop_lock:
+        if _bg_loop is not None and not _bg_loop.is_closed():
+            return _bg_loop
+        loop = asyncio.new_event_loop()
+        threading.Thread(
+            target=loop.run_forever,
+            name="inventory-async",
+            daemon=True,
+        ).start()
+        _bg_loop = loop
+        return loop
+
+
+def _await_sync(coro, timeout: float = 120.0):
+    """Exécute une coroutine sur la boucle de fond partagée et rend son résultat."""
+    return asyncio.run_coroutine_threadsafe(coro, _get_bg_loop()).result(timeout)
 
 
 try:
