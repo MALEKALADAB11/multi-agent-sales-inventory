@@ -653,6 +653,13 @@ async def startup_event():
     # ce qui se lit a tort comme « aucune rupture ». On paie donc ce cout une
     # fois au demarrage, en tache de fond, pour que la premiere ouverture du
     # dashboard tape un cache chaud (~0,2 s).
+    #
+    # force_refresh=True est nécessaire ici : le prewarm rapide plus haut
+    # (fast=True, ~ligne 317) tourne en premier et remplit déjà le même
+    # cache (store_id + objective) avec des données rule-based. Sans
+    # force_refresh, analyze_store() trouve ce cache chaud et rend la main
+    # immédiatement — le pipeline LLM complet ci-dessous ne s'exécute jamais
+    # réellement, malgré son but explicite de pré-payer ce coût une fois.
     async def _prewarm_inventory():
         from app.inventory.api.routes import analyze_store
         stores = [s.strip() for s in os.getenv(
@@ -666,7 +673,7 @@ async def startup_event():
                 payload = await loop.run_in_executor(
                     None,
                     lambda sid=store_id: analyze_store(
-                        sid, "balanced", force_refresh=False, fast=False,
+                        sid, "balanced", force_refresh=True, fast=False,
                         page=1, page_size=0,
                     ),
                 )

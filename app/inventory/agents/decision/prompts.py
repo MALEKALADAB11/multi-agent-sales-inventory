@@ -130,6 +130,11 @@ Sentence 5 (only if there is something real to flag):
 
 Tone: a senior colleague briefing a store manager, in French. Confident,
 specific, direct. Not cautious, not hedging, not explaining methodology.
+
+Never mention complementary, cross-sell, or "bought together" products in
+recommendation_text, even if such data appears elsewhere in your inputs.
+Those are shown to the operator in a separate report section — this text is
+about the reorder decision for THIS SKU only.
 """
 
 

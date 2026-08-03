@@ -95,6 +95,7 @@ def get_feedback_stats(store_id: Optional[str] = None, days: int = 14) -> Dict[s
         "hitl":        {"approved": 0, "rejected": 0, "pending": 0, "approval_rate": None},
         "po":          {"suggested": 0, "accepted": 0, "cancelled": 0, "adoption_rate": None},
         "recent_rejections": [],
+        "top_rejection_reasons": [],
     }
     conn = None
     try:
@@ -178,6 +179,32 @@ def get_feedback_stats(store_id: Optional[str] = None, days: int = 14) -> Dict[s
             stats["recent_rejections"] = [
                 str(r["reason"])[:160] for r in cur.fetchall() if r["reason"]
             ]
+
+            # 5. Top causes de rejet (groupées par raison, triées par fréquence) —
+            #    alimente la section "Top causes de rejets" de la page Supervision.
+            #    Regroupement sur le texte exact : les raisons sont saisies libres,
+            #    donc seuls les doublons mot-pour-mot se cumulent.
+            cur.execute(f"""
+                SELECT reason, COUNT(*) AS cnt, MAX(created_at) AS last_seen
+                FROM (
+                    SELECT approver_note AS reason, reviewed_at AS created_at, store_id
+                    FROM public.hitl_reviews
+                    WHERE status = 'rejected' AND approver_note IS NOT NULL
+                    UNION ALL
+                    SELECT reason, created_at, store_id
+                    FROM public.agent_feedback
+                    WHERE decision IN ('rejected','ignored') AND reason IS NOT NULL
+                ) x
+                WHERE created_at >= NOW() - (%(days)s || ' days')::interval
+                  {store_clause}
+                GROUP BY reason
+                ORDER BY cnt DESC, last_seen DESC
+                LIMIT 5
+            """, params)
+            stats["top_rejection_reasons"] = [
+                {"reason": str(r["reason"])[:160], "count": int(r["cnt"])}
+                for r in cur.fetchall() if r["reason"]
+            ]
     except Exception as e:
         logger.warning("[Feedback] get_feedback_stats: %s", e)
     finally:
@@ -241,6 +268,7 @@ def get_feedback_overview(
             "po": cur["po"],
         },
         "recent_rejections": cur["recent_rejections"],
+        "top_rejection_reasons": cur["top_rejection_reasons"],
     }
 
 

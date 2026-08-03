@@ -97,6 +97,60 @@ def _set_cache(store_id: str, objective: str, data: Dict[str, Any]) -> None:
     logger.info("Cache SET  %s", _cache_key(store_id, objective))
 
 
+def _patch_cached_recommendation(store_id: str, sku: Any, recommendation_id: str, status: str) -> None:
+    """
+    Best-effort in-memory patch so an approve/reject decision shows up on the
+    very next GET /store/{id}, instead of waiting up to CACHE_TTL (1h) for
+    the cached snapshot to expire.
+
+    Root cause this works around: PATCH /recommendations/{id} only writes to
+    Postgres. _store_cache holds a full item snapshot — including
+    recommendationStatus — computed once when the pipeline last ran, and
+    then served as-is for up to an hour. Without this patch, the frontend's
+    rehydration (inventory.ts _applyAgentPayload, which trusts
+    recommendationStatus to restore approve/reject state after navigation or
+    refresh) keeps seeing the pre-decision status and the decision appears
+    to "not have saved".
+    """
+    sku_str = str(sku) if sku is not None else None
+    for entry in _store_cache.values():
+        data = entry.get("data") or {}
+        if data.get("store_id") != store_id:
+            continue
+        for item in data.get("items") or []:
+            same_rec = item.get("recommendationId") and str(item["recommendationId"]) == str(recommendation_id)
+            same_sku = sku_str is not None and str(item.get("sku")) == sku_str
+            if same_rec or same_sku:
+                item["recommendationStatus"] = status
+
+
+def _merge_item_into_cache(store_id: str, business_objective: str, item: Dict[str, Any]) -> None:
+    """
+    Upserts one item (produced by POST /analyze) into the cached GET
+    /store/{id} snapshot, so a freshly-computed LLM analysis isn't silently
+    discarded the moment the user navigates away.
+
+    Root cause this works around: POST /analyze was "Not cached" — every
+    open of a recommendation's full report re-ran the entire LLM pipeline
+    for that SKU (observed 20+ minutes under load) even if it had just been
+    analyzed a minute earlier, because the result was never written back
+    into _store_cache and the batch list only reflects what was cached at
+    the last pipeline run.
+    """
+    entry = _store_cache.get(_cache_key(store_id, business_objective))
+    if not entry:
+        return
+    items = entry["data"].get("items")
+    if items is None:
+        return
+    sku_str = str(item.get("sku"))
+    for idx, existing in enumerate(items):
+        if str(existing.get("sku")) == sku_str:
+            items[idx] = item
+            return
+    items.append(item)
+
+
 # ---------------------------------------------------------------------------
 # WebSocket connection registry
 # ---------------------------------------------------------------------------
@@ -656,10 +710,124 @@ RISK_SCORE_MAP = {
 }
 
 
+def _preload_complementary_products_batch(
+    skus: List[str],
+    store_id: str,
+    limit_per_sku: int = 3,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Bulk, LLM-free complementary-products lookup for an entire batch — same
+    single-query pattern as the stock/product pre-fetch above (no N+1).
+
+    This data comes straight from inventory.product_associations, pre-computed
+    offline by db/seeds/seed_product_associations.py. It never involves an
+    LLM call, so it has no business being gated behind the DecisionAgent
+    (the "smart"/LLM tier) — that coupling is why complementary products used
+    to only show up for the 3 LLM-prefetched items or a manually opened SKU.
+    This runs during the fast/rule-based batch pipeline too, so every item
+    gets its cross-sell section on first load.
+
+    Returns {sku_str: [ {sku, product_name, gamme, confidence, lift, source,
+    reason}, ... ]}. Never raises — returns {} on any DB failure, so a slow/
+    down DB never blocks the batch pipeline.
+    """
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        import os
+        import psycopg2
+        import psycopg2.extras
+
+        sku_ints = []
+        for s in skus:
+            try:
+                sku_ints.append(int(s))
+            except (TypeError, ValueError):
+                continue
+        if not sku_ints:
+            return {}
+
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost")),
+            port=int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))),
+            dbname=os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "ooredoo_sales")),
+            user=os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres")),
+            password=os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "root")),
+            connect_timeout=5,
+        )
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Store-specific rows sort first (is_store_specific DESC), then
+                # by confidence/lift — top N per sku1 are picked below.
+                cur.execute("""
+                    SELECT
+                        pa.sku1, pa.sku2, p.nom AS product_name, pa.gamme2,
+                        pa.confidence, pa.lift,
+                        (pa.store_id = %(store_id)s) AS is_store_specific
+                    FROM inventory.product_associations pa
+                    JOIN sales.produits p ON pa.sku2 = p.sku
+                    WHERE pa.sku1 = ANY(%(skus)s)
+                      AND (pa.store_id = %(store_id)s OR pa.store_id IS NULL)
+                      AND pa.confidence >= 0.1
+                    ORDER BY pa.sku1, is_store_specific DESC, pa.confidence DESC, pa.lift DESC
+                """, {"skus": sku_ints, "store_id": store_id})
+
+                for row in cur.fetchall():
+                    sku_key = str(row["sku1"])
+                    bucket = result.setdefault(sku_key, [])
+                    if len(bucket) >= limit_per_sku:
+                        continue
+                    # A global row for a sku2 already covered by a store-specific
+                    # row is redundant — ORDER BY already put store-specific first.
+                    if any(b["sku"] == row["sku2"] for b in bucket):
+                        continue
+                    bucket.append({
+                        "sku":          row["sku2"],
+                        "product_name": row["product_name"],
+                        "gamme":        row["gamme2"],
+                        "confidence":   float(row["confidence"]),
+                        "lift":         float(row["lift"]) if row["lift"] is not None else 0.0,
+                        "source":       "data",
+                        "reason":       f"Vendus ensemble {float(row['confidence']):.0%} du temps",
+                    })
+
+                # ── Gamme-level business-rule fallback for SKUs with no data rows ──
+                missing = [s for s in sku_ints if str(s) not in result]
+                if missing:
+                    cur.execute(
+                        "SELECT sku, gamme_libelle FROM sales.produits WHERE sku = ANY(%s)",
+                        (missing,),
+                    )
+                    from app.inventory.services.complementary_products import ComplementaryProductsService
+                    for row in cur.fetchall():
+                        gamme = row["gamme_libelle"]
+                        rules = ComplementaryProductsService.BUSINESS_RULES.get(gamme, [])[:limit_per_sku]
+                        if rules:
+                            result[str(row["sku"])] = [
+                                {
+                                    "sku":          None,
+                                    "product_name": f"Produits {g}",
+                                    "gamme":        g,
+                                    "confidence":   0.5,
+                                    "lift":         1.0,
+                                    "source":       "business_rule",
+                                    "reason":       f"Règle métier : {g} complète logiquement {gamme}",
+                                }
+                                for g in rules
+                            ]
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("[_preload_complementary_products_batch] failed for %s: %s", store_id, exc)
+        return {}
+
+    return result
+
+
 def _to_inventory_item(
     result: Dict[str, Any],
     preloaded_stock: Dict[str, int] = None,
     product_lookup: Dict[str, Any] = None,
+    preloaded_complements: Dict[str, List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if "error" in result:
         return {"sku": result.get("sku", ""), "error": result["error"]}
@@ -802,6 +970,8 @@ def _to_inventory_item(
         "escalateToHuman":        False,
         "escalationReason":       None,
         "tradeOffs":              None,
+        "complementaryProducts":  [],   # cross-sell — separate section, never merged into recommendationDetail
+        "reasoningSource":        None,  # "llm" | "rule_based_fallback" — lets the frontend skip a redundant /analyze call
     }
 
     # Patch in decision agent fields after item dict is built.
@@ -809,6 +979,30 @@ def _to_inventory_item(
     # remain valid when decision_result is missing (fast/rule-based path).
     decision_result = result.get("decision_result", {}) or {}
     dec             = decision_result.get("decision", {}) or {}
+
+    # Cross-sell — attached independently of `dec`/LLM status. On the smart
+    # (LLM) tier this comes straight from decision_result (DecisionAgent
+    # already called ComplementaryProductsService). On the fast/rule-based
+    # batch tier decision_result is empty, so fall back to the bulk-preloaded
+    # lookup built once for the whole batch — same data source, no LLM
+    # either way, just fetched at a different point in the pipeline.
+    comp_products = decision_result.get("complementary_products")
+    if not comp_products and preloaded_complements:
+        comp_products = preloaded_complements.get(str(sku), [])
+    comp_products = comp_products or []
+
+    item["complementaryProducts"] = [
+        {
+            "sku":         c.get("sku"),
+            "productName": c.get("product_name"),
+            "gamme":       c.get("gamme"),
+            "confidence":  c.get("confidence"),
+            "lift":        c.get("lift"),
+            "source":      c.get("source"),   # "data" | "business_rule"
+            "reason":      c.get("reason"),
+        }
+        for c in comp_products
+    ]
 
     if dec:
         item["recommendation"]       = dec.get("action")
@@ -820,6 +1014,7 @@ def _to_inventory_item(
         item["escalateToHuman"]      = bool(dec.get("escalate_to_human", False))
         item["escalationReason"]     = dec.get("escalation_reason")
         item["tradeOffs"]            = dec.get("trade_offs")
+        item["reasoningSource"]      = dec.get("reasoning_source")
 
         # Pull the live status from DB so the frontend can rehydrate UI state.
         # get_latest_recommendation returns the most recent row for this SKU.
@@ -1205,7 +1400,25 @@ def list_skus(store_id: Optional[str] = Query(default=None)) -> Dict[str, List[s
 
 @router.post("/analyze")
 def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
-    """Single-SKU on-demand analysis. Not cached."""
+    """
+    Single-SKU on-demand analysis (LLM).
+
+    Reuses a previously-computed LLM result for this SKU when one is already
+    sitting in the store cache, instead of always re-running the full
+    pipeline (previously ~20 min under load on every single open of a
+    recommendation's report, even seconds after the same SKU had just been
+    analyzed). See _merge_item_into_cache for how results get persisted.
+    """
+    cached_store = _get_cached(req.store_id, req.business_objective)
+    if cached_store:
+        for existing in cached_store.get("items", []):
+            if str(existing.get("sku")) == str(req.sku) and existing.get("llmAnalyzed"):
+                logger.info(
+                    "analyze_single: reusing cached LLM result for %s/%s",
+                    req.store_id, req.sku,
+                )
+                return {"raw": None, "item": existing}
+
     result = get_orchestrator().analyze_sku(
         req.sku, req.store_id, req.business_objective
     )
@@ -1214,6 +1427,16 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
 
     [result] = _enrich_with_product_master([result])
     item = _to_inventory_item(result, preloaded_stock=None, product_lookup=None)
+    # Marks this item as having gone through the real (non-fast/rule-based)
+    # pipeline, so a later GET /store/{id} or repeat /analyze call for the
+    # same SKU can tell it apart from the batch's rule-based version and
+    # reuse it instead of discarding it / re-running the LLM.
+    item["llmAnalyzed"] = True
+
+    # Persist into the store cache so this analysis survives navigation
+    # instead of being silently thrown away the moment the modal closes.
+    _merge_item_into_cache(req.store_id, req.business_objective, item)
+
     # NB : le LLM-as-judge n'est PLUS appelé ici (il bloquerait l'ouverture de
     # la modale). Le frontend appelle POST /judge juste après, en repassant ce
     # `raw` + `item`, pour remplir le radar sans latence sur /analyze.
@@ -1376,7 +1599,28 @@ def analyze_store(
         except Exception:
             product_lookup = {}
 
-        items = [_to_inventory_item(r, preloaded_stock=preloaded_stock, product_lookup=product_lookup) for r in results]
+        # ── Pre-fetch complementary products for all SKUs in ONE DB query ──
+        # Same reasoning as the stock pre-fetch above: this is pure DB lookup
+        # (inventory.product_associations), no LLM involved, so it must not
+        # wait for the DecisionAgent to run. Runs on every pipeline call —
+        # fast (rule-based) included — so the section is populated on first
+        # load, not just for the 3 LLM-prefetched SKUs.
+        preloaded_complements: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            preloaded_complements = _preload_complementary_products_batch(skus, store_id, limit_per_sku=3)
+            logger.info("Pre-fetched complementary products for %d/%d SKUs", len(preloaded_complements), len(skus))
+        except Exception as exc:
+            logger.warning("Complementary products batch pre-fetch failed (%s) — sections will be empty until LLM tier runs", exc)
+
+        items = [
+            _to_inventory_item(
+                r,
+                preloaded_stock=preloaded_stock,
+                product_lookup=product_lookup,
+                preloaded_complements=preloaded_complements,
+            )
+            for r in results
+        ]
         alerts  = _build_alerts(items, store_id=store_id)
         payload = {
             "store_id":           store_id,
@@ -1895,13 +2139,27 @@ async def update_recommendation(
             recommendation_id, req.status, req.decided_by or "unknown",
         )
 
+        # Fetched once here and reused below for both the cache patch and the
+        # feedback record — avoids a second DB round-trip.
+        reco = SyncInventoryRepo.get_recommendation_by_id(recommendation_id) or {}
+
+        # See _patch_cached_recommendation docstring: without this, the
+        # decision is correctly saved in Postgres but the frontend won't see
+        # it reflected until the in-memory cache expires (up to 1h).
+        if reco.get("store_id"):
+            _patch_cached_recommendation(
+                store_id=str(reco["store_id"]),
+                sku=reco.get("sku"),
+                recommendation_id=recommendation_id,
+                status=req.status,
+            )
+
         # Boucle de feedback : la décision humaine (Approuver/Rejeter dans la
         # page Inventory) est journalisée dans public.agent_feedback puis
         # réinjectée dans les prompts DecisionAgent/Stratège par
         # feedback_service.get_learning_context_sync. Jamais bloquant.
         try:
             from app.core.feedback_service import record_feedback
-            reco = SyncInventoryRepo.get_recommendation_by_id(recommendation_id) or {}
             record_feedback(
                 store_id=str(reco.get("store_id") or "unknown"),
                 source="reco",
@@ -2000,3 +2258,39 @@ def debug_stock(store_id: str, sku: str) -> Dict[str, Any]:
             "db_stock_current":  db_row.get("stock_current") if db_row else None,
             "db_row_found":      db_row is not None,
             "csv_last_snapshot": csv_stock}
+
+
+@router.get("/complementary/{sku}")
+async def get_complementary_products(
+    sku: int,
+    store_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=5, ge=1, le=10)
+) -> Dict[str, Any]:
+    """
+    Get complementary/cross-sell products for a given SKU.
+    Uses hybrid approach: data-driven rules from sales_history + business rules.
+    """
+    from app.inventory.services.complementary_products import ComplementaryProductsService
+    from app.core.db import get_async_pool
+    
+    pool = await get_async_pool()
+    service = ComplementaryProductsService(pool)
+    
+    complements = await service.find_complementary(sku, store_id, limit)
+    
+    return {
+        "sku": sku,
+        "store_id": store_id,
+        "complementary_products": [
+            {
+                "sku": c.sku,
+                "product_name": c.product_name,
+                "gamme": c.gamme,
+                "confidence": c.confidence,
+                "lift": c.lift,
+                "source": c.source,
+                "reason": c.reason
+            }
+            for c in complements
+        ]
+    }
