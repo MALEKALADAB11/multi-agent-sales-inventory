@@ -34,6 +34,10 @@ def test_overview_compare_fenetre_courante_et_baseline(monkeypatch):
             "hitl":        {"approved": 0, "rejected": 0},
             "po":          {"accepted": 0, "cancelled": 0},
             "recent_rejections": ["trop cher"] if days == 30 else [],
+            # Clé ajoutée par le contrat de get_feedback_stats (feedback_service:98,
+            # toujours présente) et lue par get_feedback_overview. Le stub doit la
+            # fournir, sinon il ne représente plus la vraie fonction qu'il remplace.
+            "top_rejection_reasons": [{"reason": "trop cher", "count": 1}] if days == 30 else [],
         }
     monkeypatch.setattr(fs, "get_feedback_stats", fake_stats)
 

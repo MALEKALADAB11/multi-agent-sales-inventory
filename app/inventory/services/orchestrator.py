@@ -43,6 +43,7 @@ WHAT WAS SLOW AND WHY:
    run when no thread can be scheduled.
 """
 
+import asyncio
 import sys
 import logging
 from pathlib import Path
@@ -59,6 +60,25 @@ from app.inventory.agents.context.agent  import create_context_agent
 from app.inventory.agents.decision.agent import create_decision_agent
 from app.inventory.config.settings import settings
 from app.core.config import DEFAULT_STORE_ID
+
+
+def _await_sync(coro):
+    """
+    Exécute une coroutine depuis ce module, qui est entièrement synchrone.
+
+    Le pipeline tourne dans les threads d'un ThreadPoolExecutor, donc sans
+    boucle d'événements : asyncio.run() y convient (app.core.db sait ouvrir une
+    connexion directe quand la boucle est éphémère). Le repli sur un thread
+    dédié couvre le cas où un appelant futur invoquerait le pipeline depuis un
+    thread qui fait déjà tourner une boucle — asyncio.run() y lèverait.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
 
 try:
     from app.inventory.utils.langfuse_inventory import (
@@ -488,12 +508,18 @@ class InventoryOrchestrator:
             },
         ) if lf_trace else None
         try:
-            dec_raw                   = decision_agent.run(
+            # decision_agent.run est une coroutine depuis l'ajout de la
+            # recherche de produits complémentaires (elle await le pool
+            # asyncpg). _run_pipeline, lui, est synchrone et tourne dans un
+            # thread worker : sans _await_sync, on récupérait l'objet coroutine
+            # au lieu du résultat — d'où « 'coroutine' object has no attribute
+            # 'get' » sur chaque SKU, et zéro recommandation produite.
+            dec_raw                   = _await_sync(decision_agent.run(
                 sku=sku, store_id=store_id, business_objective=business_objective,
                 analysis_report=analysis_report, context_report=context_report,
                 agent_run_id=agent_run_id,
                 lf_span=decision_span,
-            )
+            ))
             result["decision_result"] = dec_raw
             if decision_span:
                 decision = dec_raw.get("decision", {})
