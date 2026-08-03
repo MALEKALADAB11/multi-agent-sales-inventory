@@ -6,6 +6,7 @@ Une seule DB ooredoo_sales, 3 schémas : sales | inventory | monitoring
 import asyncio
 import logging
 import json
+import os
 import time
 import weakref
 from contextlib import asynccontextmanager, contextmanager
@@ -30,11 +31,22 @@ _DB_KWARGS = dict(
 _sync_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
 
 
+# Taille du pool synchrone. Attention : c'est un plafond PAR PROCESSUS, et les
+# connexions restent ouvertes une fois prises. Depuis que json_service et
+# agent_logger passent par ce pool (au lieu d'ouvrir une connexion par requête),
+# il se remplit réellement — là où il stagnait près de minconn avant. Avec
+# plusieurs processus Python en parallèle (serveur + tests + scripts), 40 chacun
+# épuise un PostgreSQL réglé sur max_connections=100, y compris les slots
+# réservés au superutilisateur. 20 laisse de la marge tout en couvrant la
+# concurrence réelle du threadpool FastAPI.
+_POOL_MAX = int(os.getenv("DB_POOL_MAX", "20"))
+
+
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     global _sync_pool
     if _sync_pool is None:
         _sync_pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=2, maxconn=40, connect_timeout=10, **_DB_KWARGS
+            minconn=1, maxconn=_POOL_MAX, connect_timeout=10, **_DB_KWARGS
         )
     return _sync_pool
 

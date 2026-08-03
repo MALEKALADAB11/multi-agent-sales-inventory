@@ -128,6 +128,41 @@ def _query_one(sql: str, params=None) -> dict:
     return rows[0] if rows else {}
 
 
+# ── Source unique des ventes du jour ──────────────────────────────────────────
+#
+# Les ventes du jour vivent dans DEUX tables :
+#   - sales.transactions     : l'historique importé (s'arrête à la dernière
+#                              journée réellement chargée)
+#   - sales.transactions_rt  : ce que le RealtimeSimulator encaisse en direct
+#
+# Le dashboard ne lisait que la première. Comme elle est vide pour aujourd'hui,
+# tout le calcul du jour retombait sur des replis : CA figé sur la dernière
+# journée connue, et — pire — un CA par conseiller *fabriqué* en répartissant
+# le total au prorata des poids du roster. Cette répartition rendait
+# mécaniquement ca/cible identique pour tout le monde (ca_total*w / (obj*w)),
+# d'où les 127,4 % affichés pour les quatre conseillers, avec « 0 vente » à
+# côté puisque le comptage, lui, n'avait pas de repli.
+#
+# Cette CTE réunit les deux sources. Tout ce qui concerne « aujourd'hui » doit
+# passer par elle, sinon l'écran redevient incohérent avec le ticker temps réel.
+# Elle attend le store_id DEUX fois en paramètre.
+_VENTES_JOUR = """
+    WITH ventes_jour AS (
+        SELECT agent_id::text AS agent_id, sku::text AS sku,
+               lig_ttc, quantity AS units, heure, transaction_date AS ts,
+               NULL::text AS des_produit
+        FROM sales.transactions
+        WHERE store_id = %s AND date_only = CURRENT_DATE AND lig_ttc > 0
+        UNION ALL
+        SELECT agent_id::text, cod_prod::text,
+               lig_ttc, qte_produit AS units, heure, date_vente AS ts,
+               des_produit
+        FROM sales.transactions_rt
+        WHERE store_id = %s AND date_only = CURRENT_DATE AND lig_ttc > 0
+    )
+"""
+
+
 # ── Service ───────────────────────────────────────────────────────────────────
 
 class JsonDataService:
@@ -184,135 +219,131 @@ class JsonDataService:
     # ── CA ────────────────────────────────────────────────────────────────────
 
     def get_nb_transactions(self) -> int:
-        """Nombre de transactions du jour depuis PostgreSQL."""
-        try:
-            row = _query_one(
-                "SELECT COUNT(*) AS nb FROM sales.transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
-                (self._cd,),
-            )
-            nb = int(row.get("nb", 0))
-            if nb > 0:
-                return nb
-        except Exception:
-            pass
-        # Fallback: depuis MAX(date_only)
-        try:
-            row = _query_one(
-                """SELECT COUNT(*) AS nb FROM sales.transactions 
-                   WHERE store_id=%s AND date_only=(SELECT MAX(date_only) FROM sales.transactions WHERE store_id=%s)
-                   AND lig_ttc>0""",
-                (self._cd, self._cd),
-            )
-            return int(row.get("nb", 0))
-        except Exception:
-            return 0
+        """Nombre de ventes du jour — historique + temps réel."""
+        row = _query_one(
+            _VENTES_JOUR + "SELECT COUNT(*) AS nb FROM ventes_jour",
+            (self._cd, self._cd),
+        )
+        return int(row.get("nb", 0) or 0)
 
     def get_ca_total(self) -> float:
-        """CA du jour depuis PostgreSQL. Fallback sur dernier jour disponible si aujourd'hui vide."""
-        row = _query_one("""
-            SELECT COALESCE(SUM(lig_ttc), 0) AS ca
-            FROM sales.transactions
-            WHERE store_id = %s AND date_only = CURRENT_DATE AND lig_ttc > 0
-        """, (self._cd,))
-        ca = float(row.get("ca", 0))
+        """
+        CA du jour — historique + ventes temps réel.
 
-        # Fallback si pas de transactions aujourd'hui — dernier jour disponible en DB
-        if ca == 0:
-            try:
-                row2 = _query_one("""
-                    SELECT COALESCE(SUM(lig_ttc), 0) AS ca
-                    FROM sales.transactions
-                    WHERE store_id = %s
-                      AND date_only = (SELECT MAX(date_only) FROM sales.transactions WHERE store_id = %s)
-                      AND lig_ttc > 0
-                """, (self._cd, self._cd))
-                ca = float(row2.get("ca", 0))
-            except Exception:
-                pass
-
-        return max(0.0, ca)
+        Plus de repli sur « la dernière journée disponible » : il affichait le
+        CA d'un autre jour comme si c'était celui d'aujourd'hui, et il ne
+        pouvait de toute façon plus s'accorder avec le total par conseiller ni
+        avec le ticker temps réel. Sans vente, la réponse honnête est 0.
+        """
+        row = _query_one(
+            _VENTES_JOUR + "SELECT COALESCE(SUM(lig_ttc), 0) AS ca FROM ventes_jour",
+            (self._cd, self._cd),
+        )
+        return max(0.0, float(row.get("ca", 0) or 0))
 
     def get_ca_by_advisor(self) -> dict:
-        """CA du jour par agent depuis PostgreSQL."""
-        rows = _query("""
-            SELECT t.agent_id, SUM(t.lig_ttc) AS ca
-            FROM sales.transactions t
-            WHERE t.store_id = %s AND t.date_only = CURRENT_DATE AND t.lig_ttc > 0
-            GROUP BY t.agent_id
-        """, (self._cd,))
+        """
+        CA du jour par conseiller — historique + temps réel.
 
+        Aucun repli fabriqué : le CA d'un conseiller est la somme de SES ventes
+        ou rien. L'ancienne répartition au prorata des poids inventait un
+        chiffre par personne et écrasait toute différence de performance réelle.
+        """
+        rows = _query(
+            _VENTES_JOUR + """
+            SELECT agent_id, SUM(lig_ttc) AS ca
+            FROM ventes_jour GROUP BY agent_id
+            """,
+            (self._cd, self._cd),
+        )
         agent_map = {ag["agent_id"]: ag["id"] for ag in self._agents}
-        result = {}
+        result: dict = {}
         for r in rows:
-            aid    = str(r.get("agent_id", "")).zfill(4)
-            adv_id = agent_map.get(aid, "adv-zi")
-            result[adv_id] = result.get(adv_id, 0.0) + float(r.get("ca", 0))
+            aid = str(r.get("agent_id", "")).zfill(4)
+            adv_id = agent_map.get(aid)
+            if adv_id is None:
+                continue   # agent hors roster : ne pas l'imputer au premier venu
+            result[adv_id] = result.get(adv_id, 0.0) + float(r.get("ca", 0) or 0)
+        return result
 
-        # Fallback si vide
-        if not result:
-            ca_total = self.get_ca_total()
-            for ag in self._agents:
-                result[ag["id"]] = round(ca_total * ag["weight"], 2)
-
+    def get_nb_ventes_by_advisor(self) -> dict:
+        """Nombre de ventes du jour par conseiller — même source que le CA."""
+        rows = _query(
+            _VENTES_JOUR + """
+            SELECT agent_id, COUNT(*) AS nb
+            FROM ventes_jour GROUP BY agent_id
+            """,
+            (self._cd, self._cd),
+        )
+        agent_map = {ag["agent_id"]: ag["id"] for ag in self._agents}
+        result: dict = {}
+        for r in rows:
+            adv_id = agent_map.get(str(r.get("agent_id", "")).zfill(4))
+            if adv_id is None:
+                continue
+            result[adv_id] = result.get(adv_id, 0) + int(r.get("nb", 0) or 0)
         return result
 
     def get_units_by_sku(self) -> dict:
-        rows = _query("""
-            SELECT sku, SUM(quantity) AS units
-            FROM sales.transactions
-            WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
-            GROUP BY sku
-        """, (self._cd,))
-        return {str(r["sku"]): int(r.get("units", 0)) for r in rows}
+        rows = _query(
+            _VENTES_JOUR + "SELECT sku, SUM(units) AS units FROM ventes_jour GROUP BY sku",
+            (self._cd, self._cd),
+        )
+        return {str(r["sku"]): int(r.get("units", 0) or 0) for r in rows}
 
     # ── Transactions ──────────────────────────────────────────────────────────
 
     def get_transactions_today(self) -> list:
-        rows = _query("""
-            SELECT
-                t.sale_id, t.date_vente, t.agent_id,
-                t.sku, t.des_produit,
-                t.lig_ttc, t.quantity, t.heure,
-                a.agent_name, a.agent_surname,
-                p.cod_famille, p.categorie
-            FROM sales.transactions t
-            LEFT JOIN agents   a ON t.agent_id = a.agent_id
-            LEFT JOIN sales.produits p ON t.sku  = p.sku
-            WHERE t.store_id = %s
-              AND t.date_only = CURRENT_DATE
-              AND t.lig_ttc  > 0
-            ORDER BY t.date_vente DESC
-            LIMIT 100
-        """, (self._cd,))
+        """
+        Ventes du jour, la plus récente d'abord — historique + temps réel.
 
-        agent_map = {ag["agent_id"]: ag["id"] for ag in self._agents}
+        Alimente le détail « toutes les ventes effectuées » ouvert depuis le
+        compteur de ventes du dashboard : chaque ligne porte son vendeur, son
+        produit, son montant et son heure.
+        """
+        rows = _query(
+            _VENTES_JOUR + """
+            SELECT v.agent_id, v.sku, v.lig_ttc, v.units, v.heure, v.ts,
+                   COALESCE(v.des_produit, p.nom, v.sku) AS produit,
+                   COALESCE(p.categorie, 'Autre')             AS categorie
+            FROM ventes_jour v
+            LEFT JOIN sales.produits p ON p.sku::text = v.sku
+            ORDER BY v.ts DESC
+            LIMIT 200
+            """,
+            (self._cd, self._cd),
+        )
+
+        # Nom du conseiller : le roster local est la reference (cf. _AGENTS),
+        # la table agents ne porte pas toujours ces vendeurs.
+        by_agent = {ag["agent_id"]: ag for ag in self._agents}
         result = []
         for r in rows:
-            aid    = str(r.get("agent_id", "")).zfill(4)
-            adv_id = agent_map.get(aid, "adv-zi")
-            dt     = r["date_vente"]
+            aid = str(r.get("agent_id", "")).zfill(4)
+            ag  = by_agent.get(aid)
+            ts  = r.get("ts")
             result.append({
-                "sale_id":      r["sale_id"],
-                "advisor_id":   adv_id,
-                "agent_id":     aid,
-                "sku":          str(r.get("sku", "")),
-                "product_name": str(r.get("des_produit", ""))[:50],
-                "category":     str(r.get("categorie", "Autre")),
-                "amount":       float(r.get("lig_ttc", 0)),
-                "units":        int(r.get("qte_produit", 1) or 1),
-                "hour":         int(r.get("heure", 9)),
-                "time":         dt.strftime("%H:%M") if dt else "00:00",
+                "advisor_id":     ag["id"]       if ag else None,
+                "agent_id":       aid,
+                "advisor_name":   ag["name"]     if ag else f"Agent {aid}",
+                "advisor_initials": ag["initials"] if ag else "??",
+                "avatar_color":   ag["avatar_color"] if ag else "#94A3B8",
+                "sku":            str(r.get("sku", "")),
+                "product_name":   str(r.get("produit", ""))[:60],
+                "category":       str(r.get("categorie", "Autre")),
+                "amount":         round(float(r.get("lig_ttc", 0) or 0), 2),
+                "units":          int(r.get("units", 1) or 1),
+                "hour":           int(r.get("heure", 9) or 9),
+                "time":           ts.strftime("%H:%M") if ts else "--:--",
             })
         return result
 
     def get_hourly_ca(self) -> list:
         """CA par heure depuis PostgreSQL."""
-        rows = _query("""
-            SELECT heure, SUM(lig_ttc) AS ca
-            FROM sales.transactions
-            WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
-            GROUP BY heure ORDER BY heure
-        """, (self._cd,))
+        rows = _query(
+            _VENTES_JOUR + "SELECT heure, SUM(lig_ttc) AS ca FROM ventes_jour GROUP BY heure ORDER BY heure",
+            (self._cd, self._cd),
+        )
 
         hourly   = {int(r["heure"]): float(r["ca"]) for r in rows}
         objectif = self._objectif()
@@ -354,29 +385,53 @@ class JsonDataService:
     def get_advisor(self, advisor_id: str) -> Optional[dict]:
         return next((a for a in self.get_advisors() if a["id"] == advisor_id), None)
 
+    def _poids_reels(self) -> dict:
+        """
+        Part de chaque conseiller dans le CA de la boutique, mesurée sur les
+        90 derniers jours.
+
+        Remplace les poids codés en dur de _AGENTS, qui étaient des estimations
+        et servaient à la fois à répartir l'objectif ET (avant) à fabriquer un
+        CA par conseiller. Répartition égale si l'historique est absent — au
+        moins c'est explicite, plutôt qu'une clé arbitraire.
+        """
+        rows = _query("""
+            SELECT agent_id, SUM(lig_ttc) AS ca
+            FROM sales.transactions
+            WHERE store_id=%s AND date_only >= CURRENT_DATE - 90 AND lig_ttc>0
+            GROUP BY agent_id
+        """, (self._cd,))
+        by_agent = {ag["agent_id"]: ag["id"] for ag in self._agents}
+        parts = {}
+        for r in rows:
+            adv_id = by_agent.get(str(r.get("agent_id", "")).zfill(4))
+            if adv_id:
+                parts[adv_id] = parts.get(adv_id, 0.0) + float(r.get("ca", 0) or 0)
+        total = sum(parts.values())
+        if total <= 0:
+            n = max(len(self._agents), 1)
+            return {ag["id"]: 1.0 / n for ag in self._agents}
+        # Les conseillers sans historique ne reçoivent pas une cible nulle
+        # (elle rendrait leur pourcentage infini) : plancher à 5 %.
+        return {
+            ag["id"]: max(parts.get(ag["id"], 0.0) / total, 0.05)
+            for ag in self._agents
+        }
+
     def get_advisors_performance(self) -> list:
         ca_map   = self.get_ca_by_advisor()
         objectif = self._objectif()
+        poids    = self._poids_reels()
         now_h    = datetime.now().hour
 
-        # Nombre de ventes par agent
-        ventes_rows = _query("""
-            SELECT agent_id, COUNT(*) AS nb
-            FROM sales.transactions
-            WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0
-            GROUP BY agent_id
-        """, (self._cd,))
-        agent_map_v = {ag["agent_id"]: ag["id"] for ag in self._agents}
-        nb_ventes_map = {}
-        for r in ventes_rows:
-            aid    = str(r["agent_id"]).zfill(4)
-            adv_id = agent_map_v.get(aid, "adv-zi")
-            nb_ventes_map[adv_id] = int(r["nb"])
+        # Même source que le CA (historique + temps réel), sinon on réaffiche
+        # « 0 vente » à côté d'un CA non nul, comme avant.
+        nb_ventes_map = self.get_nb_ventes_by_advisor()
 
         result = []
         for ag in self._agents:
             ca        = round(ca_map.get(ag["id"], 0.0), 2)
-            ca_target = round(objectif * ag["weight"], 2)
+            ca_target = round(objectif * poids.get(ag["id"], 0.0), 2)
             perf      = round((ca / ca_target * 100), 1) if ca_target else 0
             status    = "top" if perf >= 80 else "ok" if perf >= 50 else "urgent"
 
@@ -535,11 +590,11 @@ class JsonDataService:
             (self._cd,)
         )
 
-        # Nombre de transactions du jour
-        tx_row = _query_one(
-            "SELECT COUNT(*) AS nb FROM sales.transactions WHERE store_id=%s AND date_only=CURRENT_DATE AND lig_ttc>0",
-            (self._cd,)
-        )
+        # Compteur affiché sur la carte CA : doit compter les MÊMES ventes que
+        # le CA lui-même, donc passer par get_nb_transactions() (historique +
+        # temps réel). Il interrogeait encore sales.transactions seul et
+        # affichait 0 à côté d'un CA de plusieurs milliers de dinars.
+        nb_tx = self.get_nb_transactions()
 
         return {
             "store_id":       self._cd,
@@ -550,7 +605,7 @@ class JsonDataService:
             "attainment":     attain,
             "visitors_h":     26,
             "agents_live":    len(self._agents),
-            "nb_transactions": int(tx_row.get("nb", 0)),
+            "nb_transactions": nb_tx,
             "context":        self.get_context(),
             "updated_at":     datetime.utcnow().isoformat(),
             "source":         "postgresql",
