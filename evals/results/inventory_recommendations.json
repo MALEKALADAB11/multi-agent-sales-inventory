@@ -5,13 +5,13 @@
   "success_rate": 1.0,
   "judge_scores_mean": {
     "clarte": 5.0,
-    "coherence": 4.93,
-    "completude": 4.93,
-    "actionabilite": 5.0,
-    "richesse": 4.67,
-    "ancrage": 4.6
+    "coherence": 4.8,
+    "completude": 4.87,
+    "actionabilite": 4.93,
+    "richesse": 4.73,
+    "ancrage": 4.2
   },
-  "judge_global_mean": 4.85,
+  "judge_global_mean": 4.76,
   "fallback_comparison": [
     {
       "case_id": "critical_stockout-02",
@@ -20,7 +20,7 @@
     },
     {
       "case_id": "hold_overstock-01",
-      "llm_richesse": 4,
+      "llm_richesse": 5,
       "rule_based_richesse": 5
     }
   ],
@@ -35,74 +35,24 @@
   },
   "sanity_checks": {
     "richesse": {
-      "status": "ECHEC",
-      "case_id": "critical_stockout-02",
-      "llm_score": 5,
-      "rule_based_score": 5,
-      "discriminates": false,
-      "judges": [
-        "mistral/mistral-large-latest",
-        "groq/llama-3.3-70b-versatile"
-      ]
+      "status": "NON_VERIFIE",
+      "reason": "non demandé (relancer avec --sanity-check)"
     },
     "ancrage": {
-      "status": "OK",
-      "case_id": "critical_stockout-01",
-      "original_score": 5,
-      "corrupted_score": 1,
-      "discriminates": true,
-      "judges": [
-        "mistral/mistral-large-latest",
-        "groq/llama-3.3-70b-versatile"
-      ]
-    },
-    "judge_roster": [
-      "mistral/mistral-large-latest",
-      "groq/openai/gpt-oss-120b",
-      "groq/llama-3.3-70b-versatile",
-      "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
-    ]
+      "status": "NON_VERIFIE",
+      "reason": "non demandé (relancer avec --sanity-check)"
+    }
   },
   "determinism_check": {
-    "status": "OK",
-    "case_id": "critical_stockout-01",
-    "stable": true,
-    "same_judge_each_run": true,
-    "max_spread_by_criterion": {
-      "clarte": 0,
-      "coherence": 0,
-      "completude": 0,
-      "actionabilite": 0,
-      "richesse": 0,
-      "ancrage": 0
-    },
-    "runs": [
-      {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "judge_model": "mistral/mistral-large-latest"
-      },
-      {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    ]
+    "status": "NON_VERIFIE",
+    "reason": "non demandé (relancer avec --determinism-check)"
   },
   "details": [
     {
       "id": "critical_stockout-01",
       "category": "critical_stockout",
       "scenario": "Risque CRITICAL, 2 jours de stock restants, délai de livraison standard de 10 jours — rupture garantie avant l'arrivée d'une commande normale. Doit produire EXPEDITE, pas ORDER.",
-      "recommendation_text": "Expédier en urgence 45 unités aujourd'hui — le stock tombe à zéro dans 2 jours et le délai de livraison standard est de 10 jours. Avec seulement 2 jours de stock restant, le délai moyen de 10 jours ne permettrait pas de couvrir la demande, d'où la nécessité d'une expédition accélérée. Le coût de cette expédition s'élève à 8 500 DT. Aucun signal de hausse de la demande n'a été détecté cette semaine, donc la décision repose uniquement sur le risque critique de rupture.",
+      "recommendation_text": "Expédiez 45 unités aujourd'hui — le stock ne couvre que 2 jours alors que le délai de livraison moyen est de 10 jours. À ce rythme, le magasin serait à sec dans moins de 3 jours, ce qui entraînerait une rupture certaine avant l'arrivée d'une commande standard. L'expédition garantit la disponibilité du produit malgré un coût de transport supplémentaire. Aucun signal de demande promotionnelle ou événementiel n'a été détecté cette semaine, donc la décision repose uniquement sur les niveaux de stock actuels. Le surcoût lié à l'expédition est acceptable au regard du risque de perte de ventes et de mécontentement client.",
       "action": "EXPEDITE",
       "reasoning_source": "llm",
       "error": "",
@@ -112,9 +62,9 @@
         "completude": 5,
         "actionabilite": 5,
         "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, l'action EXPEDITE est clairement justifiée par la comparaison entre les 2 jours de stock restants et le délai de livraison de 10 jours, avec une explication complète et actionnable.",
+        "ancrage": 3,
+        "mean": 4.67,
+        "verdict": "La recommandation est globalement excellente, mais le chiffre 'moins de 3 jours' n'est pas explicitement vérifiable dans le scénario (jours de stock restants = 2). Cela affecte légèrement l'ancrage.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
@@ -122,7 +72,7 @@
       "id": "critical_stockout-02",
       "category": "critical_stockout",
       "scenario": "Risque CRITICAL, 3 jours de stock, coût de réapprovisionnement élevé (>50000 DT) — doit escalader en plus d'EXPEDITE. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
-      "recommendation_text": "Expédier 400 unités immédiatement — le stock tombe à zéro dans 3 jours et le délai de livraison moyen est de 14 jours. Avec seulement 3 jours de stock disponible contre un délai de 14 jours, une commande standard ne serait pas reçue à temps, entraînant une rupture certaine. Le coût de cette expédition s'élève à 62 000 DT, ce qui représente un investissement important pour assurer la disponibilité. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation de la demande reste donc à son niveau de base. Cette décision doit être validée par la direction en raison du coût élevé du réapprovisionnement.",
+      "recommendation_text": "Expeditez une commande de 400 unités aujourd'hui — le stock tombera à zéro dans 3 jours alors que le délai de livraison est de 14 jours. Sans expédition accélérée, une rupture certaine se produira avant l'arrivée d'une commande standard, ce qui contredirait l'objectif de service_level. Le coût associé est de 62 000 DT, mais il est justifié pour éviter toute perte de vente. Aucun signal de demande promotionnelle n'a été détecté cette semaine, donc la décision repose uniquement sur les données de stock. En raison du coût dépassant 50 000 DT, une validation humaine est requise avant l'expédition.",
       "action": "EXPEDITE",
       "reasoning_source": "llm",
       "error": "",
@@ -134,7 +84,7 @@
         "richesse": 5,
         "ancrage": 5,
         "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement relie explicitement les jours de stock (3) au délai de livraison (14) pour justifier l'urgence, et l'escalade est signalée sans ambiguïté.",
+        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés et reliés par un raisonnement clair, avec une justification explicite de l'escalade due au coût de 62 000 DT.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
@@ -142,7 +92,27 @@
       "id": "normal_reorder-01",
       "category": "normal_reorder",
       "scenario": "Risque HIGH, 12 jours de stock, délai de 7 jours — le formulaire d'ORDER standard peut encore arriver à temps.",
-      "recommendation_text": "Commander 80 unités aujourd'hui — le stock est en dessous du point de commande (60 unités) et il reste 12 jours de stock, alors que le délai de livraison moyen est de 7 jours. Avec un délai de livraison de 7 jours, la commande arrivera avant l'épuisement du stock, maintenant ainsi le niveau de service. Aucun signal de hausse de la demande n'a été détecté cette semaine, l'estimation reste stable.",
+      "recommendation_text": "Commander 80 unités aujourd'hui — le stock tombera à zéro dans 5 jours si nous attendons le délai de livraison de 7 jours. Avec un délai de livraison moyen de 7 jours, la commande arrivera juste avant épuisement, évitant ainsi une rupture de stock. Le coût de la commande est de 4 200 DT, incluant 20 unités de stock de sécurité conformément à l'objectif standard. Aucun signal de demande promotionnelle ou événementiel n'a été détecté cette semaine, donc l'estimation de base reste valide.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 3,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 1,
+        "mean": 3.83,
+        "verdict": "Le chiffre '5 jours' (stock tombera à zéro) est incorrect et ne se déduit pas des données du scénario (12 jours de stock restants vs délai de 7 jours). Cela fausse la cohérence et l'ancrage de la recommandation.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "normal_reorder-02",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 9 jours de stock, délai de 6 jours, objectif cost_savings — la quantité devrait tendre vers l'EOQ.",
+      "recommendation_text": "Commander 150 unités aujourd'hui — le stock tombera en dessous du point de commande dans 9 jours et le délai de livraison moyen est de 6 jours. Avec un stock actuel couvrant 9 jours de demande, une commande passée maintenant arrivera dans environ 6 jours, laissant une petite marge de sécurité de 3 jours. Cette commande coûtera 9 800 DT, conforme à l'objectif d'économie. Aucun signal de demande promotionnelle ou événementiel détecté cette semaine ; la prévision de base reste inchangée.",
       "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
@@ -154,15 +124,155 @@
         "richesse": 5,
         "ancrage": 5,
         "mean": 5.0,
-        "verdict": "La recommandation est claire, cohérente et complète, avec une action bien définie (commander 80 unités) et un raisonnement solide liant les chiffres du scénario, tels que les 12 jours de stock restants et le délai de livraison moyen de 7 jours.",
-        "judge_model": "groq/llama-3.3-70b-versatile"
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification détaillée des chiffres et des conséquences.",
+        "judge_model": "mistral/mistral-large-latest"
       }
     },
     {
-      "id": "normal_reorder-02",
-      "category": "normal_reorder",
-      "scenario": "Risque HIGH, 9 jours de stock, délai de 6 jours, objectif cost_savings — la quantité devrait tendre vers l'EOQ.",
-      "recommendation_text": "Commander 150 unités aujourd'hui — le stock tombe à zéro dans 9 jours et le délai de livraison moyen est de 6 jours. Avec un délai de livraison de 6 jours, la commande arrivera avant la rupture, laissant une marge de 3 jours. Le point de commande est de 100 unités, le stock actuel étant inférieur, ce qui justifie la commande. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation reste basée sur le niveau de base.",
+      "id": "monitor_situations-01",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM, stock proche du point de commande mais pas encore franchi — MONITOR, pas ORDER.",
+      "recommendation_text": "Ne pas passer de commande maintenant — le stock couvre 22 jours, bien au-delà du délai de livraison de 8 jours. Il reste au-dessus du point de commande de 40 unités, donc aucune commande n'est déclenchée par la règle de réapprovisionnement. Avec aucun signal de demande détecté cette semaine, la demande restera au niveau de base. Aucune promotion ou événement cette semaine — l'estimation de la demande reste au niveau de base, sans pression à la hausse.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et des chiffres vérifiés.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "monitor_situations-02",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM avec un signal de demande à confiance moyenne — MONITOR mais la rationale doit noter le signal sans le sur-pondérer.",
+      "recommendation_text": "Surveillez le stock — il reste 15 jours de couverture, supérieur au délai de livraison de 9 jours. Le point de commande est fixé à 35 unités et le stock actuel en couvre suffisamment pour éviter une rupture immédiate. Une promotion chez un concurrent proche pourrait augmenter la demande de 12 %, ce qui est déjà intégré dans les 15 jours de couverture. Un stock de sécurité de 12 unités offre une marge supplémentaire contre la variabilité de la demande.",
+      "action": "MONITOR",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et des chiffres vérifiés.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "hold_overstock-01",
+      "category": "hold_overstock",
+      "scenario": "Surstock signalé — HOLD, l'ajout de stock augmenterait les coûts sans bénéfice. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
+      "recommendation_text": "Ne pas passer de commande maintenant — le stock couvre 140 jours, bien au-delà du délai de livraison de 10 jours. Le niveau actuel dépasse largement le point de réapprovisionnement de 25 unités, indiquant un surstock important. Aucun réapprovisionnement n'est nécessaire cette semaine ; maintenir le stock entraîne toutefois un coût de détention lié à l'excès d'inventaire. Aucun signal de demande détecté cette semaine, donc l'estimation de base reste inchangée.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation exemplaire : tous les chiffres cités sont vérifiés dans le scénario, le raisonnement relie explicitement les jours de stock (140) au délai de livraison (10) et au point de réapprovisionnement (25), avec une justification claire du surstock et de son coût.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "hold_overstock-02",
+      "category": "hold_overstock",
+      "scenario": "Risque LOW, demande quasi nulle (sentinelle 999 jours) — HOLD sans surstock formel, cas limite pour la formulation des jours.",
+      "recommendation_text": "Ne pas passer de commande maintenant — le stock disponible représente 999 jours de couverture, bien au-delà du délai de livraison de 12 jours. Avec un point de réapprovisionnement fixé à 10 unités et un stock actuel largement suffisant, aucune rupture ne peut survenir avant plusieurs années. Aucune promotion ou événement cette semaine — l'estimation de la demande reste au niveau de base, sans pression à la hausse. Cette décision évite des coûts de commande inutile, mais immobilise du capital qui pourrait être affecté à d'autres références.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 3,
+        "mean": 4.5,
+        "verdict": "La recommandation est claire et cohérente, mais l'expression 'plusieurs années' n'est pas ancrée dans les données du scénario (999 jours ≠ plusieurs années sans calcul explicite).",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "context_signal_cases-01",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande à haute confiance qui fait basculer la couverture ajustée sous le point de commande — ORDER motivé par le contexte, pas seulement la formule de base.",
+      "recommendation_text": "Commander 95 unités aujourd'hui — le stock tombera à zéro dans 11 jours alors que le délai de livraison est de 9 jours. Avec un délai moyen de 9 jours, la commande arrivera juste avant épuisement du stock, évitant une rupture pendant le festival. Le festival confirmé ce week-end devrait augmenter la demande de 45 %, justifiant cette hausse du point de commande à 65 unités. Cette commande représente un coût de 8 550 DT et augmente légèrement le coût de détention, mais garantit la disponibilité du produit.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés et reliés par un raisonnement clair, expliquant l'impact du festival sur la couverture de stock (11 jours) et la nécessité de commander 95 unités.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "context_signal_cases-02",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande non-nul mais à faible confiance — la décision doit utiliser les métriques ajustées tout en abaissant la confiance de la décision.",
+      "recommendation_text": "Commander 47 unités aujourd'hui — le stock tombera en dessous du point de commande dans 5 jours si aucune commande n'est passée. Avec un délai de livraison moyen de 8 jours, la commande arrivera juste avant que le stock ne devienne critique, laissant une marge de sécurité de 5 jours. Le coût de cette commande s'élève à 3760 DT, conforme au formule ajustée. La rumeur de campagne réseaux sociaux suggère une hausse possible de la demande de +18 %, mais comme la confiance est faible, cet ajustement reste prudent.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 4,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 2,
+        "mean": 4.33,
+        "verdict": "Le chiffre '5 jours' (stock tombant sous le point de commande) n'est pas vérifiable dans le scénario fourni, ce qui affaiblit l'ancrage malgré une recommandation par ailleurs riche et cohérente.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "context_signal_cases-03",
+      "category": "context_signal_cases",
+      "scenario": "Aucun signal détecté (uplift=0, confidence=low) — décision basée uniquement sur les maths de stock, confiance ne doit PAS être abaissée à cause de l'absence de signal.",
+      "recommendation_text": "Expeditez la commande de 70 unités aujourd'hui — le stock tombera à zéro dans 4 jours alors que le délai de livraison moyen est de 5 jours. Avec un risque CRITICAL, attendre une commande standard provoquerait une rupture certaine avant l'arrivée prévue. Aucun signal de demande promotionnelle ou événementiel n'a été détecté cette semaine, donc la décision repose uniquement sur les niveaux de stock actuels. L'opérateur accepte un surcoût d'expédition pour éviter la perte de ventes liée à une rupture de stock.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation exemplaire : tous les chiffres cités sont vérifiés dans le scénario, le raisonnement est clair et relie explicitement les jours de stock restants (4) au délai de livraison (5) pour justifier l'urgence de la commande.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "escalation_cases-01",
+      "category": "escalation_cases",
+      "scenario": "ORDER dont le coût dépasse 50 000 DT — doit escalader au manager en plus de recommander la commande.",
+      "recommendation_text": "Commander 60 unités dès aujourd'hui — le stock actuel couvre 15 jours et le délai de livraison moyen est de 10 jours. Le stock est en dessous du point de commande de 40 unités et le produit a un coût unitaire élevé, ce qui rend indispensable le réapprovisionnement. Aucun signal de demande supplémentaire n'a été détecté cette semaine, la prévision reste donc à son niveau de base. Le coût de 78 000 DT dépasse le seuil habituel, il convient d'en informer la direction.",
       "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
@@ -172,117 +282,37 @@
         "completude": 4,
         "actionabilite": 5,
         "richesse": 4,
-        "ancrage": 3,
-        "mean": 4.33,
-        "verdict": "Le chiffre '0' (stock tombant à zéro) n'est pas explicitement présent dans le scénario, bien qu'il se déduise des 9 jours de stock. Tous les autres chiffres sont correctement ancrés, et la recommandation est claire et actionnable.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "monitor_situations-01",
-      "category": "monitor_situations",
-      "scenario": "Risque MEDIUM, stock proche du point de commande mais pas encore franchi — MONITOR, pas ORDER.",
-      "recommendation_text": "Surveiller le stock sans passer de commande pour le moment, le niveau actuel de 22 jours de stock reste au‑dessus du point de commande de 40 unités. Le délai moyen de réapprovisionnement est de 8 jours, bien inférieur aux 22 jours de stock disponibles, donc aucune rupture n’est attendue immédiatement. Aucun signal de hausse de la demande n’a été détecté cette semaine, l’estimation reste à la demande de base. Le principal compromis est de rester vigilant face à une éventuelle augmentation de la demande, sans coût additionnel aujourd’hui.",
-      "action": "MONITOR",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 4,
         "ancrage": 5,
-        "mean": 4.83,
-        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et des chiffres vérifiés. La richesse est légèrement limitée par l'absence de lien explicite entre le stock actuel (48 unités) et les 22 jours de stock restants.",
+        "mean": 4.67,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une mention explicite du coût et de la nécessité d'escalade au manager.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
     {
-      "id": "monitor_situations-02",
-      "category": "monitor_situations",
-      "scenario": "Risque MEDIUM avec un signal de demande à confiance moyenne — MONITOR mais la rationale doit noter le signal sans le sur-pondérer.",
-      "recommendation_text": "Ne pas commander pour le moment, le stock actuel couvre 15 jours et le point de commande est de 35 unités. Le délai moyen de livraison est de 9 jours, donc le stock disponible dépasse largement ce délai, garantissant la disponibilité des produits même avec la promotion concurrente. Une promotion chez un concurrent pourrait augmenter la demande de 12 % avec une confiance moyenne, mais cela ne suffit pas à réduire le stock sous le point de commande. Aucun besoin d'escalade ou d'action supplémentaire pour le moment.",
-      "action": "MONITOR",
+      "id": "escalation_cases-02",
+      "category": "escalation_cases",
+      "scenario": "Produit en fin de vie (end_of_life) avec risque CRITICAL — doit escalader pour vérifier l'écoulement intentionnel avant de commander.",
+      "recommendation_text": "Expédier 25 unités immédiatement — le stock tombe à zéro dans 3 jours et le délai de livraison moyen est de 12 jours. Avec seulement 3 jours de stock restant, aucune commande standard n’arrivera à temps, il faut donc un envoi accéléré pour éviter la rupture. Aucun signal de demande supplémentaire n’a été détecté cette semaine, l’estimation reste donc à la demande de base. Le produit étant en fin de vie, il faut valider ce réapprovisionnement avec le category manager avant d’engager la commande.",
+      "action": "EXPEDITE",
       "reasoning_source": "llm",
       "error": "",
       "judge": {
         "clarte": 5,
         "coherence": 5,
         "completude": 5,
-        "actionabilite": 5,
-        "richesse": 4,
-        "ancrage": 5,
-        "mean": 4.83,
-        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification détaillée du signal de demande sans surréaction.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "hold_overstock-01",
-      "category": "hold_overstock",
-      "scenario": "Surstock signalé — HOLD, l'ajout de stock augmenterait les coûts sans bénéfice. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
-      "recommendation_text": "Ne pas commander de nouvelles unités — le stock actuel couvre 140 jours, bien au‑delà du délai de livraison moyen de 10 jours. Le niveau de stock de 140 unités dépasse largement le point de réapprovisionnement de 25 unités, ce qui indique un surstock. Aucun signal de hausse de la demande n’a été détecté cette semaine, la confiance étant faible, l’estimation de la demande reste au niveau de base.",
-      "action": "MONITOR",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 4,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 4,
-        "ancrage": 2,
-        "mean": 4.17,
-        "verdict": "Le chiffre '140 unités' est incorrect (le stock actuel est de 300 unités), ce qui affecte la crédibilité de la recommandation malgré sa clarté et sa complétude.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "hold_overstock-02",
-      "category": "hold_overstock",
-      "scenario": "Risque LOW, demande quasi nulle (sentinelle 999 jours) — HOLD sans surstock formel, cas limite pour la formulation des jours.",
-      "recommendation_text": "Ne pas commander de nouvelles unités — le stock actuel couvre 999 jours, bien au‑delà du délai de livraison moyen de 12 jours. Le niveau de risque est faible et le point de réapprovisionnement de 10 unités n’est pas atteint, donc aucune commande n’est nécessaire. Aucun signal de hausse de la demande n’a été détecté cette semaine, l’estimation reste donc à la demande de base.",
-      "action": "MONITOR",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 4,
-        "ancrage": 5,
-        "mean": 4.83,
-        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et une action concrète (HOLD). La richesse est légèrement limitée par l'absence de mise en perspective plus poussée des 999 jours (ex: 'couverture quasi illimitée'), mais reste très satisfaisante.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "context_signal_cases-01",
-      "category": "context_signal_cases",
-      "scenario": "Signal de demande à haute confiance qui fait basculer la couverture ajustée sous le point de commande — ORDER motivé par le contexte, pas seulement la formule de base.",
-      "recommendation_text": "Commander 95 unités dès aujourd'hui — le stock disponible ne couvre que 11 jours et le délai de livraison moyen est de 9 jours. Avec un point de commande révisé à 65 unités, le niveau actuel est bien en dessous, ce qui risque de provoquer une rupture pendant le festival prévu ce week-end. La commande arrivera dans environ 9 jours, juste avant l'épuisement du stock, assurant la disponibilité des produits pendant l'événement. Le signal d'événement local indique une hausse de la demande de 45 % avec une confiance élevée, justifiant l'augmentation du volume commandé.",
-      "action": "ORDER",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
+        "actionabilite": 4,
         "richesse": 5,
         "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés et reliés entre eux par un raisonnement clair, expliquant l'impact du festival sur la couverture de stock (11 jours) et la nécessité de commander 95 unités.",
-        "judge_model": "mistral/mistral-large-latest"
+        "mean": 4.83,
+        "verdict": "La recommandation est claire, cohérente et riche en informations, avec des chiffres vérifiés comme les 25 unités à expédier, les 3 jours de stock restant et les 12 jours de délai de livraison moyen, mais l'actionabilite est légèrement réduite car elle nécessite une validation supplémentaire avec le category manager avant d'engager la commande.",
+        "judge_model": "groq/llama-3.3-70b-versatile"
       }
     },
     {
-      "id": "context_signal_cases-02",
-      "category": "context_signal_cases",
-      "scenario": "Signal de demande non-nul mais à faible confiance — la décision doit utiliser les métriques ajustées tout en abaissant la confiance de la décision.",
-      "recommendation_text": "Commander 47 unités cette semaine — le stock actuel ne couvre que 13 jours et le point de commande est de 40 unités. Le délai moyen de livraison est de 8 jours, la commande arrivera avant l'épuisement du stock, assurant ainsi la continuité des ventes. Une rumeur de campagne sur les réseaux sociaux suggère une hausse de la demande de +18 % mais la confiance est faible, ce qui justifie de rester prudent. Ce réapprovisionnement entraîne un coût supplémentaire de 560 DT, mais évite le risque de rupture de stock.",
+      "id": "edge_cases-01",
+      "category": "edge_cases",
+      "scenario": "Conflit d'objectif (objectif_conflict=true) avec coût élevé — vaut une escalade et une phrase dédiée, sans changer l'action.",
+      "recommendation_text": "Commander 200 unités dès aujourd'hui — le stock tombe à zéro dans 10 jours et le délai de livraison moyen est de 9 jours. Le point de commande est de 120 unités, donc le niveau actuel est insuffisant, et une commande standard arrivera juste à temps pour éviter la rupture. Le coût de cette commande s'élève à 55 000 DT, ce qui dépasse le budget prévu pour des économies de coûts. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation de la demande reste donc à son niveau de base. Cette situation doit être portée à l'attention du responsable en raison du conflit d'objectif et du coût élevé du réapprovisionnement.",
       "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
@@ -294,87 +324,7 @@
         "richesse": 5,
         "ancrage": 4,
         "mean": 4.83,
-        "verdict": "La recommandation est claire, cohérente et riche en informations, mais le chiffre de 560 DT n'est pas explicitement justifié dans le scénario fourni, ce qui affecte légèrement l'ancrage.",
-        "judge_model": "groq/llama-3.3-70b-versatile"
-      }
-    },
-    {
-      "id": "context_signal_cases-03",
-      "category": "context_signal_cases",
-      "scenario": "Aucun signal détecté (uplift=0, confidence=low) — décision basée uniquement sur les maths de stock, confiance ne doit PAS être abaissée à cause de l'absence de signal.",
-      "recommendation_text": "Expédier 70 unités immédiatement — le stock tombe à zéro dans 4 jours et le délai de livraison moyen est de 5 jours. Avec seulement 4 jours de stock disponible, une commande standard arriverait trop tard, entraînant une rupture de stock. L'expédition accélérée garantit la disponibilité avant l'épuisement. Aucun signal de hausse de la demande n'a été détecté cette semaine, l'estimation reste à son niveau de base.",
-      "action": "EXPEDITE",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés et reliés logiquement, l'action est claire et justifiée par les données du scénario (jours de stock, délai de livraison).",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "escalation_cases-01",
-      "category": "escalation_cases",
-      "scenario": "ORDER dont le coût dépasse 50 000 DT — doit escalader au manager en plus de recommander la commande.",
-      "recommendation_text": "Commander 60 unités aujourd'hui — le stock actuel ne couvre que 15 jours alors que le délai de livraison moyen est de 10 jours. Avec un point de commande de 40 unités, le niveau actuel est en dessous, et sans réapprovisionnement le stock atteindra zéro avant la prochaine livraison, entraînant une rupture. Aucun signal de demande supplémentaire n'a été détecté cette semaine, la prévision reste donc à son niveau de base. Le coût de cette commande s'élève à 78 000 DT, il convient de le faire valider par la direction.",
-      "action": "ORDER",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement est clair, complet et actionnable, avec une mention explicite de la validation manager requise pour un coût de 78 000 DT.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "escalation_cases-02",
-      "category": "escalation_cases",
-      "scenario": "Produit en fin de vie (end_of_life) avec risque CRITICAL — doit escalader pour vérifier l'écoulement intentionnel avant de commander.",
-      "recommendation_text": "Expédier 25 unités immédiatement — le stock tombe à zéro dans 3 jours et le délai de livraison moyen est de 12 jours. Avec un délai de 12 jours, même une commande standard n’arriverait pas à temps, entraînant une rupture de stock. Le coût d’expédition supplémentaire s’élèvera à 1 800 DT, mais garantit la disponibilité du produit. Aucun signal de demande supplémentaire n’a été détecté cette semaine, l’estimation reste donc à la demande de base. Veuillez confirmer avec le category manager, le produit étant en fin de vie, avant de valider cette commande.",
-      "action": "EXPEDITE",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "La recommandation est claire, cohérente et complète, avec une richesse élevée dans l'explication des conséquences de la commande, notamment avec des chiffres tels que 25 unités, 3 jours de stock restant et 12 jours de délai de livraison, qui sont tous vérifiés dans le scénario.",
-        "judge_model": "groq/llama-3.3-70b-versatile"
-      }
-    },
-    {
-      "id": "edge_cases-01",
-      "category": "edge_cases",
-      "scenario": "Conflit d'objectif (objectif_conflict=true) avec coût élevé — vaut une escalade et une phrase dédiée, sans changer l'action.",
-      "recommendation_text": "Commander 200 unités dès aujourd'hui — le stock ne dure que 10 jours alors que le délai de livraison moyen est de 9 jours. Le stock actuel est inférieur au point de commande de 120 unités, ce qui entraînerait une rupture avant l'arrivée du réapprovisionnement. Le fournisseur disponible facture un tarif express de 55 000 DT, ce qui dépasse la cible de réduction des coûts. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation de la demande reste donc à son niveau de base. En raison du conflit avec l'objectif de cost_savings, une validation du manager est requise.",
-      "action": "ORDER",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement lie explicitement les jours de stock, le délai de livraison et le coût, et le conflit d'objectif est signalé distinctement.",
+        "verdict": "La recommandation est globalement bien ancrée dans le scénario, mais la mention 'le stock tombe à zéro dans 10 jours' est une approximation (le stock actuel est de 110 unités pour un point de commande de 120, donc le risque est élevé mais pas une rupture immédiate à 0). Tous les autres chiffres sont vérifiés.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
@@ -382,22 +332,22 @@
       "id": "edge_cases-02",
       "category": "edge_cases",
       "scenario": "MOQ contraignant : la quantité formule est inférieure au MOQ, l'analyste suggère de négocier — la quantité commandée doit être le MOQ, avec la déviation notée.",
-      "recommendation_text": "Commander 50 unités aujourd'hui — le stock actuel ne couvre que 11 jours et le point de commande est à 25 unités. Le fournisseur impose un MOQ de 50 unités, ce qui dépasse la quantité calculée de 12, mais c’est le minimum possible. Avec un délai moyen de livraison de 7 jours, la commande arrivera avant que le stock n’atteigne zéro. Aucun signal de demande supplémentaire n’a été détecté cette semaine, donc l’estimation de la demande reste au niveau de base. Il serait judicieux de négocier un MOQ plus bas avec le fournisseur pour éviter un surstock.",
+      "recommendation_text": "Commander 50 unités aujourd'hui — le stock est de 11 jours et le point de commande est à 25 unités, donc le stock actuel est insuffisant. Le délai moyen de livraison est de 7 jours, ce qui permet à la commande d'arriver avant la rupture, mais la quantité minimale du fournisseur est de 50 unités, bien supérieure aux 12 unités calculées. Le coût de cette commande est de 900 DT, ce qui reste raisonnable. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation de la demande reste au niveau de base.",
       "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
       "judge": {
         "clarte": 5,
         "coherence": 5,
-        "completude": 5,
+        "completude": 4,
         "actionabilite": 5,
-        "richesse": 5,
+        "richesse": 4,
         "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement est clair et relie explicitement les contraintes (MOQ) aux conséquences (risque de surstock), tout en proposant une action concrète (négocier le MOQ).",
+        "mean": 4.67,
+        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario. La justification de la déviation (MOQ de 50 vs quantité formule de 12) est présente, mais l'opportunité de négocier le MOQ pour les prochaines commandes n'est pas explicitement mentionnée, ce qui limite légèrement la complétude.",
         "judge_model": "mistral/mistral-large-latest"
       }
     }
   ],
-  "run_at": "2026-07-28T12:25:45"
+  "run_at": "2026-07-30T15:56:22"
 }

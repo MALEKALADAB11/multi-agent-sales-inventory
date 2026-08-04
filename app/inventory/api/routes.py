@@ -1106,6 +1106,21 @@ def _attach_inventory_judge(result: Dict[str, Any], item: Dict[str, Any]) -> Non
         item["judge"] = None
 
 
+#: Vocabulaire DB (contrainte alerts_alert_type_check) -> vocabulaire front.
+#: Une seule table, partagée par _build_alerts() (instantané + WS) et
+#: GET /alerts/{store_id} : les deux chemins alimentent le même panneau
+#: d'alertes, ils doivent parler la même langue.
+_ALERT_TYPE_TO_FRONT = {
+    # valeurs DB courantes
+    "stockout_risk":  "rupture",
+    "below_minimum":  "redistribution",
+    "overstock":      "overstock",
+    # valeurs héritées, conservées pour les lignes déjà en base
+    "rupture":        "rupture",
+    "redistribution": "redistribution",
+}
+
+
 def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dict[str, Any]]:
     """
     Build alert list from analyzed items.
@@ -1181,6 +1196,8 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
             "_title":  title,
             "_time":   item["lastUpdated"],
             "_days":   days,   # used for sort: highs ordered by least runway first
+            "_name":   name,
+            "_category": item.get("category") or "",
         })
 
     if not candidates:
@@ -1255,8 +1272,19 @@ def _build_alerts(items: List[Dict[str, Any]], store_id: str = None) -> List[Dic
         alerts.append({
             "id":      db_id or fake_id,
             "sku":     c["sku"],
-            "type":    c["alert_type"],
+            # Vocabulaire front, comme GET /alerts/{store_id} : sans cette
+            # traduction, le panneau d'alertes de l'instantané recevait les
+            # valeurs DB ('below_minimum'…) qu'il ne sait pas interpréter et
+            # retombait sur ses libellés génériques (« Stock faible » /
+            # « À risque ») pour toutes les alertes.
+            "type":    _ALERT_TYPE_TO_FRONT.get(c["alert_type"], c["alert_type"]),
             "urgency": c["severity"],
+            # Le nom et la catégorie doivent voyager avec l'alerte : le front
+            # ne peut pas toujours les retrouver dans items() (pagination,
+            # filtre de risque), et sans eux la carte s'affiche sans produit
+            # et le bouton « Recommandation » ne sait pas quoi ouvrir.
+            "name":     c["_name"],
+            "category": c["_category"],
             "title":   c["_title"],
             "message": c["recommended_action"],
             "action":  None,
@@ -1986,15 +2014,9 @@ async def get_store_alerts(
             # Normalize: frontend expects 'name', repo returns 'product_name'
             a['name'] = a.get('product_name') or a.get('sku', '')
             # Map DB alert_type to frontend type vocab
-            a['type'] = {
-                # current DB values (alerts_alert_type_check constraint)
-                'stockout_risk':  'rupture',
-                'below_minimum':  'redistribution',
-                'overstock':      'overstock',
-                # legacy values kept for any pre-existing rows in the DB
-                'rupture':        'rupture',
-                'redistribution': 'redistribution',
-            }.get(a.get('alert_type', ''), a.get('alert_type', ''))
+            a['type'] = _ALERT_TYPE_TO_FRONT.get(
+                a.get('alert_type', ''), a.get('alert_type', '')
+            )
         return {
             "store_id": store_id,
             "alerts":   alerts,

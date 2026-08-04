@@ -49,7 +49,12 @@ import logging
 import threading
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+    as_completed,
+    Future,
+)
 
 from app.core.shutdown import is_shutting_down, is_shutdown_error
 
@@ -96,7 +101,10 @@ def _get_bg_loop() -> "asyncio.AbstractEventLoop":
         return loop
 
 
-def _await_sync(coro, timeout: float = 120.0):
+_DECISION_TIMEOUT_S = 120.0
+
+
+def _await_sync(coro, timeout: float = _DECISION_TIMEOUT_S):
     """Exécute une coroutine sur la boucle de fond partagée et rend son résultat."""
     return asyncio.run_coroutine_threadsafe(coro, _get_bg_loop()).result(timeout)
 
@@ -551,11 +559,24 @@ class InventoryOrchestrator:
                     "confidence": decision.get("confidence"),
                     "escalate":   decision.get("escalate_to_human"),
                 })
-        except Exception as exc:
-            logger.error("[Orchestrator] decision_agent failed SKU=%s: %s", sku, exc)
-            result["decision_result"] = {"sku": sku, "store_id": store_id, "error": str(exc)}
+        except FutureTimeoutError:
+            # `.result(timeout)` lève un TimeoutError dont str() est vide : sans
+            # message explicite le log se terminait sur « : » et ne disait rien.
+            msg = f"timeout after {_DECISION_TIMEOUT_S:.0f}s"
+            logger.error("[Orchestrator] decision_agent %s SKU=%s", msg, sku)
+            result["decision_result"] = {"sku": sku, "store_id": store_id, "error": msg}
             if decision_span:
-                decision_span.end(error=str(exc))
+                decision_span.end(error=msg)
+        except Exception as exc:
+            # Le type est indispensable : plusieurs exceptions d'infrastructure
+            # (Timeout, CancelledError) ont un str() vide.
+            msg = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            logger.error(
+                "[Orchestrator] decision_agent failed SKU=%s: %s", sku, msg, exc_info=True
+            )
+            result["decision_result"] = {"sku": sku, "store_id": store_id, "error": msg}
+            if decision_span:
+                decision_span.end(error=msg)
 
         # ── Redis Alert Bus: dispatch alertes CRITICAL/EXPEDITE ───────────────
         if _REDIS_ALERTS:

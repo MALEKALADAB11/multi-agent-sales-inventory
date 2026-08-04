@@ -41,4 +41,4 @@ Les cinq boutiques où il perd le plus — à surveiller, le repli statistique r
 | `S20` | 549.6 | 25.46 | 28.63 | -3.17 |
 | `S47` | 1642.4 | 22.73 | 26.22 | -3.49 |
 
-*Backtest exécuté en 906.3 s.*
+*Backtest exécuté en 954.2 s.*

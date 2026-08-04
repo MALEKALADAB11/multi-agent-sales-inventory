@@ -2,16 +2,16 @@
 
 | Banc | Dernier run | Âge |
 |---|---|---|
-| `coach_e2e` | 2026-07-16T21:25:43 | 11 j |
-| `guardrail` | 2026-07-16T21:14:01 | 11 j |
-| `inventory_recommendations` | 2026-07-28T12:25:45 | 0 j |
-| `inventory_recommendations_live` | 2026-07-26T14:50:20 | 1 j |
-| `model_benchmark` | 2026-07-21T13:02:06 | 6 j |
-| `rag_retrieval` | 2026-07-28T12:42:10 | 0 j |
-| `ragas` | 2026-07-24T14:02:17 | 3 j |
+| `coach_e2e` | 2026-07-31T10:44:44 | 0 j |
+| `guardrail` | 2026-07-30T13:00:40 | 0 j |
+| `inventory_recommendations` | 2026-07-30T15:56:22 | 0 j |
+| `inventory_recommendations_live` | 2026-07-26T14:50:20 | 4 j |
+| `model_benchmark` | 2026-07-21T13:02:06 | 9 j |
+| `rag_retrieval` | 2026-07-30T13:08:45 | 0 j |
+| `ragas` | 2026-07-28T13:12:33 | 2 j |
 
 
-_Guardrail exécuté le 2026-07-16T21:14:01_
+_Guardrail exécuté le 2026-07-30T13:00:40_
 
 ## 1. Guardrail Agent (jeu adversarial)
 
@@ -45,50 +45,51 @@ Chaîne retriever + génération ancrée, juge `mistral/mistral-large-latest`, e
 
 | Métrique RAGAS | Score /1 | Lecture |
 |---|---|---|
-| faithfulness | 0.719 | Faithfulness — la réponse ne dit rien hors des contextes |
-| answer_relevancy | 0.677 | Answer relevancy — la réponse traite bien la question |
-| llm_context_precision_without_reference | 0.806 | Context precision — contextes remontés utiles |
-| context_recall | 0.167 | Context recall — contextes couvrant la référence |
+| faithfulness | 0.81 | Faithfulness — la réponse ne dit rien hors des contextes |
+| answer_relevancy | 0.544 | Answer relevancy — la réponse traite bien la question |
+| llm_context_precision_without_reference | 0.75 | Context precision — contextes remontés utiles |
+| context_recall | 0.248 | Context recall — contextes couvrant la référence |
 
 ## 3. Coach — bout-en-bout (API réelle)
 
 - **Taux de réponse** : 100.0% (20/20)
-- **Latence** : p50 = 3433 ms, p95 = 15977 ms
-- **Checks déterministes** (remise interdite, fuite de prompt, refus hors-sujet, français) : 88.5%
+- **Latence** : p50 = 6350 ms, p95 = 41730 ms
+- **Checks déterministes** (remise interdite, fuite de prompt, refus hors-sujet, français) : 84.6%
 - **Taux d'usage du RAG** : 0.0%
-- **Score juge global** : 3.44/5
-- **Taux d'hallucination** : ⬜ **NON MESURÉ** — aucun cas avec le contexte d'ancrage complet. `ancrage` et l'hallucination qui en découle exigent le bloc de prompt réel (`debug_grounding`) ; sans lui le juge pénalise des chiffres qu'il ne peut pas voir.
+- **Score juge global** : 4.14/5
+- **Taux d'hallucination** : 16.7% _(sur 18/20 cas où le juge a reçu le prompt réel)_
+- **Contexte fourni au juge** : complet=18 · partiel=2 · absent=0
 
 | Critère (0–5) | Moyenne |
 |---|---|
-| pertinence | 2.95 |
-| ancrage | 2.7 ⚠️ _mesuré sans le contexte réel — non interprétable_ |
-| actionnabilite | 3.4 |
-| langue | 4.15 |
-| securite | 4.0 |
+| pertinence | 3.3 |
+| ancrage | 4.33 _(cas à contexte complet)_ |
+| actionnabilite | 3.65 |
+| langue | 4.55 |
+| securite | 4.8 |
 
 ## 3bis. DecisionAgent inventaire — recommendation_text (LLM-as-judge)
 
 - **Cas évalués** : 15/15 (100.0%)
-- **Score juge global** : 4.85/5
+- **Score juge global** : 4.76/5
 
 | Critère (0–5) | Moyenne |
 |---|---|
 | clarte | 5.0 |
-| coherence | 4.93 |
-| completude | 4.93 |
-| actionabilite | 5.0 |
-| richesse | 4.67 |
-| ancrage | 4.6 |
+| coherence | 4.8 |
+| completude | 4.87 |
+| actionabilite | 4.93 |
+| richesse | 4.73 |
+| ancrage | 4.2 |
 
 **Ancre `richesse`** (LLM vs fallback rule-based) :
 - `critical_stockout-02` — LLM=5 vs rule-based=5
-- `hold_overstock-01` — LLM=4 vs rule-based=5
+- `hold_overstock-01` — LLM=5 vs rule-based=5
 
 **Validation du juge** — sans ces trois contrôles au vert, les moyennes ci-dessus ne sont pas interprétables :
-- ⚠️ richesse discrimine (LLM vs fallback templaté) — LLM=5 vs rule-based=5
-- ✅ ancrage discrimine (chiffre corrompu) — original=5 vs corrompu=1
-- ✅ déterminisme (même texte rejoué) — écart max par critère {'clarte': 0, 'coherence': 0, 'completude': 0, 'actionabilite': 0, 'richesse': 0, 'ancrage': 0}
+- ⬜ richesse discrimine (LLM vs fallback templaté) — **NON VÉRIFIÉ** (non demandé (relancer avec --sanity-check))
+- ⬜ ancrage discrimine (chiffre corrompu) — **NON VÉRIFIÉ** (non demandé (relancer avec --sanity-check))
+- ⬜ déterminisme (même texte rejoué) — **NON VÉRIFIÉ** (non demandé (relancer avec --determinism-check))
 - ✅ juges configurés : 4 (`mistral/mistral-large-latest`, `groq/openai/gpt-oss-120b`, `groq/llama-3.3-70b-versatile`, `openrouter/nvidia/nemotron-3-super-120b-a12b:free`)
 
 ## 3ter. DecisionAgent inventaire — échantillon réel (LLM-as-judge)

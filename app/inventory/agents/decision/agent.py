@@ -17,6 +17,7 @@ Writes to:
   inventory.agent_runs       — own row opened/closed around the graph run
 """
 
+import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated, Any, Dict, Optional, Sequence, TypedDict
@@ -177,6 +178,44 @@ class InventoryDecisionAgent:
                 "error": "analysis_report is required but was empty",
             }
 
+        # Seul l'appel aux produits complémentaires est réellement asynchrone
+        # (pool asyncpg). Tout le reste — invoke() du graphe, donc l'appel LLM
+        # HTTP synchrone, et les écritures psycopg2 — bloque le thread appelant.
+        complementary_products = await self._get_complementary_products(sku, store_id)
+
+        # ...et ce thread appelant est la boucle d'événements de fond partagée
+        # par TOUS les SKUs du lot (orchestrator._await_sync). Exécuté ici tel
+        # quel, le bloc bloquant sérialisait les 8 workers derrière une seule
+        # boucle : les derniers SKUs du lot dépassaient le timeout de 120s de
+        # `.result()` et remontaient un TimeoutError au message vide
+        # (« decision_agent failed SKU=… : » sans rien après les deux-points).
+        # to_thread rend la boucle à ses coroutines et laisse les appels LLM
+        # partir vraiment en parallèle.
+        return await asyncio.to_thread(
+            self._run_blocking,
+            sku=sku,
+            store_id=store_id,
+            business_objective=business_objective,
+            analysis_report=analysis_report,
+            context_report=context_report,
+            complementary_products=complementary_products,
+            agent_run_id=agent_run_id,
+            lf_span=lf_span,
+        )
+
+    def _run_blocking(
+        self,
+        *,
+        sku:                    str,
+        store_id:               str,
+        business_objective:     str,
+        analysis_report:        Dict[str, Any],
+        context_report:         Dict[str, Any],
+        complementary_products: list,
+        agent_run_id:           Optional[str],
+        lf_span,
+    ) -> Dict[str, Any]:
+        """Partie synchrone de run() — jamais appelée sur une boucle d'événements."""
         # ── Open own agent_run row ────────────────────────────────────────
         own_run_id: Optional[str] = None
         if _DB_AVAILABLE:
@@ -193,9 +232,6 @@ class InventoryDecisionAgent:
             ctx = context_report if (context_report and "error" not in context_report) else {}
 
             adjusted_metrics = self._compute_adjusted_metrics(analysis_report, ctx)
-
-            # Fetch complementary products for cross-sell recommendations
-            complementary_products = await self._get_complementary_products(sku, store_id)
 
             _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
             result = self.graph.invoke(
