@@ -9,7 +9,7 @@
       "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     },
     {
       "title": "Pack Postpayé été — 2 mois offerts",
@@ -19,7 +19,7 @@
       "details": "Valable jusqu'au 2026-08-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     },
     {
       "title": "Rentrée anticipée : forfait étudiant -15%",
@@ -29,7 +29,7 @@
       "details": "Valable jusqu'au 2026-09-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     }
   ],
   "active": [
@@ -41,7 +41,7 @@
       "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     },
     {
       "title": "Pack Postpayé été — 2 mois offerts",
@@ -51,7 +51,7 @@
       "details": "Valable jusqu'au 2026-08-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     },
     {
       "title": "Rentrée anticipée : forfait étudiant -15%",
@@ -61,7 +61,7 @@
       "details": "Valable jusqu'au 2026-09-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     }
   ],
   "promotions": [
@@ -73,7 +73,7 @@
       "details": "Valable jusqu'au 2026-08-31",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     },
     {
       "title": "Pack Postpayé été — 2 mois offerts",
@@ -83,7 +83,7 @@
       "details": "Valable jusqu'au 2026-08-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     },
     {
       "title": "Rentrée anticipée : forfait étudiant -15%",
@@ -93,14 +93,14 @@
       "details": "Valable jusqu'au 2026-09-15",
       "is_active": true,
       "scraped": false,
-      "date": "2026-08-03T09:34:22.213133"
+      "date": "2026-08-03T12:53:31.970879"
     }
   ],
   "new_offers": [],
   "tarifs": [],
   "source": "fallback (aucune offre extraite)",
-  "fetched_at": "2026-08-03T09:34:22.220693",
+  "fetched_at": "2026-08-03T12:53:31.981166",
   "degraded": true,
   "degraded_reason": "aucune offre extraite",
-  "fail_streak": 2
+  "fail_streak": 5
 }

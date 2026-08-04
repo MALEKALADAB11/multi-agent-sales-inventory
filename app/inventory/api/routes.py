@@ -63,9 +63,9 @@ def _json_safe(obj: Any) -> Any:
 # unrelated WebSocket handshakes time out too. Capping bounds worst-case
 # latency regardless of store size. Raise this (or pass force_refresh with a
 # dedicated "full" endpoint) if you need the complete, uncapped view.
-DEMO_SKU_CAP = int(os.getenv("INVENTORY_SKU_CAP", "80"))
+DEMO_SKU_CAP = int(os.getenv("INVENTORY_SKU_CAP", "100"))
 
-# Per-store pipeline lock — only one pipeline run per store at a time.
+# Per-store pipeline lock — only one pipeline run per store at a time. 
 # Concurrent callers (WS + HTTP poll) block here and share the result.
 import threading
 from app.core.config import DEFAULT_STORE_ID
