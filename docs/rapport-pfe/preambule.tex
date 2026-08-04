@@ -1,0 +1,44 @@
+%==========================================================%
+% preambule.tex — compléments au template TEK-UP            %
+%                                                           %
+% Le template charge déjà : xcolor[table], array, longtable, %
+% multirow, enumitem, float, graphicx, caption, minitoc,     %
+% biblatex, babel[french].                                   %
+% Ce fichier ajoute ce qui manque aux chapitres 3 à 6.       %
+%==========================================================%
+
+%=== Mathématiques ========================================%
+% Requis par le chapitre 4 (formules de stock, lissage
+% exponentiel) et le chapitre 5 (WAPE, MASE) :
+% environnements align, split, equation ; \sqrt, \Phi, \sum.
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+%=== Type de colonne des tableaux =========================%
+% Colonne de largeur fixe alignée à gauche, utilisée par
+% tous les longtable des chapitres.
+% (Le template définit déjà L, R et C sans argument.)
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+%=== Bibliographie ========================================%
+% Le template pointe vers biblio.bib ; le présent rapport
+% utilise references.bib (44 entrées, style IEEE).
+\addbibresource{references.bib}
+
+%=== Réglages de flottants ================================%
+% Les chapitres 3 à 6 contiennent beaucoup de figures pleine
+% largeur ; on assouplit les seuils de placement.
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.75}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{5}
+
+%=== Césure ===============================================%
+% Le template désactive la césure (package hyphenat[none]).
+% Certains tableaux contiennent des termes longs : on
+% autorise un léger débordement plutôt qu'une ligne cassée.
+\tolerance=2000
+\emergencystretch=2em

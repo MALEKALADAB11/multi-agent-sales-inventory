@@ -1,0 +1,39 @@
+\chapter*{Introduction générale}
+\addcontentsline{toc}{chapter}{Introduction générale}
+\markboth{Introduction générale}{}
+
+Le commerce de détail des télécommunications se joue au comptoir, dans un échange de quelques minutes entre un conseiller et un client. C'est là que se décide la vente, et c'est là que l'information manque. Le conseiller ne sait pas si la référence qu'il s'apprête à proposer est encore en stock, ni si l'argument qu'il va employer est celui qui convertit le mieux ce type de client, ni où en est sa boutique par rapport à son objectif du jour. Il décide vite, avec ce qu'il a en tête.
+
+Le responsable du point de vente rencontre la difficulté symétrique. Il dispose de rapports, mais ils décrivent le passé. Il découvre une rupture de stock lorsqu'elle est constatée, rarement avant qu'elle ne survienne, et lorsqu'il déclenche un réapprovisionnement, le délai fournisseur a déjà consommé la marge de manœuvre. Les deux problèmes — le conseil de vente et la disponibilité produit — sont en réalité le même problème vu de deux endroits différents ; les outils qui les traitent, eux, sont distincts et ne se parlent pas.
+
+\section*{Problématique}
+
+Trois limites caractérisent les dispositifs existants. La première est le \textbf{cloisonnement} : les systèmes de pilotage commercial ignorent l'état du stock, et les outils de gestion de stock ignorent le potentiel commercial ; il en résulte des recommandations de vente portant sur des produits indisponibles, et des réapprovisionnements décidés sans considération de la demande à venir. La deuxième est l'\textbf{absence de contexte} : une prévision qui ignore le Ramadan, la rentrée scolaire ou un festival local dans le voisinage du point de vente se trompe systématiquement aux moments qui comptent le plus. La troisième est le \textbf{défaut de confiance} : une recommandation dont on ne peut pas retracer le fondement, qu'aucune règle ne contrôle avant diffusion et qu'aucun humain ne valide avant engagement, ne sera pas suivie — et si elle l'est, elle ne devrait pas l'être.
+
+La question posée par ce travail est donc la suivante : \textit{comment concevoir un système capable de produire, en temps réel et sur le lieu de vente, des recommandations commerciales et des décisions de réapprovisionnement qui soient à la fois justes, contextualisées, explicables et contrôlées, sans jamais engager l'entreprise sans décision humaine ?}
+
+\section*{Objectifs}
+
+Le projet poursuit quatre objectifs. \textbf{Anticiper} plutôt que constater : prévoir le chiffre d'affaires de fin de journée et la demande par référence, détecter les heures de sous-performance à mesure qu'elles surviennent. \textbf{Décider} sur une base explicite : calculer les paramètres de réapprovisionnement — stock de sécurité, point de commande, quantité économique — par des formules vérifiables plutôt que par intuition. \textbf{Conseiller} en tenant compte des deux domaines : hiérarchiser les produits à proposer selon un score qui combine potentiel commercial et disponibilité réelle. \textbf{Contrôler} systématiquement : soumettre toute recommandation à des règles de conformité avant diffusion, et tout engagement à une validation humaine.
+
+\section*{Démarche}
+
+La démarche retenue est le processus de référence \textbf{CRISP-DM} (\textit{Cross-Industry Standard Process for Data Mining}), instancié de manière itérative sur douze itérations de deux semaines. Ce choix, argumenté au chapitre~\ref{chap:cadre-general} au terme d'une comparaison avec SEMMA, KDD, GIMSI et TDSP, gouverne à la fois la conduite du projet et la structure du présent document : \textbf{chaque chapitre correspond à une phase du cycle}, et chacun se ferme sur la décision explicite qui autorise la phase suivante.
+
+\section*{Organisation du rapport}
+
+Le rapport suit cette progression en six chapitres.
+
+Le \textbf{chapitre~\ref{chap:cadre-general}} pose le cadre général : l'organisme d'accueil, le contexte du Retail télécom, l'étude critique de l'existant, la solution proposée, et la justification argumentée de la méthodologie — ainsi que l'énoncé de ses angles morts et des compléments retenus.
+
+Le \textbf{chapitre~\ref{chap:comprehension-metier}} conduit la première phase, la compréhension métier. Il formule sept objectifs métier, les traduit en huit objectifs analytiques, et associe à chacun une métrique et un critère de succès arrêté \textit{avant} toute modélisation. Il établit également le plan de projet, le backlog priorisé et l'évaluation initiale des outils.
+
+Le \textbf{chapitre~\ref{chap:donnees}} traite les deuxième et troisième phases : compréhension et préparation des données. Il confronte les objectifs à la réalité des sources — et cette confrontation conduira à resserrer le périmètre de l'un d'eux. Il rend compte de l'exploration, du relevé des anomalies de qualité, de la construction des variables et du protocole de découpage temporel.
+
+Le \textbf{chapitre~\ref{chap:modelisation}} conduit la modélisation : architecture de la solution, sélection argumentée des techniques, moteurs de prévision, modèles de décision de stock, conception des huit agents, base de connaissances métier, orchestration multi-agents, contrôle de conformité et validation humaine.
+
+Le \textbf{chapitre~\ref{chap:evaluation}} conduit l'évaluation, cœur scientifique du travail. Il confronte les résultats aux critères fixés au chapitre~\ref{chap:comprehension-metier}, sans en réviser aucun, et rapporte aussi bien les objectifs atteints que ceux qui ne le sont pas.
+
+Le \textbf{chapitre~\ref{chap:deploiement}} conduit le déploiement et présente le système en fonctionnement. C'est le chapitre des captures d'écran — et il n'apparaît qu'ici, une fois le problème posé, les données comprises, les modèles construits et les résultats mesurés.
+
+Une conclusion générale dresse le bilan du travail, en énonce les limites et propose les axes d'évolution.
