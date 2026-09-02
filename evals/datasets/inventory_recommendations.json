@@ -921,6 +921,921 @@
         "Mentionne l'opportunité de négocier le MOQ pour la prochaine commande"
       ],
       "benchmark": true
+    },
+    {
+      "id": "critical_stockout-03",
+      "category": "critical_stockout",
+      "scenario": "Risque CRITICAL avec délai fournisseur très long (20 jours) — EXPEDITE obligatoire malgré coût élevé.",
+      "sku": "SKU-TEST-016",
+      "store_id": "TEST-STORE-I",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "CRITICAL",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock à 1 jour avec délai fournisseur 20 jours — rupture certaine."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 1.0,
+          "formula_order_qty": 80,
+          "reorder_point": 35,
+          "total_replenishment_cost": 12000,
+          "safety_stock": 18
+        },
+        "stock": {
+          "lead_time_avg_days": 20,
+          "lead_time_std_days": 4,
+          "lifecycle_stage": "mature",
+          "current_stock": 4,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Délai fournisseur exceptionnellement long — expédition urgente indispensable.",
+        "objective_note": "",
+        "product_name": "Carte SIM prépayée"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 1.0,
+          "formula_order_qty": 80,
+          "reorder_point": 35,
+          "total_replenishment_cost": 12000,
+          "safety_stock": 18
+        }
+      },
+      "expected_behaviors": [
+        "Recommande EXPEDITE avec justification explicite du délai fournisseur (20 jours vs 1 jour de stock)",
+        "Ton urgent mais justifié par la criticité du produit"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "normal_reorder-03",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH avec objectif service_level — quantité augmentée pour garantir le service.",
+      "sku": "SKU-TEST-017",
+      "store_id": "TEST-STORE-J",
+      "business_objective": "service_level",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande avec objectif service_level."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 8.0,
+          "formula_order_qty": 100,
+          "reorder_point": 50,
+          "total_replenishment_cost": 6500,
+          "safety_stock": 25
+        },
+        "stock": {
+          "lead_time_avg_days": 6,
+          "lead_time_std_days": 1,
+          "lifecycle_stage": "mature",
+          "current_stock": 40,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 25,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "service_level : privilégier la disponibilité même avec coût légèrement plus élevé.",
+        "product_name": "Chargeur rapide 30W"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 8.0,
+          "formula_order_qty": 100,
+          "reorder_point": 50,
+          "total_replenishment_cost": 6500,
+          "safety_stock": 25
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec quantité cohérente avec l'objectif service_level",
+        "Mentionne l'importance de la disponibilité pour ce produit top seller"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "normal_reorder-04",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH avec produit saisonnier — anticipation de la demande saisonnière.",
+      "sku": "SKU-TEST-018",
+      "store_id": "TEST-STORE-K",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande, approche de la saison haute."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 10.0,
+          "formula_order_qty": 150,
+          "reorder_point": 70,
+          "total_replenishment_cost": 8500,
+          "safety_stock": 30
+        },
+        "stock": {
+          "lead_time_avg_days": 8,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 55,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 30,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Produit saisonnier — anticiper la demande de la saison à venir.",
+        "objective_note": "",
+        "product_name": "Batterie externe été"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 10.0,
+          "formula_order_qty": 150,
+          "reorder_point": 70,
+          "total_replenishment_cost": 8500,
+          "safety_stock": 30
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER en mentionnant la saisonnalité comme facteur de décision",
+        "Quantité adaptée pour couvrir la période saisonnière à venir"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "monitor_situations-03",
+      "category": "monitor_situations",
+      "scenario": "Risque LOW avec stock confortable — MONITOR sans action immédiate.",
+      "sku": "SKU-TEST-019",
+      "store_id": "TEST-STORE-L",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "LOW",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock largement suffisant, aucun risque de rupture à court terme."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 45.0,
+          "formula_order_qty": 0,
+          "reorder_point": 20,
+          "total_replenishment_cost": 0,
+          "safety_stock": 10
+        },
+        "stock": {
+          "lead_time_avg_days": 7,
+          "lead_time_std_days": 1,
+          "lifecycle_stage": "mature",
+          "current_stock": 90,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "none",
+        "objective_note": "",
+        "product_name": "Câble HDMI 2m"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "LOW", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 45.0,
+          "formula_order_qty": 0,
+          "reorder_point": 20,
+          "total_replenishment_cost": 0,
+          "safety_stock": 10
+        }
+      },
+      "expected_behaviors": [
+        "Recommande MONITOR avec indication du seuil de déclenchement (20 unités)",
+        "Aucune urgence, ton mesuré"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "monitor_situations-04",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM avec signal demande faible mais non nul — MONITOR avec vigilance.",
+      "sku": "SKU-TEST-020",
+      "store_id": "TEST-STORE-M",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock proche du point de commande avec léger signal de demande."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 19.0,
+          "formula_order_qty": 0,
+          "reorder_point": 30,
+          "total_replenishment_cost": 0,
+          "safety_stock": 12
+        },
+        "stock": {
+          "lead_time_avg_days": 8,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 42,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Signal de demande faible à surveiller.",
+        "objective_note": "",
+        "product_name": "Support tablette"
+      },
+      "context_report": {
+        "demand_uplift_pct": 8.0,
+        "dominant_signal": "tendance_legere",
+        "confidence": "low",
+        "interpretation": "Légère tendance à la hausse mais confiance faible."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "MEDIUM", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 17.0,
+          "formula_order_qty": 0,
+          "reorder_point": 30,
+          "total_replenishment_cost": 0,
+          "safety_stock": 12
+        }
+      },
+      "expected_behaviors": [
+        "Recommande MONITOR en mentionnant le signal faible comme élément de vigilance",
+        "Propose de réévaluer la situation prochainement"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "hold_overstock-03",
+      "category": "hold_overstock",
+      "scenario": "Surstock modéré avec demande en baisse — HOLD avec suggestion d'écoulement.",
+      "sku": "SKU-TEST-021",
+      "store_id": "TEST-STORE-N",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "LOW",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": true,
+          "rationale": "Stock au-dessus du seuil recommandé avec tendance à la baisse."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 85.0,
+          "formula_order_qty": 0,
+          "reorder_point": 20,
+          "total_replenishment_cost": 0,
+          "safety_stock": 10
+        },
+        "stock": {
+          "lead_time_avg_days": 10,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 170,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Surstock modéré — envisager des actions d'écoulement.",
+        "objective_note": "",
+        "product_name": "Lampe LED bureau"
+      },
+      "context_report": {
+        "demand_uplift_pct": -15.0,
+        "dominant_signal": "baisse_demande",
+        "confidence": "medium",
+        "interpretation": "Baisse de demande détectée, justifiant le HOLD."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "LOW", "overstock_flag": true},
+        "metrics": {
+          "days_of_stock_remaining": 85.0,
+          "formula_order_qty": 0,
+          "reorder_point": 20,
+          "total_replenishment_cost": 0,
+          "safety_stock": 10
+        }
+      },
+      "expected_behaviors": [
+        "Recommande HOLD en expliquant le surstock et la baisse de demande",
+        "Suggère des actions d'écoulement (promotion, bundle)"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "hold_overstock-04",
+      "category": "hold_overstock",
+      "scenario": "Surstock important avec coût de stockage élevé — HOLD prioritaire.",
+      "sku": "SKU-TEST-022",
+      "store_id": "TEST-STORE-O",
+      "business_objective": "cost_savings",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "LOW",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": true,
+          "rationale": "Surstock important générant des coûts de stockage élevés."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 120.0,
+          "formula_order_qty": 0,
+          "reorder_point": 15,
+          "total_replenishment_cost": 0,
+          "safety_stock": 8
+        },
+        "stock": {
+          "lead_time_avg_days": 12,
+          "lead_time_std_days": 3,
+          "lifecycle_stage": "mature",
+          "current_stock": 200,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 25,
+          "moq_is_binding": false,
+          "high_cost_flag": true,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Coût de stockage élevé — action d'écoulement prioritaire.",
+        "objective_note": "cost_savings : minimiser les coûts de stockage.",
+        "product_name": "Enceinte Bluetooth grande"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "LOW", "overstock_flag": true},
+        "metrics": {
+          "days_of_stock_remaining": 120.0,
+          "formula_order_qty": 0,
+          "reorder_point": 15,
+          "total_replenishment_cost": 0,
+          "safety_stock": 8
+        }
+      },
+      "expected_behaviors": [
+        "Recommande HOLD avec insistance sur la réduction des coûts de stockage",
+        "Propose des actions d'écoulement rapides"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "context_signal_cases-04",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande négatif (baisse) — réduction de la quantité commandée.",
+      "sku": "SKU-TEST-023",
+      "store_id": "TEST-STORE-P",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock au point de commande mais signal de baisse de demande."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 18.0,
+          "formula_order_qty": 50,
+          "reorder_point": 40,
+          "total_replenishment_cost": 3500,
+          "safety_stock": 15
+        },
+        "stock": {
+          "lead_time_avg_days": 7,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 45,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Signal de baisse de demande détecté — ajuster la commande.",
+        "objective_note": "",
+        "product_name": "Coque basique"
+      },
+      "context_report": {
+        "demand_uplift_pct": -25.0,
+        "dominant_signal": "baisse_concurrentielle",
+        "confidence": "high",
+        "interpretation": "Baisse significative de demande due à une action concurrentielle."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "MEDIUM", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 24.0,
+          "formula_order_qty": 35,
+          "reorder_point": 40,
+          "total_replenishment_cost": 2450,
+          "safety_stock": 15
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec quantité réduite (35) comparée à la formule (50)",
+        "Explique explicitement l'ajustement dû au signal de baisse"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "context_signal_cases-05",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande très élevé (festival confirmé) — commande augmentée.",
+      "sku": "SKU-TEST-024",
+      "store_id": "TEST-STORE-Q",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande avec signal de demande très élevé."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 14.0,
+          "formula_order_qty": 60,
+          "reorder_point": 45,
+          "total_replenishment_cost": 4200,
+          "safety_stock": 18
+        },
+        "stock": {
+          "lead_time_avg_days": 8,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 38,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Festival confirmé — demande exceptionnelle attendue.",
+        "objective_note": "",
+        "product_name": "Powerbank 20000mAh"
+      },
+      "context_report": {
+        "demand_uplift_pct": 80.0,
+        "dominant_signal": "festival_confirme",
+        "confidence": "high",
+        "interpretation": "Festival confirmé avec forte affluence attendue — demande exceptionnelle."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 6.0,
+          "formula_order_qty": 110,
+          "reorder_point": 75,
+          "total_replenishment_cost": 7700,
+          "safety_stock": 30
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec quantité significativement augmentée (110 vs 60)",
+        "Justifie par l'événement confirmé et la confiance haute du signal"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "escalation_cases-03",
+      "category": "escalation_cases",
+      "scenario": "EXPEDITE avec coût très élevé (>100k DT) — double escalade.",
+      "sku": "SKU-TEST-025",
+      "store_id": "TEST-STORE-R",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "CRITICAL",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock critique avec coût d'expédition très élevé."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 2.0,
+          "formula_order_qty": 150,
+          "reorder_point": 80,
+          "total_replenishment_cost": 95000,
+          "safety_stock": 35
+        },
+        "stock": {
+          "lead_time_avg_days": 15,
+          "lead_time_std_days": 3,
+          "lifecycle_stage": "mature",
+          "current_stock": 12,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 30,
+          "moq_is_binding": false,
+          "high_cost_flag": true,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Expédition urgente nécessaire mais coût très élevé.",
+        "objective_note": "",
+        "product_name": "iPhone 15 Pro Max"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "CRITICAL", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 2.0,
+          "formula_order_qty": 150,
+          "reorder_point": 80,
+          "total_replenishment_cost": 95000,
+          "safety_stock": 35
+        }
+      },
+      "expected_behaviors": [
+        "Recommande EXPEDITE avec double escalade (urgence + coût élevé)",
+        "Mentionne explicitement les deux critères d'escalation"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "escalation_cases-04",
+      "category": "escalation_cases",
+      "scenario": "Produit nouveau avec historique insuffisant — escalade pour validation.",
+      "sku": "SKU-TEST-026",
+      "store_id": "TEST-STORE-S",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande sur produit nouveau sans historique fiable."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 9.0,
+          "formula_order_qty": 40,
+          "reorder_point": 25,
+          "total_replenishment_cost": 4800,
+          "safety_stock": 12
+        },
+        "stock": {
+          "lead_time_avg_days": 10,
+          "lead_time_std_days": 3,
+          "lifecycle_stage": "launch",
+          "current_stock": 18,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Produit en lancement — historique insuffisant pour valider la commande.",
+        "objective_note": "",
+        "product_name": "Smartwatch nouvelle"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 9.0,
+          "formula_order_qty": 40,
+          "reorder_point": 25,
+          "total_replenishment_cost": 4800,
+          "safety_stock": 12
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER mais avec escalade due au statut 'launch' du produit",
+        "Mentionne l'incertitude liée au manque d'historique"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "edge_cases-03",
+      "category": "edge_cases",
+      "scenario": "Fournisseur unique avec délai variable — risque approvisionnement.",
+      "sku": "SKU-TEST-027",
+      "store_id": "TEST-STORE-T",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Fournisseur unique avec délai très variable — risque d'approvisionnement."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 12.0,
+          "formula_order_qty": 80,
+          "reorder_point": 50,
+          "total_replenishment_cost": 5200,
+          "safety_stock": 25
+        },
+        "stock": {
+          "lead_time_avg_days": 14,
+          "lead_time_std_days": 6,
+          "lifecycle_stage": "mature",
+          "current_stock": 45,
+          "is_top_seller": true
+        },
+        "constraints": {
+          "moq": 25,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Fournisseur unique avec forte variabilité de délai — stock de sécurité augmenté.",
+        "objective_note": "",
+        "product_name": "Kit auto montagne"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 12.0,
+          "formula_order_qty": 80,
+          "reorder_point": 50,
+          "total_replenishment_cost": 5200,
+          "safety_stock": 25
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER en mentionnant le risque fournisseur unique",
+        "Quantité peut être augmentée pour compenser la variabilité"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "edge_cases-04",
+      "category": "edge_cases",
+      "scenario": "Produit avec forte saisonnalité inversée — anticipation hors saison.",
+      "sku": "SKU-TEST-028",
+      "store_id": "TEST-STORE-U",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock correct mais approche de la contre-saison pour ce produit."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 25.0,
+          "formula_order_qty": 30,
+          "reorder_point": 35,
+          "total_replenishment_cost": 2100,
+          "safety_stock": 12
+        },
+        "stock": {
+          "lead_time_avg_days": 9,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 55,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 20,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Contre-saison approche — réduire les commandes.",
+        "objective_note": "",
+        "product_name": "Ventilateur portable"
+      },
+      "context_report": {
+        "demand_uplift_pct": -40.0,
+        "dominant_signal": "contre_saison",
+        "confidence": "high",
+        "interpretation": "Fin de saison pour ce produit — demande en forte baisse attendue."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "LOW", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 42.0,
+          "formula_order_qty": 15,
+          "reorder_point": 35,
+          "total_replenishment_cost": 1050,
+          "safety_stock": 12
+        }
+      },
+      "expected_behaviors": [
+        "Recommande MONITOR ou ORDER avec quantité réduite selon le niveau de risque",
+        "Explique l'anticipation de la contre-saison"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "edge_cases-05",
+      "category": "edge_cases",
+      "scenario": "Produit avec obsolescence rapide — gestion prudente.",
+      "sku": "SKU-TEST-029",
+      "store_id": "TEST-STORE-V",
+      "business_objective": "standard",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "HIGH",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock sous le point de commande sur produit à obsolescence rapide."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 8.0,
+          "formula_order_qty": 25,
+          "reorder_point": 20,
+          "total_replenishment_cost": 3200,
+          "safety_stock": 8
+        },
+        "stock": {
+          "lead_time_avg_days": 6,
+          "lead_time_std_days": 1,
+          "lifecycle_stage": "mature",
+          "current_stock": 12,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 15,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": false
+        },
+        "analyst_flag": "Obsolescence rapide — éviter le surstock.",
+        "objective_note": "",
+        "product_name": "Tech accessory trend"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "HIGH", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 8.0,
+          "formula_order_qty": 25,
+          "reorder_point": 20,
+          "total_replenishment_cost": 3200,
+          "safety_stock": 8
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER avec quantité prudente pour éviter l'obsolescence",
+        "Mentionne le risque d'obsolescence comme facteur de prudence"
+      ],
+      "benchmark": true
+    },
+    {
+      "id": "edge_cases-06",
+      "category": "edge_cases",
+      "scenario": "Produit avec marge très faible — rentabilité à surveiller.",
+      "sku": "SKU-TEST-030",
+      "store_id": "TEST-STORE-W",
+      "business_objective": "cost_savings",
+      "baseline_report": {
+        "risk_assessment": {
+          "level": "MEDIUM",
+          "override": null,
+          "override_reason": null,
+          "overstock_flag": false,
+          "rationale": "Stock proche du point de commande sur produit à faible marge."
+        },
+        "metrics": {
+          "days_of_stock_remaining": 16.0,
+          "formula_order_qty": 100,
+          "reorder_point": 60,
+          "total_replenishment_cost": 1500,
+          "safety_stock": 20
+        },
+        "stock": {
+          "lead_time_avg_days": 8,
+          "lead_time_std_days": 2,
+          "lifecycle_stage": "mature",
+          "current_stock": 52,
+          "is_top_seller": false
+        },
+        "constraints": {
+          "moq": 30,
+          "moq_is_binding": false,
+          "high_cost_flag": false,
+          "objective_conflict": true
+        },
+        "analyst_flag": "Marge très faible — optimiser les coûts d'approvisionnement.",
+        "objective_note": "cost_savings : maximiser la rentabilité sur produit à faible marge.",
+        "product_name": "Cable USB basique"
+      },
+      "context_report": {
+        "demand_uplift_pct": 0.0,
+        "dominant_signal": "none",
+        "confidence": "low",
+        "interpretation": "Aucun signal de demande détecté cette semaine."
+      },
+      "adjusted_metrics": {
+        "risk_assessment": {"level": "MEDIUM", "overstock_flag": false},
+        "metrics": {
+          "days_of_stock_remaining": 16.0,
+          "formula_order_qty": 100,
+          "reorder_point": 60,
+          "total_replenishment_cost": 1500,
+          "safety_stock": 20
+        }
+      },
+      "expected_behaviors": [
+        "Recommande ORDER en optimisant les coûts (quantité EOQ)",
+        "Mentionne la faible marge comme facteur d'optimisation"
+      ],
+      "benchmark": true
     }
   ]
 }

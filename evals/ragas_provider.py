@@ -56,13 +56,13 @@ def _build_llm(provider: Provider, model: str):
 
     if provider.name == "groq":
         from langchain_groq import ChatGroq
-        lc = ChatGroq(model=model, api_key=provider.api_key, temperature=0.0)
+        lc = ChatGroq(model=model, api_key=provider.api_key, temperature=0.0, n=1)
     else:
         # Mistral et OpenRouter exposent /v1/chat/completions façon OpenAI.
         from langchain_openai import ChatOpenAI
         lc = ChatOpenAI(model=model, api_key=provider.api_key,
-                        base_url=provider.base_url, temperature=0.0)
-    return LangchainLLMWrapper(lc)
+                        base_url=provider.base_url, temperature=0.0, n=1)
+    return LangchainLLMWrapper(lc, bypass_n=True)
 
 
 def _ollama_reachable(base_url: str, timeout: float = 1.5) -> bool:

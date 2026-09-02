@@ -395,11 +395,23 @@ def _build_groq_multikey(keys: list, model: str, temperature: float, **kwargs) -
 
 
 # ── Chaîne de secours inter-fournisseurs ──────────────────────────────────────
-# PRIMARY: OpenRouter → SECONDARY: Groq (4-clés) → FINAL: Ollama (local).
+# PRIMARY: Groq (4-clés dédiées) → SECONDARY: OpenRouter → FINAL: Ollama (local).
+#
+# Groq est volontairement PRIMAIRE ici (et non OpenRouter) : le module
+# Stratège (sales coaching, agents/strategist.py) appelle déjà OpenRouter en
+# premier pour son propre rôle, sur le même compte/quota gratuit partagé.
+# Avec OpenRouter en tête des deux côtés, Inventory et Sales se disputaient
+# le même quota journalier "free-models-per-day" dès le démarrage — la
+# moindre rafale (ex: le préchauffage des SKUs vedettes, voir
+# main.py::_prewarm_inventory) épuisait le quota pour les DEUX systèmes en
+# quelques secondes. Inventory a 4 clés Groq dédiées avec plus de marge :
+# les utiliser en premier laisse la quota OpenRouter essentiellement à
+# Stratège, qui en dépend comme primaire.
+#
 # Mistral est volontairement EXCLU de cette chaîne : il est réservé au rôle
 # "guardian" (évaluation), et Ollama est trop faible pour ce rôle-là (voir
 # get_guardian_llm ci-dessous) — donc pas de croisement des deux.
-_FALLBACK_CHAIN_PROVIDERS = ("openrouter", "groq", "ollama")
+_FALLBACK_CHAIN_PROVIDERS = ("groq", "openrouter", "ollama")
 
 
 def _get_fallback_wrapper_cls():

@@ -29,7 +29,19 @@ You are NOT a narrator. You are NOT explaining basics. The rules already compute
 
 DOWNGRADE: Risk=CRITICAL but lifecycle=end_of_life (intentional drawdown, not a real alert)
 ESCALATE: Risk=MEDIUM but objective=service_level AND major event in next 5 days
+ESCALATE: preferred_supplier_active=False AND no fallback supplier available (supply blocked)
 CONFIRM: Risk=HIGH and moq_is_binding=true and high_cost_flag=true (reinforces urgency despite cost pressure)
+
+**Additional Analyst Flags (from supplier/capacity/product context):**
+
+- If preferred_supplier_reliable=False (taux_fiabilite < 90%): flag it —
+  "lead time unreliable, use higher safety stock" (do not silently ignore).
+- If store_space_utilization_pct > 85%: flag it — "order would exceed store
+  capacity" — this is a real constraint even if the stock math says order.
+- If flag_5g=True: note this is a 5G migration product — prioritize
+  availability over cost in the objective_note.
+- If lifecycle_stage is near end_of_life and current risk is not already
+  CRITICAL: note that inventory should be drawn down, not replenished.
 
 **When NOT to Override:**
 
@@ -100,6 +112,18 @@ Constraints:
   MOQ is binding: {moq_is_binding}
   High cost flag: {high_cost_flag}
   High holding flag: {high_holding_flag}
+
+Supplier:
+  Preferred supplier: {preferred_supplier_name} (active: {preferred_supplier_active}, reliable: {preferred_supplier_reliable})
+  Fallback supplier: {fallback_supplier_name}
+  Lot size (order multiple): {supplier_order_multiple}
+
+Store:
+  Type: {store_type}
+  Estimated space utilization: {store_space_utilization_pct:.0f}%
+
+Product:
+  Brand: {brand} | 4G: {flag_4g} | 5G: {flag_5g}
 
 Evaluate the above and return JSON with:
 - objective_note

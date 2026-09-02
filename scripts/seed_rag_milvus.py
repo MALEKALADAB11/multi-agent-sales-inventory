@@ -1,5 +1,5 @@
 """
-seed_rag_milvus.py — Seed 200+ Ooredoo Tunisia coaching scripts into Milvus.
+seed_rag_milvus.py — Seed Ooredoo Tunisia coaching scripts into the unified RAG.
 
 Usage:
   python scripts/seed_rag_milvus.py [--reset]
@@ -7,25 +7,25 @@ Usage:
 Requirements:
   pip install pymilvus requests tqdm
 
-Collection: coaching_scripts
-Vector dim: 768 (nomic-embed-text via Ollama)
+Collection: RAG_COLLECTION (retail_knowledge by default)
+Vector dim/model: RAG_EMBED_DIM / RAG_EMBED_MODEL (1024/bge-m3 by default)
 """
 
 import argparse
 import json
-import os
 import sys
-import time
+from pathlib import Path
 
-import requests
+# Allow the documented `python scripts/...` invocation to import the package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from tqdm import tqdm
 
-MILVUS_URI    = os.getenv("MILVUS_URI", "http://localhost:19530")
-OLLAMA_URL    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-COLLECTION    = "coaching_scripts"
-EMBED_DIM     = 768
-EMBED_MODEL   = "nomic-embed-text"
-BATCH_SIZE    = 20
+from app.sales.data.rag import store
+from app.sales.data.rag.documents import Document
+from app.sales.data.rag.settings import COLLECTION, DOMAIN_SALES_SCRIPT, MILVUS_URI
+
+BATCH_SIZE = 20
 
 # ── Corpus ────────────────────────────────────────────────────────────────────
 # Each script: categorie, situation, action, produit, argument, impact, heure_min, heure_max
@@ -451,106 +451,61 @@ SCRIPTS = [
 ]
 
 
-def _embed(text: str) -> list[float]:
-    resp = requests.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": EMBED_MODEL, "prompt": text[:500]},
-        timeout=15,
+def _to_document(index: int, script: dict) -> Document:
+    text = " | ".join(
+        f"{label}: {script.get(key, '')}"
+        for label, key in (
+            ("Situation", "situation"), ("Action", "action"),
+            ("Produit", "produit"), ("Argument", "argument"),
+            ("Impact", "impact"), ("Catégorie", "categorie"),
+        )
+        if script.get(key)
     )
-    resp.raise_for_status()
-    emb = resp.json().get("embedding", [])
-    if len(emb) < EMBED_DIM:
-        emb += [0.0] * (EMBED_DIM - len(emb))
-    return emb[:EMBED_DIM]
-
-
-def _build_embed_text(s: dict) -> str:
-    return f"{s['categorie']} {s['situation']} {s['action']} {s['argument']}"
+    return Document(
+        doc_id=f"seed-sales-{index:04d}",
+        domain=DOMAIN_SALES_SCRIPT,
+        title=script.get("situation", "")[:512],
+        text=text[:8000],
+        doc_type=script.get("categorie", ""),
+        categorie=script.get("categorie", ""),
+        produit=script.get("produit", ""),
+        heure_min=int(script.get("heure_min", 8)),
+        heure_max=int(script.get("heure_max", 20)),
+        payload={
+            "situation": script.get("situation", ""),
+            "action": script.get("action", ""),
+            "argument": script.get("argument", ""),
+            "impact": script.get("impact", ""),
+            "source": "seed_rag_milvus.py",
+        },
+    )
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--reset", action="store_true", help="Drop and recreate collection")
+    parser.add_argument("--reset", action="store_true", help="Drop and recreate the unified collection")
+    parser.add_argument("--dry-run", action="store_true", help="Build documents without writing to Milvus")
     args = parser.parse_args()
 
-    try:
-        from pymilvus import MilvusClient, DataType
-    except ImportError:
-        sys.exit("pymilvus not installed. Run: pip install pymilvus")
+    documents = [_to_document(i, script) for i, script in enumerate(SCRIPTS, 1)]
+    print(f"[seed] {len(documents)} scripts -> {COLLECTION} ({MILVUS_URI})")
+    if args.dry_run:
+        print(f"[seed] DRY RUN — first document: {documents[0].doc_id}")
+        return
 
-    print(f"[seed] Connecting to Milvus at {MILVUS_URI}…")
-    client = MilvusClient(uri=MILVUS_URI)
+    client = store.get_client(recreate=args.reset)
+    if client is None:
+        sys.exit("Milvus collection unavailable. Check Docker/MILVUS_URI.")
 
-    if args.reset and client.has_collection(COLLECTION):
-        client.drop_collection(COLLECTION)
-        print(f"[seed] Dropped collection '{COLLECTION}'")
-
-    if not client.has_collection(COLLECTION):
-        schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=True)
-        schema.add_field("id",         DataType.INT64,   is_primary=True, auto_id=True)
-        schema.add_field("vector",     DataType.FLOAT_VECTOR, dim=EMBED_DIM)
-        schema.add_field("categorie",  DataType.VARCHAR, max_length=64)
-        schema.add_field("situation",  DataType.VARCHAR, max_length=512)
-        schema.add_field("action",     DataType.VARCHAR, max_length=512)
-        schema.add_field("produit",    DataType.VARCHAR, max_length=128)
-        schema.add_field("argument",   DataType.VARCHAR, max_length=512)
-        schema.add_field("impact",     DataType.VARCHAR, max_length=256)
-        schema.add_field("heure_min",  DataType.INT32)
-        schema.add_field("heure_max",  DataType.INT32)
-
-        index_params = client.prepare_index_params()
-        index_params.add_index("vector", index_type="IVF_FLAT", metric_type="IP", params={"nlist": 64})
-
-        client.create_collection(COLLECTION, schema=schema, index_params=index_params)
-        print(f"[seed] Collection '{COLLECTION}' created (dim={EMBED_DIM})")
-    else:
-        print(f"[seed] Collection '{COLLECTION}' already exists — appending")
-
-    print(f"[seed] Embedding {len(SCRIPTS)} scripts via Ollama ({EMBED_MODEL})…")
-
-    batches = [SCRIPTS[i:i+BATCH_SIZE] for i in range(0, len(SCRIPTS), BATCH_SIZE)]
     total_inserted = 0
+    for start in tqdm(range(0, len(documents), BATCH_SIZE), desc="Embedding scripts"):
+        total_inserted += store.upsert(documents[start:start + BATCH_SIZE], batch_size=BATCH_SIZE)
 
-    for batch in tqdm(batches, desc="Batches"):
-        rows = []
-        for s in batch:
-            try:
-                vec = _embed(_build_embed_text(s))
-            except Exception as e:
-                print(f"\n[warn] Embed failed: {e} — skipping")
-                continue
-
-            rows.append({
-                "vector":    vec,
-                "categorie": s["categorie"][:64],
-                "situation": s["situation"][:512],
-                "action":    s["action"][:512],
-                "produit":   s.get("produit", "")[:128],
-                "argument":  s.get("argument", "")[:512],
-                "impact":    s.get("impact", "")[:256],
-                "heure_min": int(s.get("heure_min", 8)),
-                "heure_max": int(s.get("heure_max", 20)),
-            })
-
-        if rows:
-            result = client.insert(collection_name=COLLECTION, data=rows)
-            total_inserted += result["insert_count"]
-            time.sleep(0.05)  # Rate-limit Ollama
-
-    client.flush(COLLECTION)
-    count = client.get_collection_stats(COLLECTION)["row_count"]
-    print(f"\n[seed] Done — {total_inserted} scripts inserted, {count} total in collection.")
-
-    # Quick smoke-test
-    print("[seed] Smoke-test search…")
-    test_vec = _embed("objection prix trop cher iPhone vente telecom Ooredoo")
-    results = client.search(
-        collection_name=COLLECTION, data=[test_vec], limit=3,
-        output_fields=["categorie", "situation", "argument"],
-    )
-    for hit in results[0]:
-        print(f"  score={hit['distance']:.3f} | {hit['entity']['categorie']} | {hit['entity']['situation'][:60]}")
-    print("[seed] OK")
+    print(f"\n[seed] Done — {total_inserted} scripts upserted into {COLLECTION}.")
+    stats = store.stats()
+    print(f"[seed] Stats: {stats}")
+    if total_inserted != len(documents) or not stats.get("available"):
+        sys.exit("Seed incomplete: check Milvus readiness and Ollama embedding model, then rerun.")
 
 
 if __name__ == "__main__":

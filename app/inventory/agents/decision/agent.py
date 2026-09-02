@@ -45,6 +45,26 @@ except Exception:
     logger.warning("SyncInventoryRepo not importable — DB writes disabled.")
 
 
+# ── Demand Sensing double-counting guard ────────────────────────────────────
+# The ML Demand Sensing model (app/inventory/forecasting/sensing_features.py)
+# computes corrected_demand from: active_promo, promo_discount_pct,
+# upcoming_promo_7d, active_event_uplift_pct, expected_temp_c,
+# expected_precip_mm, stockout_flag_7d, recent_actual_avg, day_of_week.
+#
+# When the baseline comes from that model (forecast_source == "demand_sensing_db"),
+# the quantitative demand impact of these signals is ALREADY fully baked into
+# the baseline demand (avg_daily_demand and total_30d_demand).
+#
+# Re-applying a percentage uplift for these signals would result in double-counting.
+# Therefore, for ML-covered signals, effective_uplift_pct is set to 0.0, while
+# preserving all qualitative intelligence (buffer_recommendation_pct,
+# volatility, operational directives, delivery timing).
+#
+# Signals NOT covered by the ML model (holidays, market_offers scraping,
+# unmodeled context) are applied in full.
+_ML_OVERLAP_SIGNALS = {"promotions", "weather", "events"}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Agent State
 # ═══════════════════════════════════════════════════════════════════════════
@@ -131,7 +151,7 @@ class InventoryDecisionAgent:
 
         self.graph = InventoryDecisionAgent._compiled_graphs[use_llm]
 
-    async def run(
+    def run(
         self,
         sku:                str,
         store_id:           str,
@@ -194,8 +214,13 @@ class InventoryDecisionAgent:
 
             adjusted_metrics = self._compute_adjusted_metrics(analysis_report, ctx)
 
-            # Fetch complementary products for cross-sell recommendations
-            complementary_products = await self._get_complementary_products(sku, store_id)
+            # Fetch complementary products for cross-sell recommendations.
+            # _get_complementary_products is itself async (it awaits the async
+            # DB pool), but run() is called synchronously — decision_agent.run(...),
+            # no await — from a plain worker thread (see orchestrator._run_pipeline,
+            # which runs inside a ThreadPoolExecutor, not the asyncio event loop).
+            # asyncio.run() gives that coroutine somewhere to actually execute.
+            complementary_products = self._get_complementary_products_sync(sku, store_id)
 
             _callbacks = [lf_span.callback_handler] if (lf_span and lf_span.callback_handler) else []
             result = self.graph.invoke(
@@ -290,6 +315,35 @@ class InventoryDecisionAgent:
 
     # ── Adjusted metrics ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _resolve_effective_uplift(
+        forecast_source:       str,
+        dominant_signal:       str,
+        demand_uplift_pct_raw: float,
+    ) -> tuple:
+        """
+        Decide how much of the Context agent's raw demand_uplift_pct to
+        apply quantitatively, given where the baseline demand came from.
+
+        Returns (effective_uplift_pct, mitigation_applied: bool).
+
+        - If forecast_source == "demand_sensing_db" and dominant_signal is in
+          _ML_OVERLAP_SIGNALS (promotions, events, weather): the ML model already
+          quantified this impact in predicted_demand. Setting effective_uplift_pct=0.0
+          avoids double-counting, while all qualitative context (volatility,
+          safety-buffer, operational directives) is retained and applied downstream.
+        - If dominant_signal is outside ML features (e.g. holidays, market_offers)
+          or if forecast_source != "demand_sensing_db": the raw uplift is applied in full
+          (prorated over impact_window_days).
+        """
+        if (
+            forecast_source == "demand_sensing_db"
+            and dominant_signal in _ML_OVERLAP_SIGNALS
+            and demand_uplift_pct_raw != 0.0
+        ):
+            return 0.0, True
+        return demand_uplift_pct_raw, False
+
     def _compute_adjusted_metrics(
         self,
         analysis_report: Dict[str, Any],
@@ -297,7 +351,10 @@ class InventoryDecisionAgent:
     ) -> Dict[str, Any]:
         """
         Re-run compute_inventory_metrics() with demand_uplift_pct from
-        the context agent applied to avg_daily_demand.
+        the context agent applied to avg_daily_demand — prorated over
+        impact_window_days rather than blanket-applied across 30 days,
+        and discounted for double-counting when the baseline already
+        comes from the ML Demand Sensing model.
 
         Falls back to baseline metrics unchanged if import fails.
         """
@@ -309,9 +366,32 @@ class InventoryDecisionAgent:
             cons    = analysis_report.get("constraints", {})
             obj     = analysis_report.get("business_objective", "balanced")
 
-            demand_uplift_pct = float(context_report.get("demand_uplift_pct", 0.0))
+            # forecast_source: set by the analysis agent when the baseline
+            # avg_daily_demand/total_30d_demand come from the ML Demand
+            # Sensing model ("demand_sensing_db") rather than a simpler
+            # source ("live_ts_engine" or similar). Defaults to "unknown"
+            # if the analysis agent doesn't set it — in which case no
+            # discount is applied (behaves like before this change).
+            forecast_source = str(analysis_report.get("forecast_source", "unknown"))
 
-            return compute_inventory_metrics(
+            demand_uplift_pct_raw = float(context_report.get("demand_uplift_pct", 0.0))
+            dominant_signal       = str(context_report.get("dominant_signal", "none"))
+            impact_window_days    = float(context_report.get("impact_window_days", 7) or 7)
+            buffer_recommendation_pct = float(context_report.get("buffer_recommendation_pct", 0.0) or 0.0)
+
+            effective_uplift_pct, mitigation_applied = self._resolve_effective_uplift(
+                forecast_source, dominant_signal, demand_uplift_pct_raw,
+            )
+
+            if mitigation_applied:
+                logger.info(
+                    "[DecisionAgent] demand_sensing double-counting guard applied: "
+                    "raw_uplift=%.1f%% -> effective_uplift=%.1f%% (source=%s, dominant=%s)",
+                    demand_uplift_pct_raw, effective_uplift_pct,
+                    forecast_source, dominant_signal,
+                )
+
+            metrics = compute_inventory_metrics(
                 stock_current         = float(stock.get("current_stock", 0)),
                 stock_in_transit      = float(stock.get("stock_in_transit", 0)),
                 stock_min             = stock.get("stock_min"),
@@ -329,8 +409,23 @@ class InventoryDecisionAgent:
                 total_30d_demand      = float(forecast.get("total_30d_demand", 0)),
                 trend_direction       = str(forecast.get("trend_direction", "stable")),
                 business_objective    = obj,
-                promo_uplift_pct      = demand_uplift_pct,
+                promo_uplift_pct           = effective_uplift_pct,
+                impact_window_days         = impact_window_days,
+                buffer_recommendation_pct  = buffer_recommendation_pct,
             )
+
+            # Audit trail: what was actually applied and why, so the
+            # decision node/prompt (Étape 5) and any human reviewing a
+            # recommendation can see the reasoning, not just the result.
+            metrics["context_adjustment"] = {
+                "forecast_source":                   forecast_source,
+                "raw_uplift_pct":                     demand_uplift_pct_raw,
+                "effective_uplift_pct":               effective_uplift_pct,
+                "impact_window_days":                 impact_window_days,
+                "buffer_recommendation_pct":          buffer_recommendation_pct,
+                "double_counting_mitigation_applied": mitigation_applied,
+            }
+            return metrics
         except Exception as e:
             logger.warning(
                 "[DecisionAgent] _compute_adjusted_metrics failed (%s) — using baseline", e
@@ -434,6 +529,27 @@ class InventoryDecisionAgent:
                 sku, store_id, e,
             )
             return None
+
+    def _get_complementary_products_sync(self, sku: str, store_id: str) -> list:
+        """
+        Sync wrapper around _get_complementary_products for callers (run())
+        that are not themselves coroutines. Each call gets its own event
+        loop via asyncio.run() — fine here since this always runs from a
+        plain worker thread with no loop already active. If that assumption
+        ever breaks (e.g. run() gets called from inside async code), the
+        RuntimeError below is caught and logged rather than propagated —
+        losing cross-sell suggestions is not worth failing the whole decision.
+        """
+        import asyncio
+        try:
+            return asyncio.run(self._get_complementary_products(sku, store_id))
+        except RuntimeError as e:
+            logger.warning(
+                "[DecisionAgent] _get_complementary_products_sync failed for %s@%s "
+                "(likely called from within a running event loop): %s",
+                sku, store_id, e,
+            )
+            return []
 
     async def _get_complementary_products(self, sku: str, store_id: str) -> list:
         """

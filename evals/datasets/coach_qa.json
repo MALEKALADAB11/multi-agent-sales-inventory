@@ -211,6 +211,2167 @@
         "S'appuie sur les événements du contexte s'ils sont fournis, sans inventer de festival précis"
       ],
       "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "vente-sav-01",
+      "category": "vente",
+      "question": "Un client veut un SAV sur son iPhone, comment je gère ça ?",
+      "expected_behaviors": [
+        "Explique la procédure SAV (garantie, réparation, échange)",
+        "Oriente vers le service approprié selon le problème",
+        "Ton professionnel et empathique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-fidelisation-01",
+      "category": "vente",
+      "question": "Comment garder un client après la vente ?",
+      "expected_behaviors": [
+        "Propose des actions de fidélisation (suivi, offres, programme)",
+        "Conseils concrets pour maintenir la relation client"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-comparaison-01",
+      "category": "produit",
+      "question": "iPhone vs Samsung, lequel je recommande pour un gamer ?",
+      "expected_behaviors": [
+        "Compare sur critères pertinents pour gaming (performance, écran, refroidissement)",
+        "Ne dénigre aucune marque, reste factuel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-prevision-01",
+      "category": "stock",
+      "question": "Selon mes données, quels produits vont manquer la semaine prochaine ?",
+      "expected_behaviors": [
+        "S'appuie sur les données de stock si disponibles dans le contexte",
+        "Sinon, explique comment consulter le tableau de bord prévisionnel"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "performance-kpi-01",
+      "category": "performance",
+      "question": "Comment je calcule mon taux de conversion ?",
+      "expected_behaviors": [
+        "Explique la formule du taux de conversion",
+        "Donne des conseils pour l'améliorer"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-delai-01",
+      "category": "objection_client",
+      "question": "Le client trouve le délai de livraison trop long, je fais quoi ?",
+      "expected_behaviors": [
+        "Propose des alternatives (stock disponible, autre modèle, suivi)",
+        "Gère l'attente de manière professionnelle"
+      ],
+      "checks": ["no_discount_promise", "french"]
+    },
+    {
+      "id": "coaching-equipe-01",
+      "category": "coaching",
+      "question": "Comment motiver mon équipe en fin de mois difficile ?",
+      "expected_behaviors": [
+        "Conseils de management d'équipe pour remonter la motivation",
+        "Approche positive et constructive"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "technique-cross-sell-01",
+      "category": "vente",
+      "question": "Comment vendre un forfait avec un téléphone déjà actif ?",
+      "expected_behaviors": [
+        "Argumentaire pour le changement d'opérateur",
+        "Mise en avant des avantages Ooredoo"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-lancement-01",
+      "category": "produit",
+      "question": "Quels sont les nouveaux produits à mettre en avant ce mois ?",
+      "expected_behaviors": [
+        "Si les données sont dans le contexte : les citer précisément",
+        "Sinon : orienter vers le catalogue ou les communications commerciales"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "situation-urgence-01",
+      "category": "contexte",
+      "question": "Un client est en colère après 30min d'attente, comment je gère ?",
+      "expected_behaviors": [
+        "Technique de désescalade et récupération",
+        "Proposition de compensation appropriée (sans promesse excessive)"
+      ],
+      "checks": ["no_discount_promise", "french"]
+    },
+    {
+      "id": "vente-b2b-01",
+      "category": "vente",
+      "question": "Un client professionnel veut des équipements pour son entreprise, comment l'approcher ?",
+      "expected_behaviors": [
+        "Adaptation du discours pour client B2B",
+        "Focus sur solutions professionnelles et volume"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-rotation-01",
+      "category": "stock",
+      "question": "Comment identifier les produits qui tournent mal ?",
+      "expected_behaviors": [
+        "Explique les indicateurs de rotation lente",
+        "Propose des actions pour les produits dormants"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-panier-01",
+      "category": "performance",
+      "question": "Comment augmenter mon panier moyen ?",
+      "expected_behaviors": [
+        "Techniques d'upsell et cross-sell spécifiques",
+        "Exemples concrets de combinaisons produits"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-technique-01",
+      "category": "objection_client",
+      "question": "Le client ne comprend pas la différence 4G/5G, comment expliquer simplement ?",
+      "expected_behaviors": [
+        "Explication simple et vulgarisée",
+        "Analogies compréhensibles pour un non-technicien"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-debutant-02",
+      "category": "coaching",
+      "question": "Quels sont les erreurs à éviter pour un nouveau conseiller ?",
+      "expected_behaviors": [
+        "Liste des erreurs courantes des débutants",
+        "Conseils préventifs constructifs"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-accessoire-01",
+      "category": "vente",
+      "question": "Comment vendre une assurance mobile sans paraître agressif ?",
+      "expected_behaviors": [
+        "Approche douce de la vente d'assurance",
+        "Argumentaire sur la protection et la tranquillité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-disponibilite-01",
+      "category": "produit",
+      "question": "Le client veut un modèle spécifique indisponible, alternatives ?",
+      "expected_behaviors": [
+        "Propose des alternatives pertinentes (gamme équivalente, caractéristiques proches)",
+        "Gère la déception de manière constructive"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-pic-01",
+      "category": "contexte",
+      "question": "C'est l'heure de pointe avec 10 clients en attente, comment prioriser ?",
+      "expected_behaviors": [
+        "Stratégie de gestion de file d'attente",
+        "Priorisation selon le type de demande"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-commande-01",
+      "category": "stock",
+      "question": "Comment passer une commande de réapprovisionnement ?",
+      "expected_behaviors": [
+        "Explique la procédure de commande",
+        "Mentionne les délais et contraintes si pertinent"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-objectif-01",
+      "category": "performance",
+      "question": "Je suis à 80% de mon objectif à midi, c'est bien ou pas ?",
+      "expected_behaviors": [
+        "Analyse du chiffre dans le contexte de la journée",
+        "Conseils pour capitaliser sur ce bon démarrage"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-concurrent-02",
+      "category": "objection_client",
+      "question": "Le client a vu une pub Orange moins chère, comment répondre ?",
+      "expected_behaviors": [
+        "Réponse factuelle sur les différences de service",
+        "Mise en avant de la valeur Ooredoo sans dénigrement"
+      ],
+      "checks": ["no_discount_promise", "french"]
+    },
+    {
+      "id": "coaching-pressure-01",
+      "category": "coaching",
+      "question": "Mon manager me met la pression pour les chiffres, comment gérer ?",
+      "expected_behaviors": [
+        "Conseils pour gérer la pression managériale",
+        "Approche constructive de la relation avec le manager"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-portabilite-01",
+      "category": "vente",
+      "question": "Comment convaincre un client de porter son numéro chez Ooredoo ?",
+      "expected_behaviors": [
+        "Argumentaire sur les avantages du changement",
+        "Simplification de la procédure de portabilité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-compatibilite-01",
+      "category": "produit",
+      "question": "Quel chargeur est compatible avec l'iPhone 15 ?",
+      "expected_behaviors": [
+        "Si l'info est dans le contexte : la donner précisément",
+        "Sinon : expliquer comment vérifier la compatibilité"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "situation-fatigue-01",
+      "category": "contexte",
+      "question": "C'est mon 8ème client difficile de la journée, je suis épuisé, conseil ?",
+      "expected_behaviors": [
+        "Conseils de gestion émotionnelle et récupération",
+        "Techniques pour rester professionnel malgré la fatigue"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-inventaire-01",
+      "category": "stock",
+      "question": "Comment faire un inventaire efficace en fin de journée ?",
+      "expected_behaviors": [
+        "Procédure d'inventaire rapide et fiable",
+        "Conseils pour éviter les erreurs"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-classement-01",
+      "category": "performance",
+      "question": "Où je me classe par rapport aux autres conseillers ?",
+      "expected_behaviors": [
+        "Si les données sont disponibles : les donner",
+        "Sinon : expliquer comment accéder au classement"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "objection-garantie-01",
+      "category": "objection_client",
+      "question": "Le client trouve la garantie trop chère, je fais quoi ?",
+      "expected_behaviors": [
+        "Argumentaire sur la valeur de la garantie",
+        "Ne réduit jamais le prix de la garantie"
+      ],
+      "checks": ["no_discount_promise", "french"]
+    },
+    {
+      "id": "coaching-formation-01",
+      "category": "coaching",
+      "question": "Quelles formations suivre pour progresser en vente ?",
+      "expected_behaviors": [
+        "Recommandations de formations pertinentes",
+        "Conseils de développement professionnel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-family-01",
+      "category": "vente",
+      "question": "Vendre un forfait famille à un client avec 3 enfants",
+      "expected_behaviors": [
+        "Adaptation de l'offre pour famille",
+        "Mise en avant des avantages familiaux Ooredoo"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-promotion-01",
+      "category": "produit",
+      "question": "Quelles promotions sont actives cette semaine ?",
+      "expected_behaviors": [
+        "Si les promos sont dans le contexte : les lister",
+        "Sinon : orienter vers les supports promotionnels"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "situation-complaint-01",
+      "category": "contexte",
+      "question": "Un client menace de porter plainte, comment réagir ?",
+      "expected_behaviors": [
+        "Procédure de gestion des réclamations graves",
+        "Calme et professionnalisme dans la réponse"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-rupture-01",
+      "category": "stock",
+      "question": "Comment gérer une rupture inattendue de produit star ?",
+      "expected_behaviors": [
+        "Procédure d'urgence en cas de rupture critique",
+        "Communication avec les clients"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-mensuel-01",
+      "category": "performance",
+      "question": "Comment analyser mes résultats de fin de mois ?",
+      "expected_behaviors": [
+        "Méthodologie d'analyse des performances",
+        "Identification des axes d'amélioration"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-essential-01",
+      "category": "objection_client",
+      "question": "Le client dit 'je n'ai pas besoin de smartphone', comment rebondir ?",
+      "expected_behaviors": [
+        "Questionnement pour comprendre le vrai besoin",
+        "Adaptation de l'offre au besoin réel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-burnout-01",
+      "category": "coaching",
+      "question": "Les signes du burnout dans mon métier, comment les prévenir ?",
+      "expected_behaviors": [
+        "Identification des signes d'épuisement professionnel",
+        "Conseils de prévention et équilibre vie pro/perso"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-internet-01",
+      "category": "vente",
+      "question": "Comment vendre une box internet en boutique ?",
+      "expected_behaviors": [
+        "Argumentaire sur les avantages de la box Ooredoo",
+        "Vérification d'éligibilité et installation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-futur-01",
+      "category": "produit",
+      "question": "Quels nouveaux produits sont attendus prochainement ?",
+      "expected_behaviors": [
+        "Si l'info est disponible : la partager",
+        "Sinon : orienter vers les roadmaps ou communications"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "situation-vole-01",
+      "category": "contexte",
+      "question": "Un client a volé un produit, comment gérer la situation ?",
+      "expected_behaviors": [
+        "Procédure de gestion des vols",
+        "Calme et sécurité avant tout"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-optimisation-01",
+      "category": "stock",
+      "question": "Comment optimiser l'espace de mon arrière-boutique ?",
+      "expected_behaviors": [
+        "Conseils d'organisation et rangement",
+        "Optimisation pour l'efficacité opérationnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-salaire-01",
+      "category": "performance",
+      "question": "Comment mes primes sont-elles calculées ?",
+      "expected_behaviors": [
+        "Si le système de primes est documenté : l'expliquer",
+        "Sinon : orienter vers les RH ou le manager"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "objection-urgence-01",
+      "category": "objection_client",
+      "question": "Le client a besoin du téléphone URGENTEMENT aujourd'hui",
+      "expected_behaviors": [
+        "Vérification du stock disponible immédiat",
+        "Solutions alternatives si stock insuffisant"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-ambition-01",
+      "category": "coaching",
+      "question": "Comment devenir meilleur conseiller de la région ?",
+      "expected_behaviors": [
+        "Conseils d'excellence et progression",
+        "Plan de développement professionnel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-senior-01",
+      "category": "vente",
+      "question": "Adapter la vente pour un client senior de 75 ans",
+      "expected_behaviors": [
+        "Adaptation du ton et du rythme",
+        "Simplification et accompagnement spécifique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-specifique-01",
+      "category": "produit",
+      "question": "Quelle est la différence entre iPhone 16 et 16 Pro ?",
+      "expected_behaviors": [
+        "Comparaison factuelle des caractéristiques",
+        "Aide au choix selon le besoin"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-error-01",
+      "category": "contexte",
+      "question": "J'ai fait une erreur sur une facture, comment la corriger ?",
+      "expected_behaviors": [
+        "Procédure de correction d'erreur",
+        "Communication avec le client concerné"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-prevision-02",
+      "category": "stock",
+      "question": "Comment anticiper les pics de demande saisonniers ?",
+      "expected_behaviors": [
+        "Méthode d'analyse de saisonnalité",
+        "Planification des stocks accordingly"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-feedback-01",
+      "category": "performance",
+      "question": "Comment demander du feedback à mon manager ?",
+      "expected_behaviors": [
+        "Approche constructive de la demande de feedback",
+        "Préparation de l'entretien"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-technique-02",
+      "category": "objection_client",
+      "question": "Le client ne comprend pas la différence entre forfaits, comment simplifier ?",
+      "expected_behaviors": [
+        "Simplification de l'offre forfaits",
+        "Aide au choix selon l'usage"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-equipe-02",
+      "category": "coaching",
+      "question": "Comment aider un collègue en difficulté ?",
+      "expected_behaviors": [
+        "Approche de soutien entre collègues",
+        "Partage de bonnes pratiques"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-international-01",
+      "category": "vente",
+      "question": "Un client voyage souvent à l'étranger, quel forfait proposer ?",
+      "expected_behaviors": [
+        "Recommandation de forfaits international",
+        "Mise en avant des options roaming"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-accessoire-02",
+      "category": "produit",
+      "question": "Quels accessoires sont essentiels pour un nouvel iPhone ?",
+      "expected_behaviors": [
+        "Liste d'accessoires recommandés",
+        "Argumentaire sur leur utilité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-technique-01",
+      "category": "contexte",
+      "question": "Le système de caisse est planté, comment continuer à vendre ?",
+      "expected_behaviors": [
+        "Procédure de secours en cas de panne système",
+        "Maintien du service client malgré le problème technique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-livraison-01",
+      "category": "stock",
+      "question": "Comment gérer un retard de livraison fournisseur ?",
+      "expected_behaviors": [
+        "Procédure de gestion des retards",
+        "Communication avec les clients impactés"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-objectif-02",
+      "category": "performance",
+      "question": "Comment fixer mes objectifs personnels de vente ?",
+      "expected_behaviors": [
+        "Méthodologie de fixation d'objectifs réalistes",
+        "Plan d'action pour les atteindre"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-budget-01",
+      "category": "objection_client",
+      "question": "Le client a un budget limité mais veut le meilleur téléphone",
+      "expected_behaviors": [
+        "Adaptation de l'offre au budget",
+        "Mise en avant du meilleur rapport qualité/prix"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-balance-01",
+      "category": "coaching",
+      "question": "Comment équilibrer vie pro et vie perso avec les horaires de boutique ?",
+      "expected_behaviors": [
+        "Conseils d'équilibre vie pro/vie perso",
+        "Gestion du temps et des priorités"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-corporate-01",
+      "category": "vente",
+      "question": "Aborder un client qui vient pour son entreprise",
+      "expected_behaviors": [
+        "Adaptation du discours B2B",
+        "Focus sur solutions professionnelles"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-evolution-01",
+      "category": "produit",
+      "question": "Comment la technologie mobile a évolué ces dernières années ?",
+      "expected_behaviors": [
+        "Vue d'ensemble des évolutions technologiques",
+        "Aide à expliquer au client les progrès"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-conflit-01",
+      "category": "contexte",
+      "question": "Conflit avec un collègue sur une vente, comment gérer ?",
+      "expected_behaviors": [
+        "Approche professionnelle de résolution de conflit",
+        "Focus sur l'intérêt du client et de l'équipe"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-peremption-01",
+      "category": "stock",
+      "question": "Comment gérer les produits proches de la péremption (si applicable) ?",
+      "expected_behaviors": [
+        "Procédure pour produits avec date limite",
+        "Stratégies d'écoulement avant péremption"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-carriere-01",
+      "category": "performance",
+      "question": "Quelles opportunités de carrière à partir de conseiller de vente ?",
+      "expected_behaviors": [
+        "Présentation des parcours possibles",
+        "Conseils de développement de carrière"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-famille-01",
+      "category": "objection_client",
+      "question": "Le client doit consulter sa conjointe avant d'acheter",
+      "expected_behaviors": [
+        "Technique pour gérer l'attente et la décision à deux",
+        "Outils pour faciliter la décision conjointe"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-stress-01",
+      "category": "coaching",
+      "question": "Techniques de gestion du stress en boutique",
+      "expected_behaviors": [
+        "Méthodes de gestion du stress immédiat",
+        "Prévention du stress chronique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-jeune-01",
+      "category": "vente",
+      "question": "Vendre à un jeune de 18 ans son premier smartphone",
+      "expected_behaviors": [
+        "Adaptation du discours au jeune public",
+        "Focus sur les usages et réseaux sociaux"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-innovation-01",
+      "category": "produit",
+      "question": "Quelles sont les innovations récentes dans les smartphones ?",
+      "expected_behaviors": [
+        "Présentation des innovations technologiques récentes",
+        "Aide à argumenter sur la modernité des produits"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-accident-01",
+      "category": "contexte",
+      "question": "Un client a fait tomber un produit en boutique, comment réagir ?",
+      "expected_behaviors": [
+        "Gestion calme et professionnelle de l'incident",
+        "Procédure selon la gravité du dommage"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-casiers-01",
+      "category": "stock",
+      "question": "Comment organiser mes casiers produits pour l'efficacité ?",
+      "expected_behaviors": [
+        "Conseils d'organisation des casiers",
+        "Optimisation pour la rapidité de service"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-motivation-01",
+      "category": "performance",
+      "question": "Comment rester motivé sur le long terme en vente ?",
+      "expected_behaviors": [
+        "Stratégies de motivation à long terme",
+        "Entretien de la passion pour le métier"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-experience-01",
+      "category": "objection_client",
+      "question": "Le client se dit 'déçu par son expérience précédente', comment récupérer ?",
+      "expected_behaviors": [
+        "Écoute active et compréhension",
+        "Proposition de réparation de l'expérience"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-mentor-01",
+      "category": "coaching",
+      "question": "Comment trouver un mentor dans l'entreprise ?",
+      "expected_behaviors": [
+        "Approche pour trouver un mentor",
+        "Bénéfices du mentorat"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-package-01",
+      "category": "vente",
+      "question": "Comment créer un package attractif téléphone + accessoire + forfait ?",
+      "expected_behaviors": [
+        "Techniques de création de packages",
+        "Argumentaire sur l'avantage bundle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-ecologie-01",
+      "category": "produit",
+      "question": "Quels sont les aspects écologiques des produits Ooredoo ?",
+      "expected_behaviors": [
+        "Si l'info est disponible : la partager",
+        "Sinon : orienter vers les informations RSE"
+      ],
+      "checks": ["french", "cites_number_only_if_grounded"]
+    },
+    {
+      "id": "situation-urgence-02",
+      "category": "contexte",
+      "question": "Alerte incendie dans le centre commercial, procédure ?",
+      "expected_behaviors": [
+        "Procédure de sécurité prioritaire",
+        "Gestion des clients en situation d'urgence"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-retour-01",
+      "category": "stock",
+      "question": "Comment traiter les produits retournés par les clients ?",
+      "expected_behaviors": [
+        "Procédure de traitement des retours",
+        "Décision réintégration vs réparation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-bilan-01",
+      "category": "performance",
+      "question": "Comment faire un bilan annuel de mes performances ?",
+      "expected_behaviors": [
+        "Méthodologie de bilan annuel",
+        "Préparation des entretiens annuels"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-attente-01",
+      "category": "objection_client",
+      "question": "Le client n'a pas le temps d'attendre, conclusion rapide ?",
+      "expected_behaviors": [
+        "Techniques de closing rapide",
+        "Efficacité sans précipitation excessive"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-succes-01",
+      "category": "coaching",
+      "question": "Comment célébrer mes réussites en vente ?",
+      "expected_behaviors": [
+        "Importance de la reconnaissance des succès",
+        "Célébration personnelle et partage avec l'équipe"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-data-01",
+      "category": "vente",
+      "question": "Comment vendre un forfait data seulement (sans voix) ?",
+      "expected_behaviors": [
+        "Identification des besoins data purs",
+        "Argumentaire sur les avantages forfaits data"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-comparaison-02",
+      "category": "produit",
+      "question": "Android vs iOS pour un utilisateur professionnel",
+      "expected_behaviors": [
+        "Comparaison objective pour usage pro",
+        "Aide au choix selon besoins professionnels"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-enfant-01",
+      "category": "contexte",
+      "question": "Un enfant a cassé un produit en démonstration, réaction ?",
+      "expected_behaviors": [
+        "Gestion diplomate avec les parents",
+        "Procédure selon la gravité du dommage"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-securite-01",
+      "category": "stock",
+      "question": "Comment sécuriser les produits de valeur en boutique ?",
+      "expected_behaviors": [
+        "Procédures de sécurité antivol",
+        "Organisation pour minimiser les risques"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-challenge-01",
+      "category": "performance",
+      "question": "Comment me lancer un challenge personnel de vente ?",
+      "expected_behaviors": [
+        "Méthodologie de création de challenge",
+        "Suivi et célébration des objectifs"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-innovation-01",
+      "category": "objection_client",
+      "question": "Le client dit 'je n'ai pas besoin de toutes ces fonctionnalités'",
+      "expected_behaviors": [
+        "Recentrage sur les fonctionnalités utiles",
+        "Simplification de l'offre"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-resilience-01",
+      "category": "coaching",
+      "question": "Comment développer sa résilience en vente ?",
+      "expected_behaviors": [
+        "Techniques de développement de résilience",
+        "Gestion des échecs et rejets"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-roaming-01",
+      "category": "vente",
+      "question": "Expliquer les options roaming à un client voyageur",
+      "expected_behaviors": [
+        "Simplification des options roaming",
+        "Aide au choix selon destination"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-futur-02",
+      "category": "produit",
+      "question": "Quelles technologies émergentes dans le mobile ?",
+      "expected_behaviors": [
+        "Vue des technologies futures",
+        "Aide à anticiper les questions clients"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-incident-01",
+      "category": "contexte",
+      "question": "Incident technique avec un client en cours d'activation",
+      "expected_behaviors": [
+        "Gestion de l'incident technique",
+        "Maintien de la relation client malgré le problème"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-inventaire-02",
+      "category": "stock",
+      "question": "Comment faire un inventaire tournant efficace ?",
+      "expected_behaviors": [
+        "Méthode d'inventaire tournant",
+        "Intégration dans les opérations quotidiennes"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-reseau-01",
+      "category": "performance",
+      "question": "Comment utiliser mon réseau professionnel pour progresser ?",
+      "expected_behaviors": [
+        "Stratégies de développement réseau",
+        "Utilisation du networking pour la carrière"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-habitude-01",
+      "category": "objection_client",
+      "question": "Le client dit 'je suis habitué à mon opérateur actuel'",
+      "expected_behaviors": [
+        "Technique pour briser l'habitude",
+        "Mise en avant des avantages du changement"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-confiance-01",
+      "category": "coaching",
+      "question": "Comment gagner en confiance en vente ?",
+      "expected_behaviors": [
+        "Exercices pour développer la confiance",
+        "Mentalité gagnante en vente"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-premium-01",
+      "category": "vente",
+      "question": "Adapter la vente pour un client premium/high-end",
+      "expected_behaviors": [
+        "Adaptation du discours client premium",
+        "Service et expérience haut de gamme"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-service-01",
+      "category": "produit",
+      "question": "Quels services additionnels proposer avec un smartphone ?",
+      "expected_behaviors": [
+        "Liste de services pertinents",
+        "Argumentaire sur leur valeur ajoutée"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-media-01",
+      "category": "contexte",
+      "question": "Un journaliste veut faire un reportage dans la boutique",
+      "expected_behaviors": [
+        "Procédure pour demandes médias",
+        "Présentation professionnelle de l'enseigne"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-fournisseur-01",
+      "category": "stock",
+      "question": "Comment gérer les relations avec les fournisseurs ?",
+      "expected_behaviors": [
+        "Bonnes pratiques relationnelles fournisseurs",
+        "Optimisation des approvisionnements"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-argent-01",
+      "category": "performance",
+      "question": "Comment optimiser mes revenus en tant que conseiller ?",
+      "expected_behaviors": [
+        "Stratégies d'optimisation des revenus",
+        "Compréhension du système de rémunération"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-marche-01",
+      "category": "objection_client",
+      "question": "Le client dit 'je vais attendre les soldes'",
+      "expected_behaviors": [
+        "Technique pour décaler l'attente",
+        "Mise en avant de la valeur immédiate"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-communication-01",
+      "category": "coaching",
+      "question": "Comment améliorer ma communication en vente ?",
+      "expected_behaviors": [
+        "Techniques de communication efficace",
+        "Amélioration de l'écoute et de l'expression"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-complexe-01",
+      "category": "vente",
+      "question": "Gérer une vente complexe avec plusieurs décideurs",
+      "expected_behaviors": [
+        "Stratégie pour vente multi-décideurs",
+        "Coordination et suivi"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-usage-01",
+      "category": "produit",
+      "question": "Adapter le conseil selon l'usage principal du téléphone",
+      "expected_behaviors": [
+        "Identification de l'usage principal",
+        "Recommandation adaptée au profil"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-perfectionnisme-01",
+      "category": "contexte",
+      "question": "Je suis perfectionniste et perds du temps sur chaque client",
+      "expected_behaviors": [
+        "Conseils pour gérer le perfectionnisme",
+        "Équilibre qualité/efficacité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-automatisation-01",
+      "category": "stock",
+      "question": "Quels outils pour automatiser la gestion de stock ?",
+      "expected_behaviors": [
+        "Présentation des outils disponibles",
+        "Bonnes pratiques d'automatisation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-identite-01",
+      "category": "performance",
+      "question": "Comment développer mon identité de vendeur ?",
+      "expected_behaviors": [
+        "Construction d'une identité professionnelle",
+        "Différenciation et style personnel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-ego-01",
+      "category": "objection_client",
+      "question": "Le client veut montrer qu'il en sait plus que moi",
+      "expected_behaviors": [
+        "Gestion des clients 'experts'",
+        "Humilité et complémentarité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-adaptabilite-01",
+      "category": "coaching",
+      "question": "Comment s'adapter aux changements dans l'entreprise ?",
+      "expected_behaviors": [
+        "Stratégies d'adaptation au changement",
+        "Résilience et flexibilité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-emotion-01",
+      "category": "vente",
+      "question": "Utiliser l'émotion dans la vente de manière éthique",
+      "expected_behaviors": [
+        "Techniques de vente émotionnelle éthiques",
+        "Connexion émotionnelle authentique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-personnalisation-01",
+      "category": "produit",
+      "question": "Comment personnaliser l'expérience d'achat ?",
+      "expected_behaviors": [
+        "Techniques de personnalisation",
+        "Adaptation au profil client"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-debrief-01",
+      "category": "contexte",
+      "question": "Comment faire un débrief après une journée difficile ?",
+      "expected_behaviors": [
+        "Méthode de débrief constructif",
+        "Apprentissage des expériences difficiles"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-anticipation-01",
+      "category": "stock",
+      "question": "Comment anticiper les tendances de consommation ?",
+      "expected_behaviors": [
+        "Méthodes d'analyse de tendances",
+        "Adaptation des stocks accordingly"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-legacy-01",
+      "category": "performance",
+      "question": "Comment laisser une empreinte positive dans mon équipe ?",
+      "expected_behaviors": [
+        "Contribution à l'équipe et à l'entreprise",
+        "Transmission et mentorat"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-final-01",
+      "category": "objection_client",
+      "question": "Dernière objection : 'je vais réfléchir encore une fois'",
+      "expected_behaviors": [
+        "Technique de closing sur dernière hésitation",
+        "Conclusion professionnelle sans pression"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-vision-01",
+      "category": "coaching",
+      "question": "Comment développer une vision à long terme de ma carrière ?",
+      "expected_behaviors": [
+        "Construction de vision professionnelle",
+        "Planification à long terme"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-relation-01",
+      "category": "vente",
+      "question": "Transformer une vente ponctuelle en relation durable",
+      "expected_behaviors": [
+        "Stratégies de fidélisation post-vente",
+        "Construction de relation client"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-evolution-02",
+      "category": "produit",
+      "question": "Comment le marché mobile va évoluer dans 5 ans ?",
+      "expected_behaviors": [
+        "Tendances et prévisions du marché",
+        "Préparation aux évolutions futures"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-mentorat-01",
+      "category": "contexte",
+      "question": "Comment devenir mentor pour les nouveaux conseillers ?",
+      "expected_behaviors": [
+        "Rôle et responsabilités de mentor",
+        "Développement des compétences de mentorat"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-durabilite-01",
+      "category": "stock",
+      "question": "Comment intégrer la durabilité dans la gestion de stock ?",
+      "expected_behaviors": [
+        "Pratiques de stock durable",
+        "Réduction du gaspillage"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-equilibre-01",
+      "category": "performance",
+      "question": "Comment maintenir l'équilibre entre performance et bien-être ?",
+      "expected_behaviors": [
+        "Stratégies d'équilibre performance/bien-être",
+        "Santé mentale et réussite professionnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-authenticite-01",
+      "category": "objection_client",
+      "question": "Le client dit 'vous semblez lire un script'",
+      "expected_behaviors": [
+        "Authenticité et naturel dans la vente",
+        "Adaptation et personnalisation du discours"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-courage-01",
+      "category": "coaching",
+      "question": "Comment développer le courage en vente ?",
+      "expected_behaviors": [
+        "Développement de l'audace et du courage",
+        "Dépassement de la zone de confort"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-valeur-01",
+      "category": "vente",
+      "question": "Vendre sur la valeur plutôt que sur le prix",
+      "expected_behaviors": [
+        "Techniques de vente sur valeur",
+        "Argumentaire axé sur bénéfices"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-innovation-02",
+      "category": "produit",
+      "question": "Quelles innovations Ooredoo dans les services ?",
+      "expected_behaviors": [
+        "Présentation des innovations de service",
+        "Avantages concurrentiels"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-reflexion-01",
+      "category": "contexte",
+      "question": "Comment prendre du recul après une mauvaise expérience ?",
+      "expected_behaviors": [
+        "Méthodes de réflexion constructive",
+        "Apprentissage et résilience"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-collaboration-01",
+      "category": "stock",
+      "question": "Comment collaborer efficacement avec l'équipe stock ?",
+      "expected_behaviors": [
+        "Bonnes pratiques de collaboration",
+        "Communication et coordination"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-transformation-01",
+      "category": "performance",
+      "question": "Comment transformer mes faiblesses en forces ?",
+      "expected_behaviors": [
+        "Identification et travail sur les faiblesses",
+        "Transformation et croissance personnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-confiance-01",
+      "category": "objection_client",
+      "question": "Le client n'a pas confiance dans les opérateurs",
+      "expected_behaviors": [
+        "Reconstruction de la confiance",
+        "Transparence et preuve de valeur"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-excellence-01",
+      "category": "coaching",
+      "question": "Qu'est-ce que l'excellence en vente au quotidien ?",
+      "expected_behaviors": [
+        "Définition de l'excellence opérationnelle",
+        "Pratiques quotidiennes de haut niveau"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-storytelling-01",
+      "category": "vente",
+      "question": "Utiliser le storytelling dans la vente",
+      "expected_behaviors": [
+        "Techniques de storytelling commercial",
+        "Histoires qui vendent"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-differentiation-01",
+      "category": "produit",
+      "question": "Comment différentier l'offre Ooredoo de la concurrence ?",
+      "expected_behaviors": [
+        "Arguments de différenciation",
+        "Positionnement unique Ooredoo"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-gratitude-01",
+      "category": "contexte",
+      "question": "Comment pratiquer la gratitude dans mon travail quotidien ?",
+      "expected_behaviors": [
+        "Pratiques de gratitude au travail",
+        "Impact positif sur le bien-être"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-visibilite-01",
+      "category": "stock",
+      "question": "Comment améliorer la visibilité des stocks en boutique ?",
+      "expected_behaviors": [
+        "Organisation pour meilleure visibilité",
+        "Impact sur les ventes"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-impact-01",
+      "category": "performance",
+      "question": "Comment mesurer mon impact réel sur l'entreprise ?",
+      "expected_behaviors": [
+        "Indicateurs d'impact personnel",
+        "Contribution aux objectifs globaux"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-technique-03",
+      "category": "objection_client",
+      "question": "Le client pose des questions techniques très pointues",
+      "expected_behaviors": [
+        "Gestion des questions techniques complexes",
+        "Orientation vers les ressources appropriées"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-puissance-01",
+      "category": "coaching",
+      "question": "Comment développer ma puissance personnelle en vente ?",
+      "expected_behaviors": [
+        "Développement de la présence et de l'impact",
+        "Charisme et influence positive"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-consultative-01",
+      "category": "vente",
+      "question": "Approche consultative vs vente traditionnelle",
+      "expected_behaviors": [
+        "Différences et avantages de l'approche consultative",
+        "Mise en pratique des principes consultatifs"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-ecosysteme-01",
+      "category": "produit",
+      "question": "Comprendre l'écosystème des produits Ooredoo",
+      "expected_behaviors": [
+        "Vue d'ensemble de l'écosystème produits",
+        "Synergies entre offres"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-resilience-01",
+      "category": "contexte",
+      "question": "Comment rebondir après une série de refus ?",
+      "expected_behaviors": [
+        "Techniques de résilience après échecs",
+        "Maintien de la motivation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-prevision-01",
+      "category": "stock",
+      "question": "Comment utiliser les données pour prévoir les besoins ?",
+      "expected_behaviors": [
+        "Méthodes d'analyse prévisionnelle",
+        "Utilisation des données historiques"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-fulfillment-01",
+      "category": "performance",
+      "question": "Comment trouver l'épanouissement dans mon travail de vente ?",
+      "expected_behaviors": [
+        "Recherche de sens et d'épanouissement",
+        "Alignement valeurs professionnelles"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-precipitation-01",
+      "category": "objection_client",
+      "question": "Le client veut que je me dépêche",
+      "expected_behaviors": [
+        "Gestion de l'urgence cliente",
+        "Efficacité sans négliger la qualité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-mindset-01",
+      "category": "coaching",
+      "question": "Comment développer un mindset de croissance ?",
+      "expected_behaviors": [
+        "Principes du mindset de croissance",
+        "Application à la vente"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-psychologie-01",
+      "category": "vente",
+      "question": "Comprendre la psychologie du client en vente",
+      "expected_behaviors": [
+        "Principes de psychologie de vente",
+        "Application pratique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-tendances-01",
+      "category": "produit",
+      "question": "Quelles tendances influencent le marché mobile ?",
+      "expected_behaviors": [
+        "Analyse des tendances marché",
+        "Adaptation des stratégies accordingly"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-célébration-01",
+      "category": "contexte",
+      "question": "Comment célébrer les succès d'équipe ?",
+      "expected_behaviors": [
+        "Pratiques de célébration collective",
+        "Renforcement de l'esprit d'équipe"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-resilience-01",
+      "category": "stock",
+      "question": "Comment gérer les imprévus en stock ?",
+      "expected_behaviors": [
+        "Stratégies de gestion des imprévus",
+        "Plans de contingence"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-longs-terme-01",
+      "category": "performance",
+      "question": "Comment planifier ma carrière sur 5 ans ?",
+      "expected_behaviors": [
+        "Planification carrière long terme",
+        "Étapes et milestones"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-puissance-01",
+      "category": "objection_client",
+      "question": "Le client essaie de dominer la conversation",
+      "expected_behaviors": [
+        "Gestion des clients dominateurs",
+        "Reprise du contrôle diplomate"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-authenticite-01",
+      "category": "coaching",
+      "question": "Comment rester authentique en vente ?",
+      "expected_behaviors": [
+        "Authenticité vs techniques de vente",
+        "Équilibre professionnalisme et personnalité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-negociation-01",
+      "category": "vente",
+      "question": "Principes de négociation en vente",
+      "expected_behaviors": [
+        "Techniques de négociation éthique",
+        "Gagnant-gagnant"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-marque-01",
+      "category": "produit",
+      "question": "Comment la marque Ooredoo se positionne sur le marché ?",
+      "expected_behaviors": [
+        "Positionnement de marque",
+        "Valeurs et promesse"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-conflit-equipe-01",
+      "category": "contexte",
+      "question": "Gérer un conflit d'équipe qui impacte les ventes",
+      "expected_behaviors": [
+        "Résolution de conflit d'équipe",
+        "Impact sur performance collective"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-optimisation-cout-01",
+      "category": "stock",
+      "question": "Comment optimiser les coûts de stock ?",
+      "expected_behaviors": [
+        "Stratégies de réduction des coûts",
+        "Efficacité opérationnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-reconnaissance-01",
+      "category": "performance",
+      "question": "Comment obtenir la reconnaissance de mon travail ?",
+      "expected_behaviors": [
+        "Stratégies de visibilité et reconnaissance",
+        "Communication des réussites"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-incertitude-01",
+      "category": "objection_client",
+      "question": "Le client exprime beaucoup d'incertitude",
+      "expected_behaviors": [
+        "Gestion de l'incertitude client",
+        "Rassurement et clarification"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-developpement-01",
+      "category": "coaching",
+      "question": "Plan de développement personnel sur 6 mois",
+      "expected_behaviors": [
+        "Structure de plan développement",
+        "Objectifs et actions concrètes"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-innovation-01",
+      "category": "vente",
+      "question": "Innover dans ses approches de vente",
+      "expected_behaviors": [
+        "Méthodes d'innovation commerciale",
+        "Créativité dans la vente"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-experience-01",
+      "category": "produit",
+      "question": "Comment améliorer l'expérience produit client ?",
+      "expected_behaviors": [
+        "Dimension expérience client",
+        "Touchpoints et optimisation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-crise-01",
+      "category": "contexte",
+      "question": "Gérer une crise majeure en boutique",
+      "expected_behaviors": [
+        "Procédure de gestion de crise",
+        "Leadership en situation d'urgence"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-strategie-01",
+      "category": "stock",
+      "question": "Développer une stratégie de stock globale",
+      "expected_behaviors": [
+        "Approche stratégique de la gestion de stock",
+        "Alignement avec objectifs business"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-excellence-01",
+      "category": "performance",
+      "question": "Chemins vers l'excellence en vente",
+      "expected_behaviors": [
+        "Trajectoire vers l'excellence",
+        "Pratiques des top performers"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-ultime-01",
+      "category": "objection_client",
+      "question": "Dernier barrage : 'je dois en parler à mon comptable'",
+      "expected_behaviors": [
+        "Gestion de l'objection tiers",
+        "Techniques pour impliquer le tiers"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-passerelle-01",
+      "category": "coaching",
+      "question": "Comment préparer une passerelle vers un autre rôle ?",
+      "expected_behaviors": [
+        "Préparation de transition de rôle",
+        "Compétences transférables"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-omnicanal-01",
+      "category": "vente",
+      "question": "Vente dans un contexte omnicanal",
+      "expected_behaviors": [
+        "Adaptation à l'omnicanal",
+        "Synergie canaux de vente"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-sustainable-01",
+      "category": "produit",
+      "question": "Quelles options durables dans les produits ?",
+      "expected_behaviors": [
+        "Offres durables et éco-responsables",
+        "Argumentaire RSE"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "sitiation-succes-01",
+      "category": "contexte",
+      "question": "Capitaliser sur un grand succès pour se développer",
+      "expected_behaviors": [
+        "Analyse et réplication des succès",
+        "Confiance et ambition après réussite"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-transformation-01",
+      "category": "stock",
+      "question": "Transformer la gestion de stock en avantage compétitif",
+      "expected_behaviors": [
+        "Stock comme levier stratégique",
+        "Différenciation par excellence opérationnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-vision-01",
+      "category": "performance",
+      "question": "Développer une vision de leader en vente",
+      "expected_behaviors": [
+        "Mindset de leader",
+        "Influence positive sur l'équipe"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-respect-01",
+      "category": "objection_client",
+      "question": "Le client manque de respect, comment réagir ?",
+      "expected_behaviors": [
+        "Gestion du manque de respect",
+        "Maintien du professionnalisme"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-heritage-01",
+      "category": "coaching",
+      "question": "Comment laisser un héritage positif ?",
+      "expected_behaviors": [
+        "Construction d'héritage professionnel",
+        "Impact durable sur l'organisation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-purpose-01",
+      "category": "vente",
+      "question": "Connecter la vente à un sens plus profond",
+      "expected_behaviors": [
+        "Purpose et sens dans la vente",
+        "Motivation par la mission"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-valeur-01",
+      "category": "produit",
+      "question": "Comment communiquer la valeur des produits ?",
+      "expected_behaviors": [
+        "Communication de valeur",
+        "Argumentaire bénéfices client"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-compassion-01",
+      "category": "contexte",
+      "question": "Faire preuve de compassion dans un environnement commercial",
+      "expected_behaviors": [
+        "Équilibre compassion et performance",
+        "Humanité dans la relation commerciale"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-harmonie-01",
+      "category": "stock",
+      "question": "Créer l'harmonie entre stock et vente",
+      "expected_behaviors": [
+        "Alignement stock/vente",
+        "Collaboration interfonctionnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-sagesse-01",
+      "category": "performance",
+      "question": "Sagesse et maturité professionnelle en vente",
+      "expected_behaviors": [
+        "Développement de la sagesse professionnelle",
+        "Prise de décision éclairée"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-finalite-01",
+      "category": "objection_client",
+      "question": "Client qui ne peut pas décider maintenant",
+      "expected_behaviors": [
+        "Gestion de l'indécision temporelle",
+        "Création d'urgence légitime"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-actualisation-01",
+      "category": "coaching",
+      "question": "Comment s'actualiser continuellement en vente ?",
+      "expected_behaviors": [
+        "Veille et apprentissage continu",
+        "Adaptation aux évolutions du marché"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-influence-01",
+      "category": "vente",
+      "question": "Principes d'influence éthique en vente",
+      "expected_behaviors": [
+        "Psychologie de l'influence",
+        "Application éthique des principes"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-client-01",
+      "category": "produit",
+      "question": "Centrer les produits sur les besoins clients",
+      "expected_behaviors": [
+        "Approche client-centric",
+        "Adaptation des offres aux besoins"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-joy-01",
+      "category": "contexte",
+      "question": "Trouver la joie dans son travail quotidien de vente",
+      "expected_behaviors": [
+        "Sources de joie professionnelle",
+        "Cultiver le plaisir au travail"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-abondance-01",
+      "category": "stock",
+      "question": "Mentalité d'abondance vs rareté en stock",
+      "expected_behaviors": [
+        "Mindset d'abondance opérationnelle",
+        "Confiance et optimisme"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-gratitude-01",
+      "category": "performance",
+      "question": "Pratiquer la gratitude dans sa carrière",
+      "expected_behaviors": [
+        "Gratitude comme levier de performance",
+        "Impact positif sur le parcours"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-humilite-01",
+      "category": "objection_client",
+      "question": "Reconnaître ne pas savoir et avouer humblement",
+      "expected_behaviors": [
+        "Humilité professionnelle",
+        "Gestion de l'ignorance avec élégance"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-elevation-01",
+      "category": "coaching",
+      "question": "S'élever au-dessus des défis quotidiens",
+      "expected_behaviors": [
+        "Perspective et élévation",
+        "Vision au-delà des obstacles"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-service-01",
+      "category": "vente",
+      "question": "La vente comme acte de service",
+      "expected_behaviors": [
+        "Orientation service dans la vente",
+        "Impact positif sur les clients"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-qualite-01",
+      "category": "produit",
+      "question": "Qualité et fiabilité des produits Ooredoo",
+      "expected_behaviors": [
+        "Standards de qualité",
+        "Communication sur la fiabilité"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-serenite-01",
+      "category": "contexte",
+      "question": "Cultiver la sérénité dans un environnement intense",
+      "expected_behaviors": [
+        "Gestion du stress et calme intérieur",
+        "Équilibre émotionnel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-equilibre-01",
+      "category": "stock",
+      "question": "Trouver l'équilibre optimal en gestion de stock",
+      "expected_behaviors": [
+        "Principe d'équilibre stock",
+        "Juste milieu entre excès et pénurie"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-harmonie-01",
+      "category": "performance",
+      "question": "Harmoniser vie professionnelle et personnelle",
+      "expected_behaviors": [
+        "Équilibre vie pro/perso",
+        "Harmonie globale"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-elegance-01",
+      "category": "objection_client",
+      "question": "Gérer les objections avec élégance",
+      "expected_behaviors": [
+        "Élégance professionnelle",
+        "Classe et diplomatie"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-transcendance-01",
+      "category": "coaching",
+      "question": "Transcender les limites perçues en vente",
+      "expected_behaviors": [
+        "Dépassement des limites",
+        "Réussite au-delà des attentes"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-magie-01",
+      "category": "vente",
+      "question": "La magie de la vente authentique",
+      "expected_behaviors": [
+        "Authenticité et connexion humaine",
+        "Moments magiques en vente"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-promesse-01",
+      "category": "produit",
+      "question": "La promesse de marque Ooredoo",
+      "expected_behaviors": [
+        "Promesse et valeurs de marque",
+        "Alignment produit/promesse"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-plenitude-01",
+      "category": "contexte",
+      "question": "Trouver la plénitude dans sa carrière de vendeur",
+      "expected_behaviors": [
+        "Sens et plénitude professionnelle",
+        "Accomplissement et épanouissement"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-sagesse-01",
+      "category": "stock",
+      "question": "Sagesse dans la gestion de stock",
+      "expected_behaviors": [
+        "Prudence et audace équilibrées",
+        "Apprentissage de l'expérience"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-illumination-01",
+      "category": "performance",
+      "question": "S'illuminer et illuminer les autres par son excellence",
+      "expected_behaviors": [
+        "Rayonnement personnel",
+        "Influence positive par l'exemple"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-maitrise-01",
+      "category": "objection_client",
+      "question": "Maîtriser l'art de répondre aux objections",
+      "expected_behaviors": [
+        "Excellence dans le traitement des objections",
+        "Fluidité et naturel"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-evolution-01",
+      "category": "coaching",
+      "question": "Évolution continue comme conseiller de vente",
+      "expected_behaviors": [
+        "Croissance et transformation continues",
+        "Devenir la meilleure version de soi"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-transformation-01",
+      "category": "vente",
+      "question": "La vente comme vecteur de transformation",
+      "expected_behaviors": [
+        "Impact transformateur sur les clients",
+        "Vente comme contribution positive"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-essence-01",
+      "category": "produit",
+      "question": "L'essence des produits Ooredoo",
+      "expected_behaviors": [
+        "Cœur de l'offre produit",
+        "Valeur fondamentale"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-realisation-01",
+      "category": "contexte",
+      "question": "Se réaliser pleinement dans son rôle",
+      "expected_behaviors": [
+        "Accomplissement de son potentiel",
+        "Réalisation professionnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-perfection-01",
+      "category": "stock",
+      "question": "La quête de perfection en gestion de stock",
+      "expected_behaviors": [
+        "Amélioration continue",
+        "Excellence opérationnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-contribution-01",
+      "category": "performance",
+      "question": "Contribution exceptionnelle à l'organisation",
+      "expected_behaviors": [
+        "Impact et contribution significatifs",
+        "Héritage durable"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-grace-01",
+      "category": "objection_client",
+      "question": "Répondre aux objections avec grâce",
+      "expected_behaviors": [
+        "Grâce et élégance",
+        "Douceur et fermeté"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-sagesse-01",
+      "category": "coaching",
+      "question": "Sagesse et maîtrise en coaching de vente",
+      "expected_behaviors": [
+        "Profondeur et sagesse",
+        "Guide éclairé"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-inspiration-01",
+      "category": "vente",
+      "question": "La vente comme source d'inspiration",
+      "expected_behaviors": [
+        "Inspiration et créativité",
+        "Énergie positive en vente"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-excellence-01",
+      "category": "produit",
+      "question": "Excellence des produits Ooredoo",
+      "expected_behaviors": [
+        "Standards d'excellence",
+        "Qualité supérieure"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-bonte-01",
+      "category": "contexte",
+      "question": "La bonté comme force en vente",
+      "expected_behaviors": [
+        "Bienveillance et bonté",
+        "Force de la gentillesse"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-vision-01",
+      "category": "stock",
+      "question": "Vision stratégique de la gestion de stock",
+      "expected_behaviors": [
+        "Perspective long terme",
+        "Stratégie et anticipation"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-legend-01",
+      "category": "performance",
+      "question": "Devenir une légende dans son domaine",
+      "expected_behaviors": [
+        "Excellence légendaire",
+        "Impact historique"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "objection-maitrise-ultime-01",
+      "category": "objection_client",
+      "question": "Maîtrise ultime des objections",
+      "expected_behaviors": [
+        "Niveau d'expertise supérieur",
+        "Fluidité absolue"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "coaching-transcendance-finale-01",
+      "category": "coaching",
+      "question": "Transcendance finale en coaching",
+      "expected_behaviors": [
+        "Niveau de maîtrise suprême",
+        "Sagesse transcendante"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "vente-art-01",
+      "category": "vente",
+      "question": "La vente comme art suprême",
+      "expected_behaviors": [
+        "Artisticité et excellence",
+        "Création de beauté commerciale"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "produit-ideal-01",
+      "category": "produit",
+      "question": "L'idéal produit selon Ooredoo",
+      "expected_behaviors": [
+        "Vision idéale",
+        "Aspiration produit"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "situation-ultime-01",
+      "category": "contexte",
+      "question": "Réalisation ultime en tant que conseiller",
+      "expected_behaviors": [
+        "Accomplissement suprême",
+        "Réalisation du potentiel ultime"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "stock-ideal-01",
+      "category": "stock",
+      "question": "L'idéal en gestion de stock",
+      "expected_behaviors": [
+        "Vision idéale",
+        "Perfection opérationnelle"
+      ],
+      "checks": ["french"]
+    },
+    {
+      "id": "performance-ultime-01",
+      "category": "performance",
+      "question": "Performance ultime et contribution",
+      "expected_behaviors": [
+        "Niveau de contribution suprême",
+        "Impact transformationnel"
+      ],
+      "checks": ["french"]
     }
   ]
 }

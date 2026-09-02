@@ -140,7 +140,7 @@ _WEATHER_CACHE_TTL = 300
 
 app = FastAPI(
     title="Unified Retail AI API",
-    description="Inventory + Sales + Agents IA (Analyste · Stratège · Coach)",
+    description="-+ Sales + Agents IA (Analyste · Stratège · Coach)",
     version="4.0.0",
 )
 
@@ -315,6 +315,9 @@ async def startup_event():
     # It does NOT bound how long a cold run takes for a *different* store —
     # that's controlled by DEMO_SKU_CAP in routes.py.
     def _prewarm_inventory():
+        # ── Step 1: Tier-1 table — rule-based/demand-sensing, zero tokens ──
+        # Fills the /api/inventory/store/{id} cache so the dashboard's 100+
+        # SKU table renders instantly on first load, regardless of LLM state.
         try:
             from app.inventory.api.routes import analyze_store
             t0 = time.time()
@@ -327,11 +330,45 @@ async def startup_event():
                 page_size=0,
             )
             logger.info(
-                "✅ Inventory cache pre-warmed for store %s (%.1fs)",
+                "✅ Inventory table pre-warmed for store %s (%.1fs, 0 tokens)",
                 DEFAULT_STORE_ID, time.time() - t0,
             )
         except Exception as e:
-            logger.warning("⚠️ Inventory cache pre-warm failed: %s", e)
+            logger.warning("⚠️ Inventory table pre-warm failed: %s", e)
+            return  # Featured-SKU selection needs the table above — bail out
+
+        # ── Step 2: Tier-2 — Top 4-8 featured demo SKUs, real LLM ──────────
+        # 1-2 representative SKUs per action category (EXPEDITE/ORDER/
+        # MONITOR/HOLD), NOT all 100+ SKUs — this is what fixes Problem 1
+        # (300 LLM calls on boot exhausting free-tier quotas). Everything
+        # else stays on-demand (Tier 3, POST /analyze on click).
+        try:
+            from app.inventory.api.routes import select_featured_skus, run_llm_analysis
+            featured_skus = select_featured_skus(
+                DEFAULT_STORE_ID, business_objective="balanced", per_action=2,
+            )
+            t1 = time.time()
+            warmed, failed = 0, 0
+            for i, sku in enumerate(featured_skus):
+                if i > 0:
+                    # Space calls out — a tight loop here means 6 SKUs × 3
+                    # agents all competing for the same 4 Groq keys / shared
+                    # OpenRouter free-tier quota / DB pool at once. Cheap
+                    # insurance against the exact startup meltdown this was
+                    # meant to prevent.
+                    time.sleep(2.0)
+                try:
+                    run_llm_analysis(sku, DEFAULT_STORE_ID, "balanced")
+                    warmed += 1
+                except Exception as e:
+                    failed += 1
+                    logger.warning("⚠️ Featured-SKU pre-warm failed for %s: %s", sku, e)
+            logger.info(
+                "✅ %d/%d featured demo SKUs pre-warmed with LLM for store %s (%.1fs, ~%d LLM calls)",
+                warmed, len(featured_skus), DEFAULT_STORE_ID, time.time() - t1, warmed * 3,
+            )
+        except Exception as e:
+            logger.warning("⚠️ Featured-SKU pre-warm failed: %s", e)
 
     # Gardée sur app.state pour être annulée à l'arrêt : sinon le batch continue
     # pendant la sortie de l'interpréteur et chaque SKU échoue sur
@@ -647,47 +684,24 @@ async def startup_event():
         logger.warning(f"⚠️ Snapshot tendance % critique non démarré: {e}")
 
     # ── Préchauffage du cache inventory ──────────────────────────────────────
-    # Le pipeline a froid coute ~3 min sur I63 (143 SKUs), dont l'essentiel en
-    # ajustement statsforecast. Le dashboard, lui, abandonne chaque tentative
-    # HTTP au bout de 60 s : tant que le cache est froid il affiche 0 partout,
-    # ce qui se lit a tort comme « aucune rupture ». On paie donc ce cout une
-    # fois au demarrage, en tache de fond, pour que la premiere ouverture du
-    # dashboard tape un cache chaud (~0,2 s).
+    # NOTE: il n'y a plus qu'UN SEUL préchauffage inventory, défini plus haut
+    # (module-level _prewarm_inventory, ~ligne 317) : table rule-based
+    # (fast=True, 0 token) puis LLM réel sur seulement les 4-8 SKUs "vedettes"
+    # (select_featured_skus). Il tourne déjà en tâche de fond via
+    # asyncio.create_task(asyncio.to_thread(_prewarm_inventory)) et se termine
+    # une seule fois, au démarrage.
     #
-    # force_refresh=True est nécessaire ici : le prewarm rapide plus haut
-    # (fast=True, ~ligne 317) tourne en premier et remplit déjà le même
-    # cache (store_id + objective) avec des données rule-based. Sans
-    # force_refresh, analyze_store() trouve ce cache chaud et rend la main
-    # immédiatement — le pipeline LLM complet ci-dessous ne s'exécute jamais
-    # réellement, malgré son but explicite de pré-payer ce coût une fois.
-    async def _prewarm_inventory():
-        from app.inventory.api.routes import analyze_store
-        stores = [s.strip() for s in os.getenv(
-            "INVENTORY_PREWARM_STORES", DEFAULT_STORE_ID).split(",") if s.strip()]
-        for store_id in stores:
-            try:
-                t0 = time.time()
-                loop = asyncio.get_event_loop()
-                # run_in_executor : analyze_store est synchrone et tient la
-                # boucle plusieurs minutes si on l'appelle directement.
-                payload = await loop.run_in_executor(
-                    None,
-                    lambda sid=store_id: analyze_store(
-                        sid, "balanced", force_refresh=True, fast=False,
-                        page=1, page_size=0,
-                    ),
-                )
-                logger.info(
-                    "✅ Cache inventory prechauffe — %s : %d SKUs en %.0fs",
-                    store_id, len(payload.get("items", [])), time.time() - t0,
-                )
-            except Exception as e:
-                logger.warning("⚠️ Prechauffage inventory %s echoue: %s", store_id, e)
-
-    if os.getenv("INVENTORY_PREWARM", "true").lower() == "true":
-        app.state.prewarm_task = asyncio.create_task(_prewarm_inventory())
-        logger.info("✅ Préchauffage cache inventory programmé")
-
+    # Une SECONDE fonction du même nom vivait ici, imbriquée dans ce handler
+    # de démarrage : elle appelait analyze_store(force_refresh=True,
+    # fast=False) sur la totalité des SKUs — c'est-à-dire qu'elle relançait
+    # le pipeline LLM complet (100 SKUs × 3 agents) à chaque redémarrage,
+    # EN PARALLÈLE du préchauffage sélectif ci-dessus. Les deux se
+    # disputaient les mêmes clés Groq/OpenRouter et le même pool Postgres au
+    # même instant du démarrage, ce qui épuisait les quotas et le pool de
+    # connexions en quelques secondes (jusqu'à faire échouer /api/auth/login,
+    # qui partage ce pool). Elle a été supprimée : elle faisait exactement ce
+    # que ce plan cherchait à éliminer (voir implementation_plan.md §1/§5) et
+    # faisait doublon avec le préchauffage sélectif.
     logger.info("🚀 All systems started — v5.0.0")
 
 
@@ -1101,7 +1115,9 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
         trace_full_cycle(
             cycle_id        = cycle_id,
             store_id        = store_id,
-            urgency         = urg_level,
+            trigger         = "websocket",
+            urgency_level   = urg_level,
+            gap_amount      = gap_amt,
             gap_pct         = gap_pct,
             analyst_summary = analyst_summary,
             nb_actions      = len(stratege_output.get("strategie_actions", [])),
@@ -1109,8 +1125,9 @@ async def _run_agents(store_id: str, cycle: int) -> dict:
             nb_rag_scripts  = stratege_output.get("nb_rag_scripts", 0),
             total_ms        = total_ms,
         )
-    except Exception:
-        pass
+        logger.info(f"[LANGFUSE] Trace created for cycle {cycle_id}")
+    except Exception as e:
+        logger.warning(f"[LANGFUSE] Trace failed: {e}")
     return {**analyst_output, **stratege_output, **supervisor_enrichment}
 
 

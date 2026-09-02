@@ -18,7 +18,7 @@ Pour chaque requête du dataset :
 Les scores partent dans Langfuse (traces `eval-ragas` + scores `eval/ragas/*`),
 et les appels internes du juge RAGAS y sont tracés via le callback LangChain.
 
-    python -m evals.run_ragas [--store I63] [--hour 15] [--top-k 3] [--no-embeddings]
+    python -m evals.run_ragas [--store I63] [--hour 15] [--top-k 3] [--no-embeddings] [--dataset ragas_qa.json]
 
 Prérequis : une clé LLM (MISTRAL/GROQ/OPENROUTER), Milvus (ou fallback corpus) pour
 le retrieval, et Ollama pour answer_relevancy (sinon cette métrique est sautée).
@@ -99,7 +99,7 @@ def _mean(values: list) -> float | None:
 
 
 def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
-        use_embeddings: bool = True, max_workers: int = 2) -> dict:
+        use_embeddings: bool = True, max_workers: int = 2, dataset: str = "ragas_qa.json") -> dict:
     from ragas import EvaluationDataset, SingleTurnSample, evaluate
     from ragas.metrics import (
         Faithfulness,
@@ -120,7 +120,7 @@ def run(store_id: str = "I63", hour: int = 15, top_k: int = 3,
     if not backends.embeddings:
         print(f"  answer_relevancy sauté : {backends.embed_error or 'embeddings désactivés'}")
 
-    cases = load_dataset("ragas_qa.json")
+    cases = load_dataset(dataset)
     samples: list = []
     meta: list[dict] = []
     for case in cases:
@@ -253,10 +253,12 @@ if __name__ == "__main__":
     parser.add_argument("--no-embeddings", action="store_true")
     parser.add_argument("--max-workers", type=int, default=2,
                         help="jobs de juge en parallèle (bas = moins de 429)")
+    parser.add_argument("--dataset", default="ragas_qa.json",
+                        help="fichier dataset à utiliser (ex: ragas_qa.json, ragas_qa_15.json)")
     args = parser.parse_args()
 
     s = run(store_id=args.store, hour=args.hour, top_k=args.top_k,
-            use_embeddings=not args.no_embeddings, max_workers=args.max_workers)
+            use_embeddings=not args.no_embeddings, max_workers=args.max_workers, dataset=args.dataset)
     if s.get("error"):
         sys.exit(2)
     # Seuil défendable : faithfulness est la métrique anti-hallucination clé.

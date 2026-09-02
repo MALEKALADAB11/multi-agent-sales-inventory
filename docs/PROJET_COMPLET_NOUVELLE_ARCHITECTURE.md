@@ -341,7 +341,7 @@ LangGraph — checkpointé, streamé, tracé), le nœud `reduce` agrège dans le
 **Modèle** : **cascade complète** — Mistral (rotation `mistral-large-latest` →
 `mistral-small-latest` → `open-mistral-nemo`) → OpenRouter
 (`nvidia/nemotron-3-nano-30b-a3b:free`, fallback `nemotron-3-super-120b-a12b:free`) →
-Groq (`openai/gpt-oss-120b`, fallback `llama-3.3-70b-versatile`) → Ollama local
+Groq (`openai/gpt-oss-120b`)  → Ollama local
 (`qwen2.5:0.5b`). Scoring produits 100 % déterministe.
 
 **Rôle.** Le seul agent qui parle à l'utilisateur : répondre en langage naturel avec des
@@ -476,7 +476,7 @@ protégée — aucun outil (y compris MCP `move_purchase_order`) ne peut contour
 |---|---|---|---|
 | 1 | **Mistral** (La Plateforme, API directe) | rotation : `mistral-large-latest` → `mistral-small-latest` → `open-mistral-nemo` | primaire — quota indépendant d'OpenRouter |
 | 2 | **OpenRouter** | `nvidia/nemotron-3-nano-30b-a3b:free` ; fallback `nvidia/nemotron-3-super-120b-a12b:free` ; défaut usine `openai/gpt-oss-120b:free` | secours 1 (2 tentatives : prompt complet puis allégé) |
-| 3 | **Groq** | `openai/gpt-oss-120b` ; fallback `llama-3.3-70b-versatile` — multi-clés en rotation | secours 2 (inférence ultra-rapide) |
+| 3 | **Groq** | `openai/gpt-oss-120b` — multi-clés en rotation | secours 2 (inférence ultra-rapide) |
 | 4 | **Ollama** (local, sans clé API) | Analyste/Stratège : `llama3.2:latest` · Coach : `qwen2.5:0.5b` · legacy : `llama3.1:8b` | dernier recours local |
 | — | **OpenAI** (optionnel, configuré) | `gpt-4o-mini` | disponible via la factory, non utilisé en nominal |
 | — | **Anthropic** (optionnel, configuré) | `claude-3-5-sonnet-20241022` | disponible via la factory, non utilisé en nominal |
@@ -542,7 +542,7 @@ MAPE/WAPE **mesurées sur nos données**) justifie le choix du primaire.
 LLM (génération)
 ├── Mistral La Plateforme : mistral-large-latest · mistral-small-latest · open-mistral-nemo
 ├── OpenRouter : nvidia/nemotron-3-nano-30b-a3b:free · nvidia/nemotron-3-super-120b-a12b:free · openai/gpt-oss-120b:free
-├── Groq : openai/gpt-oss-120b · llama-3.3-70b-versatile   (multi-clés en rotation)
+├── Groq : openai/gpt-oss-120b   (multi-clés en rotation)
 ├── Ollama local : llama3.2:latest · qwen2.5:0.5b · llama3.1:8b
 └── Configurés optionnels : gpt-4o-mini (OpenAI) · claude-3-5-sonnet-20241022 (Anthropic)
 
@@ -568,7 +568,7 @@ PRÉVISION (séries temporelles)
 | `LLM_PROVIDER` | fournisseur par défaut de la factory | `ollama` |
 | `MISTRAL_MODEL` / `_FAST` / `_SMART` / `_GUARDIAN` | tiers Mistral | `mistral-small-latest` / `open-mistral-nemo` / `mistral-large-latest` / small |
 | `OPENROUTER_MODEL` / `_FALLBACK` / `_FAST` / `_SMART` / `_GUARDIAN` | modèles OpenRouter | `nvidia/nemotron-3-nano-30b-a3b:free` / `nemotron-3-super-120b-a12b:free` / `openai/gpt-oss-120b:free` |
-| `GROQ_MODEL` / `GROQ_MODEL_FALLBACK` | modèles Groq | `openai/gpt-oss-120b` / `llama-3.3-70b-versatile` |
+| `GROQ_MODEL` / `GROQ_MODEL_FALLBACK` | modèles Groq | `openai/gpt-oss-120b` / `openai/gpt-oss-120b` |
 | `OLLAMA_MODEL_ANALYST` / `_STRATEGE` / `_COACH` | modèles locaux par agent | `llama3.2:latest` / `llama3.2:latest` / `qwen2.5:0.5b` |
 | `RAG_EMBED_MODEL` | embeddings RAG | `bge-m3` |
 | `OLLAMA_EMBED_MODEL` | embeddings secondaires | `nomic-embed-text` |

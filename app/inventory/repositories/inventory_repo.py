@@ -1963,6 +1963,109 @@ class SyncInventoryRepo:
             conn.close()
 
     @staticmethod
+    def get_latest_recommendations_batch(skus: list, store_id: str) -> dict:
+        """
+        Fetch the latest recommendation row for multiple SKUs in a single query.
+
+        Returns {sku_str: row_dict} for every SKU in `skus` that has at least
+        one row in inventory.recommendations for this store. SKUs with no
+        saved recommendation are simply absent — callers fall back to
+        "no recommendation yet" for those.
+
+        Used by GET /store/{id} (analyze_store → _to_inventory_item) so that
+        on a fresh page load — before the fast/rule-based batch pipeline has
+        produced a fresh LLM decision — items still show the last saved
+        recommendation instead of defaulting order_qty=0 / action="En attente".
+
+        Mirrors get_stock_levels_batch: one DISTINCT ON query instead of N
+        get_latest_recommendation() calls in a loop.
+        """
+        if not skus:
+            return {}
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return {}
+        try:
+            import psycopg2.extras
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT ON (sku) *
+                    FROM inventory.recommendations
+                    WHERE store_id = %s
+                      AND sku = ANY(%s::integer[])
+                    ORDER BY sku, created_at DESC
+                    """,
+                    (store_id, list(skus)),
+                )
+                return {
+                    str(row["sku"]): dict(row)
+                    for row in cur.fetchall()
+                }
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.get_latest_recommendations_batch(%s, %d skus): %s",
+                store_id, len(skus), exc,
+            )
+            return {}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_featured_skus_by_action(store_id: str, limit_per_type: int = 2) -> Dict[str, list]:
+        """
+        Seed the 4-8 "featured demo SKUs" pre-warmed at server boot (see
+        implementation_plan.md §5/§7.3 and main.py::_prewarm_inventory).
+
+        Only ORDER and EXPEDITE ever get a row in inventory.recommendations
+        (the decision agent only persists a recommendation when it decides
+        to act — see routes.py::analyze_single). MONITOR/HOLD have no
+        equivalent table, so they are classified at runtime by
+        routes.py::select_featured_skus from the fast/rule-based batch
+        instead — this method only supplies the two action types that CAN
+        be seeded from a durable source.
+
+        Returns {"ORDER": [sku, ...], "EXPEDITE": [sku, ...]} using the most
+        recently decided-upon SKU per type. Purpose: across server restarts,
+        prefer the same previously-known-good demo SKUs instead of whatever
+        the fast batch happens to rank first that run — a stabler video demo.
+        Missing/unavailable DB → both lists empty, caller falls back to the
+        fast-batch classification alone.
+        """
+        conn = SyncInventoryRepo._conn()
+        if conn is None:
+            return {"ORDER": [], "EXPEDITE": []}
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT ON (sku) sku, recommendation_type, created_at
+                    FROM inventory.recommendations
+                    WHERE store_id = %s
+                      AND recommendation_type = ANY(%s::text[])
+                      AND status = 'pending'
+                    ORDER BY sku, created_at DESC
+                    """,
+                    (store_id, ["ORDER", "EXPEDITE"]),
+                )
+                rows = cur.fetchall()
+        except Exception as exc:
+            logger.warning(
+                "SyncInventoryRepo.get_featured_skus_by_action(%s): %s", store_id, exc
+            )
+            return {"ORDER": [], "EXPEDITE": []}
+        finally:
+            conn.close()
+
+        out: Dict[str, list] = {"ORDER": [], "EXPEDITE": []}
+        # Most recent decisions first within each type
+        for row in sorted(rows, key=lambda r: r["created_at"], reverse=True):
+            rtype = row.get("recommendation_type")
+            if rtype in out and len(out[rtype]) < limit_per_type:
+                out[rtype].append(str(row["sku"]))
+        return out
+
+    @staticmethod
     def get_store(store_id: str) -> Optional[dict]:
         """
         Return the store row for a given store_id, or None.

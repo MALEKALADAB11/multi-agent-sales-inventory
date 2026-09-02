@@ -141,7 +141,7 @@ def _store_location(store_id: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 _CAT_CODE_TO_NAME: Dict[str, str] = {
-    "50": "TERMINAL", "70": "AUTRE",
+    "50": "TERMINAL", "70": "ACCESSOIRE",
     "20": "SIM",      "40": "SIM",
     "88": "FORFAIT",  "80": "FORFAIT",
     "30": "RECHARGE", "32": "RECHARGE",
@@ -293,9 +293,19 @@ def get_historical_patterns(category: str, store_id: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_active_promotions(sku: str, category: str, store_id: str) -> List[dict]:
-    """Promotions actives ou démarrant dans les 7 prochains jours depuis inventory.promotions."""
+    """
+    Promotions actives ou démarrant dans les 7 prochains jours depuis
+    inventory.promotions.
+
+    `category` peut arriver soit comme code brut ("70"), soit comme nom
+    normalisé ("ACCESSOIRE") selon l'appelant — historiquement la table
+    stocke des codes bruts, mais de futures lignes peuvent utiliser des noms
+    texte ("Forfait Mobile"). On matche donc les deux formes via ILIKE
+    plutôt qu'une égalité stricte sur un seul format.
+    """
     today   = date.today()
     horizon = today + timedelta(days=7)
+    cat_name = _CAT_CODE_TO_NAME.get(str(category), str(category))
     try:
         conn = _get_conn()
         try:
@@ -305,9 +315,14 @@ def get_active_promotions(sku: str, category: str, store_id: str) -> List[dict]:
                            scope, category, sku, start_date, end_date
                     FROM inventory.promotions
                     WHERE start_date <= %s AND end_date >= %s
-                      AND (sku = %s OR category = %s OR LOWER(scope) IN ('store','all_stores','all'))
+                      AND (
+                            sku::text = %s
+                            OR category ILIKE '%%' || %s || '%%'
+                            OR category ILIKE '%%' || %s || '%%'
+                            OR LOWER(scope) IN ('store','all_stores','all')
+                          )
                     ORDER BY discount_pct DESC
-                """, (horizon, today, str(sku), str(category)))
+                """, (horizon, today, str(sku), str(category), cat_name))
                 rows = cur.fetchall()
         finally:
             _put_conn(conn)
@@ -460,16 +475,14 @@ def get_upcoming_holidays(country: str = "TN", days_ahead: int = 7) -> List[dict
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Upcoming Events — market.events (PostgreSQL)
+# Upcoming Events — market.events (scraped) + inventory.events (DB) merged
 # ═══════════════════════════════════════════════════════════════════════════
 
-def get_upcoming_events(category: str, days_ahead: int = 7) -> List[dict]:
+def _fetch_market_events(cat_upper: str, today: date, horizon: date) -> List[dict]:
     """
-    Événements depuis market.events avec uplift par catégorie.
-    Retourne aussi les events nationaux sans filtre catégorie.
+    Événements scrapés (Ooredoo offers, festivals, météo, fêtes...) depuis
+    market.events, avec uplift résolu par catégorie normalisée.
     """
-    today   = date.today()
-    horizon = today + timedelta(days=days_ahead)
     try:
         conn = _get_conn()
         try:
@@ -487,37 +500,123 @@ def get_upcoming_events(category: str, days_ahead: int = 7) -> List[dict]:
         finally:
             _put_conn(conn)
     except Exception as e:
-        logger.warning("get_upcoming_events DB failed category=%s: %s", category, e)
+        logger.warning("_fetch_market_events DB failed category=%s: %s", cat_upper, e)
         return []
 
-    cat_upper = category.upper()
     uplift_col = {
         "TERMINAL":   "uplift_terminal",
         "FORFAIT":    "uplift_forfait",
         "SIM":        "uplift_sim",
         "RECHARGE":   "uplift_recharge",
         "ACCESSOIRE": "uplift_accessoire",
-    }.get(cat_upper, None)
+    }.get(cat_upper)
 
     events = []
     for row in rows:
         start = row["start_date"]
-        uplift_pct = None
-        if uplift_col:
-            uplift_pct = float(row[uplift_col] or 0)
+        # uplift_col is None when the category has no dedicated uplift column
+        # (e.g. AUTRE) — fall back to 0.0 rather than dropping the event, the
+        # LLM/rules should still know it exists even without a numeric uplift.
+        uplift_pct = float(row[uplift_col] or 0.0) if uplift_col else 0.0
         events.append({
             "event_name":           row.get("event_name", ""),
             "event_type":           row.get("event_type", ""),
-            "sous_type":            row.get("sous_type", ""),
             "start_date":           str(start),
             "end_date":             str(row.get("end_date", "")),
-            "intensite":            row.get("intensite", "MEDIUM"),
             "estimated_uplift_pct": uplift_pct,
+            "source":               "market_scraped",
             "scope":                str(row.get("scope", "national")).lower(),
+            "intensite":            row.get("intensite", "MEDIUM"),
             "note_strategie":       row.get("note_strategie", ""),
             "days_away":            max(0, (start - today).days) if isinstance(start, date) else 0,
         })
     return events
+
+
+def _fetch_inventory_events(
+    cat_upper: str, sku: Optional[str], store_id: Optional[str],
+    today: date, horizon: date,
+) -> List[dict]:
+    """
+    Événements saisis manuellement (campagnes internes, lancements produit,
+    ops boutique) depuis inventory.events. Un event matche s'il vise ce SKU
+    précis OU cette catégorie ; s'il porte un store_id, il doit correspondre
+    à cette boutique (sinon il est traité comme national).
+    """
+    if not sku and not store_id:
+        return []
+    try:
+        conn = _get_conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT event_name, event_type, start_date, end_date,
+                           affected_categories, estimated_uplift_pct, impact_pct,
+                           sku, store_id
+                    FROM inventory.events
+                    WHERE start_date <= %s AND end_date >= %s
+                      AND (
+                            sku::text = %s
+                            OR (COALESCE(affected_categories, '') <> '' AND affected_categories = %s)
+                          )
+                      AND (COALESCE(store_id::text, '') = '' OR store_id::text = %s)
+                    ORDER BY start_date ASC
+                """, (horizon, today, str(sku or ""), cat_upper, str(store_id or "")))
+                rows = cur.fetchall()
+        finally:
+            _put_conn(conn)
+    except Exception as e:
+        logger.warning("_fetch_inventory_events DB failed sku=%s store=%s: %s", sku, store_id, e)
+        return []
+
+    events = []
+    for row in rows:
+        start = row["start_date"]
+        # estimated_uplift_pct is the primary field; fall back to impact_pct*100
+        # (ratio form), then 0.0 — never drop the event for a missing number.
+        uplift_pct = row.get("estimated_uplift_pct")
+        if uplift_pct is None:
+            impact = row.get("impact_pct")
+            uplift_pct = float(impact) * 100 if impact is not None else 0.0
+        events.append({
+            "event_name":           row.get("event_name", ""),
+            "event_type":           row.get("event_type", ""),
+            "start_date":           str(start),
+            "end_date":             str(row.get("end_date", "")),
+            "estimated_uplift_pct": float(uplift_pct),
+            "source":               "inventory_db",
+            "scope":                "boutique" if row.get("store_id") else "national",
+            "intensite":            "MEDIUM",
+            "note_strategie":       "",
+            "days_away":            max(0, (start - today).days) if isinstance(start, date) else 0,
+        })
+    return events
+
+
+def get_upcoming_events(
+    category: str,
+    sku: Optional[str] = None,
+    store_id: Optional[str] = None,
+    days_ahead: int = 7,
+) -> List[dict]:
+    """
+    Merge des événements scrapés (market.events) et des événements saisis en
+    base (inventory.events) pour une catégorie/SKU/boutique donnée.
+
+    `category` peut être un code brut ("70") ou déjà normalisé ("ACCESSOIRE") —
+    on normalise systématiquement avant tout lookup pour éviter le bug où un
+    code brut ne matchait jamais les colonnes uplift_* (uplift toujours None).
+    """
+    today   = date.today()
+    horizon = today + timedelta(days=days_ahead)
+    cat_upper = _CAT_CODE_TO_NAME.get(str(category), str(category)).upper()
+
+    market_events    = _fetch_market_events(cat_upper, today, horizon)
+    inventory_events = _fetch_inventory_events(cat_upper, sku, store_id, today, horizon)
+
+    merged = market_events + inventory_events
+    merged.sort(key=lambda e: e.get("start_date", ""))
+    return merged
 
 
 # ═══════════════════════════════════════════════════════════════════════════

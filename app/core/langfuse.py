@@ -150,7 +150,7 @@ def get_langfuse():
             # de production des spans (sinon « analytics-python queue is full »
             # et traces perdues). Le volume inventory est aussi échantillonné
             # côté producteur (LANGFUSE_INVENTORY_SAMPLE, défaut 0.1).
-            timeout=30,
+            timeout=60,  # Increased from 30 to avoid upload timeouts
             threads=2,
             flush_at=50,
         )

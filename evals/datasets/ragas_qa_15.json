@@ -1,0 +1,95 @@
+{
+  "description": "Jeu d'évaluation RAGAS réduit à 15 cas représentatifs - compromis entre temps d'exécution (~35-40 min) et signification statistique. Sélection équilibrée : 5 sales_script (baseline), 4 inventory_playbook (complexité), 3 product (edge cases), 2 cross-domain (bridge), 1 decision (edge case complexe).",
+  "cases": [
+    {
+      "id": "ragas-vente-prix",
+      "domain": "sales_script",
+      "question": "Le client trouve que c'est trop cher, comment je réponds à son objection prix ?",
+      "reference": "Traiter l'objection prix sans remise non autorisée : reformuler la valeur, étaler le coût (coût par jour, facilité de paiement), proposer une reprise de l'ancien appareil, et donner une phrase prête à dire au client."
+    },
+    {
+      "id": "ragas-vente-hesitation",
+      "domain": "sales_script",
+      "question": "Le client hésite entre deux téléphones et n'arrive pas à choisir, je fais quoi ?",
+      "reference": "Aider au choix par un questionnement sur l'usage réel (photo, jeu, budget), comparer sur 2-3 critères décisifs, puis fermer en douceur sur le modèle le mieux adapté sans presser."
+    },
+    {
+      "id": "ragas-vente-upsell",
+      "domain": "sales_script",
+      "question": "Comment je place un accessoire avec chaque vente de smartphone ?",
+      "reference": "Proposer l'accessoire au bon moment (juste après l'accord sur le téléphone), en bundle logique (protection écran, coque, chargeur), avec une formulation qui le présente comme la suite naturelle de l'achat."
+    },
+    {
+      "id": "ragas-vente-paiement",
+      "domain": "sales_script",
+      "question": "Le client veut payer en plusieurs fois, comment je réponds ?",
+      "reference": "Proposer les facilités de paiement disponibles (échéances, conditions d'éligibilité), vérifier la solvabilité si nécessaire, et présenter la solution comme un avantage pour l'achat."
+    },
+    {
+      "id": "ragas-vente-closing",
+      "domain": "sales_script",
+      "question": "Le client est prêt à acheter, comment je conclus la vente proprement ?",
+      "reference": "Confirmer le choix, récapituler les éléments du panier, présenter les options de garantie/accessoires, procéder à l'enregistrement et remercier le client."
+    },
+    {
+      "id": "ragas-stock-moq",
+      "domain": "inventory_playbook",
+      "question": "Quelle quantité commander quand le besoin prévu est sous le MOQ du fournisseur ?",
+      "reference": "Arbitrer entre respecter le MOQ (commander au minimum imposé) et le coût de portage : commander le MOQ si la rotation absorbe le surplus sur un horizon raisonnable, sinon regrouper avec d'autres références ou négocier."
+    },
+    {
+      "id": "ragas-stock-dormant",
+      "domain": "inventory_playbook",
+      "question": "J'ai du stock dormant depuis plusieurs mois, quelle est la marche à suivre ?",
+      "reference": "Écouler le surstock dormant : identifier la cause, activer des leviers d'écoulement (mise en avant, bundle, transfert inter-boutiques), et ajuster le réapprovisionnement pour ne pas réempiler."
+    },
+    {
+      "id": "ragas-stock-lead",
+      "domain": "inventory_playbook",
+      "question": "Le fournisseur livre avec des délais irréguliers, comment je m'en protège ?",
+      "reference": "Se protéger d'un lead time irrégulier par un stock de sécurité dimensionné sur la variabilité du délai, avancer le point de recommande, et suivre la fiabilité du fournisseur."
+    },
+    {
+      "id": "ragas-cross-rupture",
+      "domain": "inventory_playbook",
+      "question": "Le Galaxy S25 est en rupture, qu'est-ce que je propose au client ?",
+      "reference": "Face à la rupture, proposer un produit substitut disponible de gamme équivalente, expliquer le délai de réassort, et éventuellement prendre les coordonnées pour rappeler à l'arrivée."
+    },
+    {
+      "id": "ragas-produit-prix",
+      "domain": "product",
+      "question": "Combien coûte l'iPhone 16 Pro ?",
+      "reference": "Donner le prix exact issu de la fiche produit du catalogue (en TND), sans l'inventer : si le prix figure dans le contexte, le citer ; sinon dire honnêtement qu'il faut vérifier."
+    },
+    {
+      "id": "ragas-produit-specs",
+      "domain": "product",
+      "question": "Quelles sont les spécifications techniques du Samsung S24 ?",
+      "reference": "Donner les caractéristiques principales : écran, processeur, mémoire, appareil photo, batterie, connectivité. Si l'information n'est pas dans le contexte, dire qu'il faut vérifier la fiche technique."
+    },
+    {
+      "id": "ragas-produit-forfaits",
+      "domain": "product",
+      "question": "Quels sont les différents forfaits disponibles actuellement ?",
+      "reference": "Lister les catégories de forfaits (entrée de gamme, standard, premium), donner les fourchettes de prix et de data si disponibles, inviter à consulter le catalogue pour les détails."
+    },
+    {
+      "id": "ragas-cross-marge",
+      "domain": "inventory_playbook",
+      "question": "Quels produits ont la forte marge et devraient être poussés en priorité ?",
+      "reference": "Identifier les catégories produits à forte marge (accessoires, services), donner des exemples de produits rentables, expliquer comment les intégrer dans les arguments de vente."
+    },
+    {
+      "id": "ragas-cross-adaptation",
+      "domain": "inventory_playbook",
+      "question": "Comment adapter les recommandations de vente selon le stock disponible ?",
+      "reference": "Prioriser les produits bien stockés, proposer des alternatives pour les produits en rupture, adapter le discours commercial selon la disponibilité, éviter de promettre des produits indisponibles."
+    },
+    {
+      "id": "ragas-decision-strategies",
+      "domain": "decision",
+      "question": "Quelles stratégies de vente ont fonctionné récemment ?",
+      "reference": "Analyser les succès récents (types de produits, arguments, moments de vente), identifier les patterns de réussite, proposer de reproduire les approches efficaces."
+    }
+  ]
+}

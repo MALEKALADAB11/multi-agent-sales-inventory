@@ -1,37 +1,27 @@
 """
 embed_coaching_scripts.py
 ══════════════════════════
-Embed coaching scripts from coaching_scripts_ooredoo.csv into Milvus.
+Embed coaching scripts from PostgreSQL into the unified RAG collection.
 
-The existing seed_rag_milvus.py embeds 200+ scripts defined inline as JSON.
-This script handles the CSV file (64 scripts) from the field (sales-module/data/).
-Both share the same Milvus collection: coaching_scripts (dim=768).
+The companion seed_rag_milvus.py embeds a small inline corpus. This script
+loads the complete active corpus from PostgreSQL.
+The scripts are stored in the `sales_script` domain of `retail_knowledge`.
 
 Usage:
     python scripts/embed_coaching_scripts.py [--reset] [--dry-run]
 
 Requirements:
-    pip install pymilvus requests tqdm python-dotenv pandas
+    pip install pymilvus tqdm python-dotenv
 """
 
 import argparse
-import csv
 import os
 import sys
-import time
-import uuid
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", encoding="utf-8")
-
-try:
-    from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
-except ImportError:
-    print("ERROR: pip install pymilvus", file=sys.stderr)
-    sys.exit(1)
 
 try:
     from tqdm import tqdm
@@ -39,65 +29,15 @@ except ImportError:
     tqdm = lambda x, **kw: x
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MILVUS_URI   = os.getenv("MILVUS_URI", "http://localhost:19530")
-OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-COLLECTION   = "coaching_scripts"
-EMBED_DIM    = 768
-EMBED_MODEL  = "nomic-embed-text"
-BATCH_SIZE   = 10
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.sales.data.rag import store
+from app.sales.data.rag.documents import Document
+from app.sales.data.rag.settings import COLLECTION, DOMAIN_SALES_SCRIPT, MILVUS_URI
+
+BATCH_SIZE = 20
 
 # Source des scripts : PostgreSQL (sales.coaching_scripts) — politique zéro-CSV.
-
-
-def connect_milvus() -> None:
-    host = MILVUS_URI.replace("http://", "").split(":")[0]
-    port = int(MILVUS_URI.replace("http://", "").split(":")[1].rstrip("/"))
-    connections.connect("default", host=host, port=port)
-    print(f"Milvus connecté → {host}:{port}")
-
-
-def ensure_collection() -> Collection:
-    if utility.has_collection(COLLECTION):
-        return Collection(COLLECTION)
-
-    fields = [
-        FieldSchema("id",        DataType.VARCHAR,       max_length=64,  is_primary=True, auto_id=False),
-        FieldSchema("embedding", DataType.FLOAT_VECTOR,  dim=EMBED_DIM),
-        FieldSchema("categorie", DataType.VARCHAR,       max_length=100),
-        FieldSchema("situation", DataType.VARCHAR,       max_length=2000),
-        FieldSchema("action",    DataType.VARCHAR,       max_length=2000),
-        FieldSchema("produit",   DataType.VARCHAR,       max_length=500),
-        FieldSchema("argument",  DataType.VARCHAR,       max_length=2000),
-        FieldSchema("impact",    DataType.VARCHAR,       max_length=500),
-        FieldSchema("heure_min", DataType.INT16),
-        FieldSchema("heure_max", DataType.INT16),
-        FieldSchema("source",    DataType.VARCHAR,       max_length=100),
-        FieldSchema("full_text", DataType.VARCHAR,       max_length=4000),
-    ]
-    schema = CollectionSchema(fields, description="Ooredoo coaching scripts (CSV + JSON)")
-    col = Collection(COLLECTION, schema)
-
-    col.create_index("embedding", {
-        "index_type": "IVF_FLAT",
-        "metric_type": "COSINE",
-        "params": {"nlist": 128},
-    })
-    col.load()
-    print(f"Collection {COLLECTION!r} créée (dim={EMBED_DIM})")
-    return col
-
-
-def embed_text(text: str) -> list[float]:
-    resp = requests.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": EMBED_MODEL, "prompt": text},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    vec = resp.json().get("embedding", [])
-    if not vec or len(vec) != EMBED_DIM:
-        raise ValueError(f"Embedding invalide (len={len(vec)})")
-    return vec
 
 
 def load_from_postgres() -> list[dict]:
@@ -122,7 +62,7 @@ def load_from_postgres() -> list[dict]:
             """)
             for row in cur.fetchall():
                 scripts.append({
-                    "id":        f"pg-{row['id']}",
+                    "id":        f"pg-sales-{row['id']}",
                     "categorie": (row["categorie"] or "")[:100],
                     "situation": (row["situation"] or "")[:2000],
                     "action":    (row["action"] or "")[:2000],
@@ -150,40 +90,28 @@ def build_full_text(s: dict) -> str:
     return " | ".join(p for p in parts if p.split(": ", 1)[1])[:4000]
 
 
-def insert_batch(col: Collection, batch: list[dict]) -> int:
-    ids, embeddings, cats, sits, acts, prods, args, imps, hmins, hmaxs, srcs, txts = (
-        [], [], [], [], [], [], [], [], [], [], [], []
+def to_document(script: dict) -> Document:
+    full_text = build_full_text(script)
+    return Document(
+        doc_id=script["id"],
+        domain=DOMAIN_SALES_SCRIPT,
+        title=script["situation"][:512],
+        text=full_text,
+        doc_type=script["categorie"],
+        categorie=script["categorie"],
+        produit=script["produit"],
+        heure_min=script["heure_min"],
+        heure_max=script["heure_max"],
+        payload={
+            "situation": script["situation"], "action": script["action"],
+            "argument": script["argument"], "impact": script["impact"],
+            "source": script["source"],
+        },
     )
-    for s in batch:
-        full_text = build_full_text(s)
-        try:
-            vec = embed_text(full_text)
-        except Exception as e:
-            print(f"  WARN embed échoué pour {s['id']}: {e}")
-            continue
-        ids.append(s["id"])
-        embeddings.append(vec)
-        cats.append(s["categorie"])
-        sits.append(s["situation"])
-        acts.append(s["action"])
-        prods.append(s["produit"])
-        args.append(s["argument"])
-        imps.append(s["impact"])
-        hmins.append(s["heure_min"])
-        hmaxs.append(s["heure_max"])
-        srcs.append(s["source"])
-        txts.append(full_text)
-        time.sleep(0.05)  # respect Ollama rate
-
-    if not ids:
-        return 0
-
-    col.insert([ids, embeddings, cats, sits, acts, prods, args, imps, hmins, hmaxs, srcs, txts])
-    return len(ids)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Embed coaching scripts PostgreSQL → Milvus")
+    parser = argparse.ArgumentParser(description="Embed PostgreSQL coaching scripts into the unified RAG")
     parser.add_argument("--reset",   action="store_true", help="Supprimer et recréer la collection")
     parser.add_argument("--dry-run", action="store_true", help="Charger depuis PostgreSQL sans écrire dans Milvus")
     args = parser.parse_args()
@@ -197,24 +125,20 @@ def main():
             print(f"  [{s['categorie']}] {s['situation'][:80]}...")
         return
 
-    connect_milvus()
+    client = store.get_client(recreate=args.reset)
+    if client is None:
+        sys.exit("Milvus collection unavailable. Check Docker/MILVUS_URI.")
 
-    if args.reset and utility.has_collection(COLLECTION):
-        utility.drop_collection(COLLECTION)
-        print(f"Collection {COLLECTION!r} supprimée")
-
-    col = ensure_collection()
-
+    documents = [to_document(script) for script in scripts]
     inserted = 0
-    for i in tqdm(range(0, len(scripts), BATCH_SIZE), desc="Embedding CSV scripts"):
-        batch = scripts[i : i + BATCH_SIZE]
-        n = insert_batch(col, batch)
-        inserted += n
+    for i in tqdm(range(0, len(scripts), BATCH_SIZE), desc="Embedding PostgreSQL scripts"):
+        inserted += store.upsert(documents[i : i + BATCH_SIZE], batch_size=BATCH_SIZE)
 
-    col.flush()
     print(f"\n✅ {inserted} scripts CSV embeddés dans {COLLECTION!r}")
-    print(f"   Total collection : {col.num_entities} vecteurs")
-    print(f"   Run seed_rag_milvus.py --reset pour re-embedder les scripts JSON en plus")
+    stats = store.stats()
+    print(f"   Stats : {stats}")
+    if inserted != len(documents) or not stats.get("available"):
+        sys.exit("Seed incomplet: vérifiez Milvus et Ollama, puis relancez.")
 
 
 if __name__ == "__main__":

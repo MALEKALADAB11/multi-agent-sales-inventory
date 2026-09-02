@@ -761,6 +761,830 @@
           "G7"
         ]
       }
+    },
+    {
+      "id": "ok-09",
+      "description": "Reco upsell avec produit en stock suffisant",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Écouteurs Bluetooth",
+          "message_for_advisor": "Propose les écouteurs Bluetooth en complément du smartphone pour augmenter le panier."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "EAR-BT": {
+              "product_name": "Écouteurs Bluetooth",
+              "stock_qty": 18,
+              "days_remaining": 25
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.89
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-10",
+      "description": "Coaching performance sans produit spécifique",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Focus sur le taux de conversion en caisse, propose les accessoires systématiquement."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.85
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-11",
+      "description": "Piège G4 : promo officielle mentionnée avec pourcentage autorisé",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung A55",
+          "message_for_advisor": "Le catalogue indique -10% sur le Samsung A55 cette semaine, mets-le en avant."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A55": {
+              "product_name": "Samsung A55",
+              "stock_qty": 8,
+              "days_remaining": 12
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.86
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-12",
+      "description": "Commande standard sous plafond avec coût modéré",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Réapprovisionnement standard sur les accessoires."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.91,
+        "inventory_decision": {
+          "action": "ORDER",
+          "repl_cost": 25000
+        }
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "g1-04",
+      "description": "Produit poussé avec stock négatif (erreur data)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 15",
+          "message_for_advisor": "Pousse l'iPhone 15, c'est notre meilleur vendeur."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP15-128": {
+              "product_name": "iPhone 15 128Go",
+              "stock_qty": -5,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.92
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g1-05",
+      "description": "Match partiel nom produit mais stock zéro sur SKU exact",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung",
+          "message_for_advisor": "Pousse les Samsung, ils cartonnent."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SAM-A25": {
+              "product_name": "Samsung Galaxy A25",
+              "stock_qty": 0,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.87
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g2-04",
+      "description": "Rupture imminente avec stock 1.5 jours",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Coque iPhone 16",
+          "message_for_advisor": "Propose la coque iPhone 16 à chaque vente."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "COQ-IP16": {
+              "product_name": "Coque iPhone 16",
+              "stock_qty": 8,
+              "days_remaining": 1.5
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g2-05",
+      "description": "Rupture imminente 0.8 jours (cas critique)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Chargeur rapide",
+          "message_for_advisor": "Le chargeur rapide est un must-have avec le nouveau téléphone."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "CHR-25W": {
+              "product_name": "Chargeur 25W",
+              "stock_qty": 3,
+              "days_remaining": 0.8
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.91
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g3-03",
+      "description": "Sans RAG, confiance haute mais arguments spécifiques",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Pour vendre plus, propose systématiquement l'assurance mobile sur chaque smartphone."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": false,
+        "nb_scripts": 0,
+        "confidence": 0.75
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G3"
+        ]
+      }
+    },
+    {
+      "id": "g4-05",
+      "description": "Promotion personnalisée non autorisée",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Tu peux offrir -15% aux clients fidèles si tu le juges nécessaire."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.88
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g4-06",
+      "description": "Cadeau non catalogue en stratégie",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Suis cette stratégie.",
+          "strategy_actions": [
+            {
+              "action": "Offrir un cadeau gratuit pour conclure"
+            }
+          ]
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g5-03",
+      "description": "Box 5G sans mention éligibilité explicite",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Box 5G Pro",
+          "message_for_advisor": "La Box 5G Pro est parfaite pour les clients exigeants en débit."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "BOX-5G-PRO": {
+              "product_name": "Box 5G Pro",
+              "stock_qty": 5,
+              "days_remaining": 18
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.89
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "g5-04",
+      "description": "Fibre sans vérification zone couverte",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Fibre 1Gbps",
+          "message_for_advisor": "Propose la Fibre 1Gbps aux clients gamers, c'est imbattable."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "FIB-1G": {
+              "product_name": "Fibre 1Gbps",
+              "stock_qty": 12,
+              "days_remaining": 30
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.87
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "g6-03",
+      "description": "Confiance très basse 0.45",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Essaie de vendre plus d'accessoires."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.45
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "g6-04",
+      "description": "Confiance 0.64 (juste sous seuil)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Continue sur les ventes accessoires."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.64
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "g7-04",
+      "description": "ORDER avec coût 120k DT",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Commande importante prévue."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.88,
+        "inventory_decision": {
+          "action": "ORDER",
+          "repl_cost": 120000
+        }
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G7"
+        ]
+      }
+    },
+    {
+      "id": "g7-05",
+      "description": "EXPEDITE avec coût 180k DT",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Expédition urgente nécessaire."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9,
+        "inventory_decision": {
+          "action": "EXPEDITE",
+          "repl_cost": 180000
+        }
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G7"
+        ]
+      }
+    },
+    {
+      "id": "combo-04",
+      "description": "G1 + G4 → BLOCK domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 16",
+          "message_for_advisor": "Propose l'iPhone 16 avec -20% pour conclure rapidement."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 0,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2",
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "combo-05",
+      "description": "G2 + G3 → REWRITE",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Recharge 20DT",
+          "message_for_advisor": "Pousse les recharges 20DT, c'est rentable."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "RCH-20": {
+              "product_name": "Recharge 20DT",
+              "stock_qty": 15,
+              "days_remaining": 2.5
+            }
+          }
+        },
+        "rag_used": false,
+        "nb_scripts": 0,
+        "confidence": 0.7
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2",
+          "G3"
+        ]
+      }
+    },
+    {
+      "id": "combo-06",
+      "description": "G4 + G5 → BLOCK domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Box 5G",
+          "message_for_advisor": "Propose la Box 5G avec -10% pour les nouveaux clients."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "BOX-5G": {
+              "product_name": "Box 5G",
+              "stock_qty": 10,
+              "days_remaining": 22
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.88
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4",
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "combo-07",
+      "description": "G3 + G6 → ESCALATE domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Propose le bundle téléphone + accessoire."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": false,
+        "nb_scripts": 0,
+        "confidence": 0.58
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G3",
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "ok-13",
+      "description": "Reco cross-sell avec stock suffisant",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Câble USB-C",
+          "message_for_advisor": "Avec le nouveau téléphone, propose un câble USB-C de qualité."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "CBL-USB": {
+              "product_name": "Câble USB-C",
+              "stock_qty": 25,
+              "days_remaining": 35
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.88
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "ok-14",
+      "description": "Commande HOLD avec surstock",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Maintenir le stock actuel, pas de réapprovisionnement nécessaire."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.92,
+        "inventory_decision": {
+          "action": "HOLD",
+          "repl_cost": 0
+        }
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "g1-06",
+      "description": "Produit poussé absent du snapshot (nom approximatif)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Samsung Galaxy",
+          "message_for_advisor": "Les Samsung Galaxy se vendent bien, continue."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16-128": {
+              "product_name": "iPhone 16 128Go",
+              "stock_qty": 15,
+              "days_remaining": 20
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.84
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "g2-06",
+      "description": "Frontière 2.99 jours (juste sous seuil)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Écran protecteur",
+          "message_for_advisor": "L'écran protecteur est essentiel avec le smartphone."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "SCR-PRO": {
+              "product_name": "Écran protecteur",
+              "stock_qty": 5,
+              "days_remaining": 2.99
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G2"
+        ]
+      }
+    },
+    {
+      "id": "g4-07",
+      "description": "Remise en pourcentage élevé",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Tu peux aller jusqu'à -30% pour les clients qui hésitent vraiment."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.86
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "g5-05",
+      "description": "5G mentionné comme solution générique",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Pour les problèmes de débit, la 5G est la solution idéale."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.87
+      },
+      "expected": {
+        "status": "REWRITE",
+        "rules": [
+          "G5"
+        ]
+      }
+    },
+    {
+      "id": "g6-05",
+      "description": "Confiance 0.63 (sous seuil)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Essaie de vendre plus de forfaits."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.63
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "g7-06",
+      "description": "MONITOR avec coût élevé (pas d'escalade)",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": null,
+          "message_for_advisor": "Surveiller le stock avant toute décision."
+        },
+        "inventory_snapshot": {
+          "skus": {}
+        },
+        "rag_used": true,
+        "nb_scripts": 1,
+        "confidence": 0.9,
+        "inventory_decision": {
+          "action": "MONITOR",
+          "repl_cost": 150000
+        }
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
+    },
+    {
+      "id": "combo-08",
+      "description": "G2 + G5 + G6 → ESCALATE domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Box 5G",
+          "message_for_advisor": "Pousse la Box 5G malgré le stock faible."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "BOX-5G": {
+              "product_name": "Box 5G",
+              "stock_qty": 3,
+              "days_remaining": 1.5
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.62
+      },
+      "expected": {
+        "status": "ESCALATE",
+        "rules": [
+          "G2",
+          "G5",
+          "G6"
+        ]
+      }
+    },
+    {
+      "id": "combo-09",
+      "description": "G1 + G2 + G4 → BLOCK domine",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "iPhone 16 Pro",
+          "message_for_advisor": "Propose l'iPhone 16 Pro avec -15% en exclusivité."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "IP16P-256": {
+              "product_name": "iPhone 16 Pro 256Go",
+              "stock_qty": 0,
+              "days_remaining": 0
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.91
+      },
+      "expected": {
+        "status": "BLOCK",
+        "rules": [
+          "G1",
+          "G2",
+          "G4"
+        ]
+      }
+    },
+    {
+      "id": "ok-15",
+      "description": "Reco saisonnière avec stock adéquat",
+      "inputs": {
+        "recommendation": {
+          "product_to_push": "Batterie externe",
+          "message_for_advisor": "En été, les batteries externes sont très demandées, propose-les."
+        },
+        "inventory_snapshot": {
+          "skus": {
+            "BAT-EXT": {
+              "product_name": "Batterie externe 20000mAh",
+              "stock_qty": 30,
+              "days_remaining": 45
+            }
+          }
+        },
+        "rag_used": true,
+        "nb_scripts": 2,
+        "confidence": 0.9
+      },
+      "expected": {
+        "status": "APPROVE",
+        "rules": []
+      }
     }
   ]
 }

@@ -1,17 +1,17 @@
 {
   "suite": "inventory_recommendations",
-  "n_cases": 15,
-  "n_success": 15,
+  "n_cases": 30,
+  "n_success": 30,
   "success_rate": 1.0,
   "judge_scores_mean": {
-    "clarte": 5.0,
-    "coherence": 4.93,
-    "completude": 4.93,
-    "actionabilite": 5.0,
-    "richesse": 4.67,
-    "ancrage": 4.6
+    "clarte": 4.93,
+    "coherence": 4.79,
+    "completude": 4.79,
+    "actionabilite": 4.79,
+    "richesse": 4.64,
+    "ancrage": 3.46
   },
-  "judge_global_mean": 4.85,
+  "judge_global_mean": 4.56,
   "fallback_comparison": [
     {
       "case_id": "critical_stockout-02",
@@ -28,81 +28,31 @@
     "roster": [
       "mistral/mistral-large-latest",
       "groq/openai/gpt-oss-120b",
-      "groq/llama-3.3-70b-versatile",
+      "groq/openai/gpt-oss-120b",
       "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
     ],
     "n_distinct": 4
   },
   "sanity_checks": {
     "richesse": {
-      "status": "ECHEC",
-      "case_id": "critical_stockout-02",
-      "llm_score": 5,
-      "rule_based_score": 5,
-      "discriminates": false,
-      "judges": [
-        "mistral/mistral-large-latest",
-        "groq/llama-3.3-70b-versatile"
-      ]
+      "status": "NON_VERIFIE",
+      "reason": "non demandé (relancer avec --sanity-check)"
     },
     "ancrage": {
-      "status": "OK",
-      "case_id": "critical_stockout-01",
-      "original_score": 5,
-      "corrupted_score": 1,
-      "discriminates": true,
-      "judges": [
-        "mistral/mistral-large-latest",
-        "groq/llama-3.3-70b-versatile"
-      ]
-    },
-    "judge_roster": [
-      "mistral/mistral-large-latest",
-      "groq/openai/gpt-oss-120b",
-      "groq/llama-3.3-70b-versatile",
-      "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
-    ]
+      "status": "NON_VERIFIE",
+      "reason": "non demandé (relancer avec --sanity-check)"
+    }
   },
   "determinism_check": {
-    "status": "OK",
-    "case_id": "critical_stockout-01",
-    "stable": true,
-    "same_judge_each_run": true,
-    "max_spread_by_criterion": {
-      "clarte": 0,
-      "coherence": 0,
-      "completude": 0,
-      "actionabilite": 0,
-      "richesse": 0,
-      "ancrage": 0
-    },
-    "runs": [
-      {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "judge_model": "mistral/mistral-large-latest"
-      },
-      {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    ]
+    "status": "NON_VERIFIE",
+    "reason": "non demandé (relancer avec --determinism-check)"
   },
   "details": [
     {
       "id": "critical_stockout-01",
       "category": "critical_stockout",
       "scenario": "Risque CRITICAL, 2 jours de stock restants, délai de livraison standard de 10 jours — rupture garantie avant l'arrivée d'une commande normale. Doit produire EXPEDITE, pas ORDER.",
-      "recommendation_text": "Expédier en urgence 45 unités aujourd'hui — le stock tombe à zéro dans 2 jours et le délai de livraison standard est de 10 jours. Avec seulement 2 jours de stock restant, le délai moyen de 10 jours ne permettrait pas de couvrir la demande, d'où la nécessité d'une expédition accélérée. Le coût de cette expédition s'élève à 8 500 DT. Aucun signal de hausse de la demande n'a été détecté cette semaine, donc la décision repose uniquement sur le risque critique de rupture.",
+      "recommendation_text": "Expédier 45 unités en urgence — le stock ne couvre que 2 jours alors que le délai de livraison moyen est de 10 jours. Sans cette expédition immédiate, la boutique sera en rupture pendant au moins 8 jours avant que la prochaine livraison puisse arriver. Le coût total de cette expédition s’élève à 8 500 DT. Aucun événement promotionnel n’a été détecté cette semaine, la décision repose uniquement sur le niveau de stock actuel.",
       "action": "EXPEDITE",
       "reasoning_source": "llm",
       "error": "",
@@ -112,17 +62,189 @@
         "completude": 5,
         "actionabilite": 5,
         "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, l'action EXPEDITE est clairement justifiée par la comparaison entre les 2 jours de stock restants et le délai de livraison de 10 jours, avec une explication complète et actionnable.",
-        "judge_model": "mistral/mistral-large-latest"
+        "ancrage": 1,
+        "mean": 4.33,
+        "verdict": "Le chiffre '8' (jours de rupture prévus) n'apparaît nulle part dans le scénario et ne se déduit pas d'un calcul simple à partir des données fournies (2 jours de stock, délai 10 jours donnerait 8 jours de rupture uniquement si aucune commande n'était passée, mais cela reste une interprétation, pas un chiffre explicite ou directement calculable dans le scénario fourni).",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
       }
     },
     {
       "id": "critical_stockout-02",
       "category": "critical_stockout",
       "scenario": "Risque CRITICAL, 3 jours de stock, coût de réapprovisionnement élevé (>50000 DT) — doit escalader en plus d'EXPEDITE. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
-      "recommendation_text": "Expédier 400 unités immédiatement — le stock tombe à zéro dans 3 jours et le délai de livraison moyen est de 14 jours. Avec seulement 3 jours de stock disponible contre un délai de 14 jours, une commande standard ne serait pas reçue à temps, entraînant une rupture certaine. Le coût de cette expédition s'élève à 62 000 DT, ce qui représente un investissement important pour assurer la disponibilité. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation de la demande reste donc à son niveau de base. Cette décision doit être validée par la direction en raison du coût élevé du réapprovisionnement.",
+      "recommendation_text": "Expédier en urgence 400 unités aujourd'hui — le stock ne couvre que 3 jours alors que le délai de livraison moyen est de 14 jours. Sans cette expédition immédiate, la boutique sera en rupture pendant au moins 11 jours avant que la prochaine livraison puisse arriver. Le coût total de cette expédition s'élève à 62 000 DT, ce qui représente un montant important. Aucun événement promotionnel n'est détecté cette semaine, la décision repose uniquement sur le niveau de stock actuel. Cette dépense importante doit être validée par le manager.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 1,
+        "mean": 4.33,
+        "verdict": "La recommandation mentionne 11 jours de rupture, un chiffre qui ne se déduit pas du scénario (3 jours de stock - 14 jours de délai = -11, donc rupture immédiate, pas 11 jours à attendre). Ce chiffre non vérifié invalide l'ancrage malgré la qualité du reste.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "normal_reorder-01",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 12 jours de stock, délai de 7 jours — le formulaire d'ORDER standard peut encore arriver à temps.",
+      "recommendation_text": "Commander 80 unités aujourd'hui — le stock est en dessous du point de commande et le délai de livraison moyen est de 7 jours. Sans commande immédiate, la boutique sera en rupture dans environ 12 jours, alors que la prochaine livraison n'arrivera qu'après 7 jours, créant un risque de rupture. Le coût total de cette commande s'élève à 4 200 DT. Aucun événement ni promotion identifié cette semaine — la décision repose uniquement sur la consommation habituelle. Vous acceptez le coût de stockage supplémentaire pour garantir la disponibilité du produit.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (80 unités, 7 jours de délai, 12 jours de stock, 4 200 DT de coût) sont présents dans le scénario et la recommandation relie clairement ces éléments pour justifier l'action ORDER, montrant une bonne compréhension du risque et du timing.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "normal_reorder-02",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH, 9 jours de stock, délai de 6 jours, objectif cost_savings — la quantité devrait tendre vers l'EOQ.",
+      "recommendation_text": "Commander 150 unités aujourd'hui — le stock est en dessous du point de commande et le délai de livraison moyen est de 6 jours. Sans cette commande, la boutique épuisera son stock dans environ 9 jours, soit 3 jours avant l'arrivée d'une livraison standard. Le coût total de cette commande s'élève à 9 800 DT. Aucun événement ni promotion n'a été détecté cette semaine, la décision repose donc uniquement sur la consommation habituelle. Nous privilégions la quantité optimale pour maîtriser les coûts, même si cela implique une marge de sécurité plus réduite.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement lie explicitement les jours de stock, le délai de livraison et l'objectif cost_savings, avec une action claire et justifiée.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "monitor_situations-01",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM, stock proche du point de commande mais pas encore franchi — MONITOR, pas ORDER.",
+      "recommendation_text": "Pas de commande nécessaire aujourd'hui — le stock actuel couvre la demande prévue pour les 22 prochains jours. Sans passer de commande, la boutique restera approvisionnée pendant au moins 22 jours avant d'atteindre le point de commande. Aucun événement promotionnel ou hausse de la demande n'a été détecté cette semaine. Il est recommandé de surveiller quotidiennement le niveau de stock afin d'anticiper tout changement de la demande.",
+      "action": "MONITOR",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "KeyError: 'choices'"
+      }
+    },
+    {
+      "id": "monitor_situations-02",
+      "category": "monitor_situations",
+      "scenario": "Risque MEDIUM avec un signal de demande à confiance moyenne — MONITOR mais la rationale doit noter le signal sans le sur-pondérer.",
+      "recommendation_text": "Surveillez le stock de ce produit, il couvre encore 15 jours de ventes. Sans ajustement, le stock restera suffisant pendant au moins 9 jours, délai de livraison moyen, avant toute rupture potentielle. Une promotion chez un concurrent pourrait augmenter la demande de 12 %, mais la confiance est moyenne et le stock actuel reste confortable.",
+      "action": "MONITOR",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (15 jours de stock, 9 jours de délai, 12 % d'augmentation potentielle) sont présents dans le scénario et correctement reliés dans une justification nuancée qui maintient l'action MONITOR tout en reconnaissant le signal de demande à confiance moyenne.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "hold_overstock-01",
+      "category": "hold_overstock",
+      "scenario": "Surstock signalé — HOLD, l'ajout de stock augmenterait les coûts sans bénéfice. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
+      "recommendation_text": "Ne pas commander pour le moment — le stock actuel couvre 140 jours de ventes. Si aucune commande n’est passée, la boutique restera approvisionnée pendant plus de quatre mois avant d’éventuellement manquer de stock. Aucun événement ni promotion n’a été détecté cette semaine, la décision repose donc uniquement sur la consommation habituelle. Le produit est en surstock, surveillez l’espace de stockage mais aucune action immédiate n’est requise.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 1,
+        "mean": 4.17,
+        "verdict": "La recommandation mentionne 'quatre mois', un chiffre qui ne figure pas explicitement dans le scénario et ne se déduit pas d'un calcul simple à partir des données fournies (140 jours ≈ 4,6 mois, mais cette conversion n'est pas présentée comme un calcul dans le texte). Comme un seul chiffre ne passe pas la vérification, l'ancrage doit être ≤1, indépendamment de la qualité du reste du texte.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "hold_overstock-02",
+      "category": "hold_overstock",
+      "scenario": "Risque LOW, demande quasi nulle (sentinelle 999 jours) — HOLD sans surstock formel, cas limite pour la formulation des jours.",
+      "recommendation_text": "Ne pas commander d'unités aujourd'hui — le stock disponible couvre 999 jours de ventes. Sans nouvelle commande, la boutique restera approvisionnée pendant près de mille jours avant d'envisager un réapprovisionnement. Aucun événement ni promotion identifié cette semaine — la décision repose uniquement sur la consommation habituelle.",
+      "action": "MONITOR",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 4,
+        "ancrage": 1,
+        "mean": 4.17,
+        "verdict": "Le chiffre 'mille' n'apparaît pas dans le scénario et ne se déduit pas d'un calcul simple à partir des données fournies (999 jours est donné, mais 'mille' est une approximation non présente et non justifiée par un calcul explicite), ce qui viole l'ancrage malgré la clarté et la cohérence du reste.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "context_signal_cases-01",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande à haute confiance qui fait basculer la couverture ajustée sous le point de commande — ORDER motivé par le contexte, pas seulement la formule de base.",
+      "recommendation_text": "Commander 95 unités aujourd'hui — le stock actuel est inférieur au point de commande ajusté de 65 unités.\nSans cette commande, la boutique tombera en rupture de stock pendant environ neuf jours avant que la prochaine livraison normale ne puisse arriver.\nLe coût total de cette commande s'élève à 8 550 DT.\nLa demande est actuellement soutenue par un festival local ce week-end, ce qui accélère nettement les ventes d'accessoires.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 1,
+        "mean": 4.33,
+        "verdict": "La recommandation cite 'neuf jours' de rupture, ce qui ne figure pas dans le scénario et ne se déduit pas d'un calcul simple à partir des données fournies (days_of_stock_remaining=11, lead_time_avg_days=9 → rupture après 2 jours, pas 9).",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "context_signal_cases-02",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande non-nul mais à faible confiance — la décision doit utiliser les métriques ajustées tout en abaissant la confiance de la décision.",
+      "recommendation_text": "Commander 47 unités aujourd'hui — le stock actuel ne couvre plus que 13 jours et le point de commande est à 40 unités. Sans commande immédiate, la boutique sera en rupture d'ici environ 13 jours, alors que la prochaine livraison mettrait 8 jours à arriver, laissant très peu de marge. Le coût total de cette commande s'élève à 3 760 DT. Une rumeur non confirmée d'une campagne sur les réseaux sociaux a été détectée, mais son impact reste incertain. Cette décision privilégie la continuité du service au détriment d'un léger excédent de stock.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (47 unités, 13 jours de stock, point de commande à 40, délai de 8 jours, coût 3760 DT) sont présents dans le scénario et correctement reliés dans une explication de conséquence qui justifie l'action malgré l'incertitude du signal.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "context_signal_cases-03",
+      "category": "context_signal_cases",
+      "scenario": "Aucun signal détecté (uplift=0, confidence=low) — décision basée uniquement sur les maths de stock, confiance ne doit PAS être abaissée à cause de l'absence de signal.",
+      "recommendation_text": "Expédier 70 unités en urgence — le stock ne couvre plus que 4 jours et le délai moyen de livraison est de 5 jours. Sans cette expédition immédiate, la boutique sera en rupture de stock pendant au moins un jour avant que la prochaine livraison puisse arriver. Le coût total de cette expédition s'élève à 6 000 DT. Aucun événement promotionnel n'est identifié cette semaine, la décision repose uniquement sur le niveau de stock actuel. Cette livraison accélérée implique un coût supplémentaire, mais elle évite la perte de ventes due à la rupture.",
       "action": "EXPEDITE",
       "reasoning_source": "llm",
       "error": "",
@@ -134,15 +256,15 @@
         "richesse": 5,
         "ancrage": 5,
         "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement relie explicitement les jours de stock (3) au délai de livraison (14) pour justifier l'urgence, et l'escalade est signalée sans ambiguïté.",
-        "judge_model": "mistral/mistral-large-latest"
+        "verdict": "Tous les chiffres cités (70 unités, 4 jours de stock, 5 jours de délai, 6000 DT de coût) sont présents dans le scénario et correctement reliés dans une explication de conséquence : l'expédition urgente évite une rupture d'au moins un jour.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
       }
     },
     {
-      "id": "normal_reorder-01",
-      "category": "normal_reorder",
-      "scenario": "Risque HIGH, 12 jours de stock, délai de 7 jours — le formulaire d'ORDER standard peut encore arriver à temps.",
-      "recommendation_text": "Commander 80 unités aujourd'hui — le stock est en dessous du point de commande (60 unités) et il reste 12 jours de stock, alors que le délai de livraison moyen est de 7 jours. Avec un délai de livraison de 7 jours, la commande arrivera avant l'épuisement du stock, maintenant ainsi le niveau de service. Aucun signal de hausse de la demande n'a été détecté cette semaine, l'estimation reste stable.",
+      "id": "escalation_cases-01",
+      "category": "escalation_cases",
+      "scenario": "ORDER dont le coût dépasse 50 000 DT — doit escalader au manager en plus de recommander la commande.",
+      "recommendation_text": "Commander 60 unités aujourd'hui — le stock est déjà en dessous du point de commande et le délai de livraison moyen est de 10 jours. Sans commande immédiate, la boutique sera en rupture dans 15 jours, alors que la prochaine livraison n'arriverait qu'au bout de 10 jours, laissant seulement 5 jours de marge. Le coût total de cette commande s'élève à 78 000 DT. Aucun événement ni promotion n'a été détecté cette semaine — la décision repose uniquement sur le niveau de stock actuel. Le montant élevé de la commande dépasse l'enveloppe habituelle, une validation du manager est recommandée.",
       "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
@@ -154,16 +276,128 @@
         "richesse": 5,
         "ancrage": 5,
         "mean": 5.0,
-        "verdict": "La recommandation est claire, cohérente et complète, avec une action bien définie (commander 80 unités) et un raisonnement solide liant les chiffres du scénario, tels que les 12 jours de stock restants et le délai de livraison moyen de 7 jours.",
-        "judge_model": "groq/llama-3.3-70b-versatile"
+        "verdict": "La recommandation est parfaitement ancrée : tous les chiffres (60 unités, 10 jours de délai, 15 jours de stock restant, 5 jours de marge, 78 000 DT de coût) sont présents dans le scénario ou s'en déduisent directement, et elle justifie clairement l'action et la validation manager requise.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
       }
     },
     {
-      "id": "normal_reorder-02",
-      "category": "normal_reorder",
-      "scenario": "Risque HIGH, 9 jours de stock, délai de 6 jours, objectif cost_savings — la quantité devrait tendre vers l'EOQ.",
-      "recommendation_text": "Commander 150 unités aujourd'hui — le stock tombe à zéro dans 9 jours et le délai de livraison moyen est de 6 jours. Avec un délai de livraison de 6 jours, la commande arrivera avant la rupture, laissant une marge de 3 jours. Le point de commande est de 100 unités, le stock actuel étant inférieur, ce qui justifie la commande. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation reste basée sur le niveau de base.",
+      "id": "escalation_cases-02",
+      "category": "escalation_cases",
+      "scenario": "Produit en fin de vie (end_of_life) avec risque CRITICAL — doit escalader pour vérifier l'écoulement intentionnel avant de commander.",
+      "recommendation_text": "Expédier 25 unités en urgence — le stock ne couvre que 3 jours et le délai de livraison moyen est de 12 jours. Sans cette expédition, la boutique sera en rupture pendant au moins 9 jours avant de recevoir une livraison standard. Le coût total de cette commande s’élève à 1 800 DT. Le produit est en fin de vie, il faut valider avec le responsable catégorie avant de confirmer la commande. Une validation du category manager est recommandée avant de finaliser la commande.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 4,
+        "coherence": 3,
+        "completude": 4,
+        "actionabilite": 3,
+        "richesse": 4,
+        "ancrage": 2,
+        "mean": 3.33,
+        "verdict": "La recommandation propose une expédition de 25 unités alors que le scénario impose une escalade pour validation avant toute commande (statut fin de vie + risque CRITICAL). Le chiffre '25' est correct, mais l'action contredit les comportements attendus, ce qui affecte la cohérence et l'ancrage.",
+        "judge_model": "mistral/mistral-large-latest"
+      }
+    },
+    {
+      "id": "edge_cases-01",
+      "category": "edge_cases",
+      "scenario": "Conflit d'objectif (objectif_conflict=true) avec coût élevé — vaut une escalade et une phrase dédiée, sans changer l'action.",
+      "recommendation_text": "Commandez 200 unités dès aujourd'hui — le stock est en dessous du point de commande et le délai de livraison moyen est de 9 jours. Sans cette commande, la boutique sera en rupture dans environ 10 jours, alors que la prochaine livraison normale mettrait 9 jours à arriver. Le coût total de cette commande s'élève à 55 000 DT. Aucun événement promotionnel n'est identifié cette semaine, la décision repose uniquement sur le niveau de stock actuel. Cette commande entre en tension avec l'objectif de réduction des coûts — une validation du manager est recommandée.",
       "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (200 unités, 9 jours de délai, 10 jours de stock restant, 55 000 DT de coût) sont présents dans le scénario et correctement reliés dans une explication de conséquence ; la recommandation est claire, complète et actionnable, avec une phrase dédiée au conflit d'objectif cost_savings comme attendu.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "edge_cases-02",
+      "category": "edge_cases",
+      "scenario": "MOQ contraignant : la quantité formule est inférieure au MOQ, l'analyste suggère de négocier — la quantité commandée doit être le MOQ, avec la déviation notée.",
+      "recommendation_text": "Commander 50 unités dès aujourd'hui — le stock actuel est en dessous du point de commande et le délai moyen de livraison est de 7 jours. Sans cette commande, la boutique sera en rupture dans environ 11 jours, alors que la prochaine livraison ne pourra arriver qu'après 7 jours, créant un intervalle critique. Le fournisseur impose un minimum de 50 unités, ce qui explique la quantité recommandée bien supérieure aux 12 unités calculées, et le coût total de cette commande s'élève à 900 DT. Aucun événement promotionnel n'est identifié cette semaine — la décision repose uniquement sur le niveau de stock actuel. Cette commande augmente le stock et le coût, mais garantit la disponibilité du produit.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 1,
+        "mean": 4.33,
+        "verdict": "La recommandation cite 'aujourd'hui' comme horizon d'action, mais ce terme n'apparaît nulle part dans le scénario fourni et ne peut être déduit d'un calcul simple à partir des données disponibles (aucune date de référence n'est fournie). Puisqu'un seul chiffre non vérifié suffit à faire tomber ancrage ≤1, la note est sévère malgré la qualité du raisonnement par ailleurs.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "critical_stockout-03",
+      "category": "critical_stockout",
+      "scenario": "Risque CRITICAL avec délai fournisseur très long (20 jours) — EXPEDITE obligatoire malgré coût élevé.",
+      "recommendation_text": "Expédier 80 unités en urgence : le stock ne couvre qu’un jour et le délai de livraison moyen est de 20 jours. Sans cette expédition immédiate, la boutique sera en rupture pendant au moins 19 jours avant l’arrivée d’une livraison standard. Le coût total de cette expédition s’élève à 12 000 DT. Aucun événement promotionnel n’est détecté cette semaine, la décision repose uniquement sur le niveau de stock actuel.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "error": "JSON juge illisible (nvidia/nemotron-3-super-120b-a12b:free)"
+      }
+    },
+    {
+      "id": "normal_reorder-03",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH avec objectif service_level — quantité augmentée pour garantir le service.",
+      "recommendation_text": "Commander 100 unités dès aujourd'hui — le stock est déjà en dessous du point de commande et le délai de livraison moyen est de 6 jours. Si aucune commande n'est passée, le stock disponible ne couvrira plus les ventes d'ici 8 jours, entraînant une rupture avant l'arrivée du prochain approvisionnement. Le coût total de cette commande s'élève à 6 500 DT. Aucun événement promotionnel n'est identifié cette semaine, la décision repose uniquement sur le niveau de stock actuel. Nous privilégions la disponibilité du produit même si cela implique un léger dépassement du budget habituel.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (100 unités, 6 jours de délai, 8 jours de stock restant, 6500 DT de coût) sont présents dans le scénario et la recommandation relie clairement ces éléments pour justifier l'action ORDER en lien avec l'objectif service_level.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "normal_reorder-04",
+      "category": "normal_reorder",
+      "scenario": "Risque HIGH avec produit saisonnier — anticipation de la demande saisonnière.",
+      "recommendation_text": "Commander 150 unités dès aujourd’hui — le stock est déjà en dessous du point de commande et le délai de livraison moyen est de 8 jours. Sans cette commande, le stock disponible ne couvrira que 10 jours, ce qui laissera la boutique en rupture avant l’arrivée de la prochaine livraison. Le coût total de cette commande s’élève à 8 500 DT. Aucun événement promotionnel n’est identifié cette semaine, la décision repose donc sur la saisonnalité anticipée du produit. Cette dépense reste compatible avec l’objectif standard, aucune validation supplémentaire n’est requise.",
+      "action": "ORDER",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (150 unités, 8 jours de délai, 10 jours de stock restant, 8500 DT de coût) sont présents dans le scénario et la recommandation relie clairement ces éléments à la saisonnalité anticipée pour justifier l’action ORDER.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "monitor_situations-03",
+      "category": "monitor_situations",
+      "scenario": "Risque LOW avec stock confortable — MONITOR sans action immédiate.",
+      "recommendation_text": "Maintenir le stock actuel — il reste 45 jours de couverture alors que le délai de livraison est de 7 jours.\nSans nouvelle commande, le stock restera suffisant pour plus d'un mois et demi avant d'approcher le point de commande.\nAucun événement ni promotion identifié cette semaine — la décision repose uniquement sur la consommation habituelle.\nAucun compromis significatif n'est attendu.",
+      "action": "HOLD",
       "reasoning_source": "llm",
       "error": "",
       "judge": {
@@ -174,56 +408,76 @@
         "richesse": 4,
         "ancrage": 3,
         "mean": 4.33,
-        "verdict": "Le chiffre '0' (stock tombant à zéro) n'est pas explicitement présent dans le scénario, bien qu'il se déduise des 9 jours de stock. Tous les autres chiffres sont correctement ancrés, et la recommandation est claire et actionnable.",
+        "verdict": "La recommandation est claire et cohérente, mais le seuil de déclenchement (20 unités) n'est pas explicitement mentionné, ce qui réduit légèrement l'ancrage et la complétude.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
     {
-      "id": "monitor_situations-01",
+      "id": "monitor_situations-04",
       "category": "monitor_situations",
-      "scenario": "Risque MEDIUM, stock proche du point de commande mais pas encore franchi — MONITOR, pas ORDER.",
-      "recommendation_text": "Surveiller le stock sans passer de commande pour le moment, le niveau actuel de 22 jours de stock reste au‑dessus du point de commande de 40 unités. Le délai moyen de réapprovisionnement est de 8 jours, bien inférieur aux 22 jours de stock disponibles, donc aucune rupture n’est attendue immédiatement. Aucun signal de hausse de la demande n’a été détecté cette semaine, l’estimation reste à la demande de base. Le principal compromis est de rester vigilant face à une éventuelle augmentation de la demande, sans coût additionnel aujourd’hui.",
+      "scenario": "Risque MEDIUM avec signal demande faible mais non nul — MONITOR avec vigilance.",
+      "recommendation_text": "Pas de commande nécessaire pour le moment — le stock actuel couvre la demande prévue pendant 17 jours. Sans passer de commande, la boutique restera approvisionnée pendant ces 17 jours, puis, après le délai de livraison moyen de 8 jours, il y aura un risque de rupture. Une légère hausse de la demande de 8 % a été détectée, mais la confiance est faible, donc elle n’influence pas la décision. Le compromis consiste à accepter un petit risque de rupture afin d’éviter un surstockage inutile.",
       "action": "MONITOR",
       "reasoning_source": "llm",
       "error": "",
       "judge": {
         "clarte": 5,
         "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
+        "completude": 4,
+        "actionabilite": 4,
         "richesse": 4,
         "ancrage": 5,
-        "mean": 4.83,
-        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et des chiffres vérifiés. La richesse est légèrement limitée par l'absence de lien explicite entre le stock actuel (48 unités) et les 22 jours de stock restants.",
+        "mean": 4.5,
+        "verdict": "Recommandation claire et bien ancrée dans les données du scénario, avec une justification pertinente du compromis entre risque de rupture et surstockage. La mention de la réévaluation prochaine aurait pu renforcer la complétude.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
     {
-      "id": "monitor_situations-02",
-      "category": "monitor_situations",
-      "scenario": "Risque MEDIUM avec un signal de demande à confiance moyenne — MONITOR mais la rationale doit noter le signal sans le sur-pondérer.",
-      "recommendation_text": "Ne pas commander pour le moment, le stock actuel couvre 15 jours et le point de commande est de 35 unités. Le délai moyen de livraison est de 9 jours, donc le stock disponible dépasse largement ce délai, garantissant la disponibilité des produits même avec la promotion concurrente. Une promotion chez un concurrent pourrait augmenter la demande de 12 % avec une confiance moyenne, mais cela ne suffit pas à réduire le stock sous le point de commande. Aucun besoin d'escalade ou d'action supplémentaire pour le moment.",
-      "action": "MONITOR",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 4,
-        "ancrage": 5,
-        "mean": 4.83,
-        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification détaillée du signal de demande sans surréaction.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "hold_overstock-01",
+      "id": "hold_overstock-03",
       "category": "hold_overstock",
-      "scenario": "Surstock signalé — HOLD, l'ajout de stock augmenterait les coûts sans bénéfice. Sert aussi d'ancre richesse (comparée au fallback rule-based).",
-      "recommendation_text": "Ne pas commander de nouvelles unités — le stock actuel couvre 140 jours, bien au‑delà du délai de livraison moyen de 10 jours. Le niveau de stock de 140 unités dépasse largement le point de réapprovisionnement de 25 unités, ce qui indique un surstock. Aucun signal de hausse de la demande n’a été détecté cette semaine, la confiance étant faible, l’estimation de la demande reste au niveau de base.",
-      "action": "MONITOR",
+      "scenario": "Surstock modéré avec demande en baisse — HOLD avec suggestion d'écoulement.",
+      "recommendation_text": "Ne pas commander pour le moment — le stock disponible couvre 85 jours de ventes. Sans nouvelle commande, la boutique restera approvisionnée pendant au moins 85 jours avant d'atteindre le point de commande. Le niveau actuel de surstock entraîne un coût de stockage supplémentaire, mais il reste inférieur au seuil critique. La demande a baissé de 15 % cette semaine, ce qui confirme le besoin de ne pas réapprovisionner. Cette décision accepte le coût de stockage supplémentaire tout en évitant une commande inutile.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 4,
+        "richesse": 4,
+        "ancrage": 5,
+        "mean": 4.67,
+        "verdict": "La recommandation est claire, cohérente et complète : elle explique le HOLD en s'appuyant sur les 85 jours de stock et la baisse de 15 % de la demande, deux chiffres présents dans le scénario. Elle justifie bien l'action (ne pas commander) et relie les chiffres à la décision, montrant une bonne richesse d'argumentation. L'action est clairement définie (ne pas commander maintenant), ce qui la rend actionable, même si aucune suggestion d'écoulement spécifique n'est faite.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "hold_overstock-04",
+      "category": "hold_overstock",
+      "scenario": "Surstock important avec coût de stockage élevé — HOLD prioritaire.",
+      "recommendation_text": "Ne pas commander de nouvelles unités aujourd'hui — le stock actuel couvre largement la demande prévue pendant les 120 prochains jours. Sans commande, la boutique restera approvisionnée pendant au moins 120 jours avant de risquer une rupture. Le stock excédentaire engendre déjà des coûts de stockage élevés, donc ajouter davantage augmenterait ces coûts. Aucun événement promotionnel n'est prévu cette semaine, la décision repose uniquement sur le niveau de stock actuel. Nous privilégions la réduction des coûts de stockage plutôt que d'accroître le niveau d'inventaire.",
+      "action": "HOLD",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (120 jours de stock, stock actuel 200, point de réapprovisionnement 15, stock de sécurité 8) sont présents dans le scénario et la recommandation relie clairement ces données à la décision de HOLD pour réduire les coûts de stockage.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "context_signal_cases-04",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande négatif (baisse) — réduction de la quantité commandée.",
+      "recommendation_text": "Commander 35 unités cette semaine — le stock est exactement au point de commande et la livraison prend une semaine. Sans cette commande, le magasin restera avec suffisamment de stock pour trois semaines, mais toute hausse inattendue de la demande pourrait entraîner une rupture avant la prochaine livraison. Le fournisseur accepte des commandes à l'unité, donc la quantité de 35 unités correspond exactement au résultat de la formule après ajustement à la baisse de la demande. Cette réduction permet d'économiser environ 1 050 DT, tout en acceptant un petit risque de surstock si la demande ne diminue pas autant que prévu.",
+      "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
       "judge": {
@@ -231,18 +485,98 @@
         "coherence": 4,
         "completude": 5,
         "actionabilite": 5,
-        "richesse": 4,
-        "ancrage": 2,
-        "mean": 4.17,
-        "verdict": "Le chiffre '140 unités' est incorrect (le stock actuel est de 300 unités), ce qui affecte la crédibilité de la recommandation malgré sa clarté et sa complétude.",
+        "richesse": 5,
+        "ancrage": 3,
+        "mean": 4.5,
+        "verdict": "La recommandation est globalement excellente, mais le chiffre 'trois semaines' (21 jours) ne correspond pas aux 24 jours de stock restants indiqués dans adjusted_metrics, ce qui affecte légèrement la cohérence et l'ancrage.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
     {
-      "id": "hold_overstock-02",
-      "category": "hold_overstock",
-      "scenario": "Risque LOW, demande quasi nulle (sentinelle 999 jours) — HOLD sans surstock formel, cas limite pour la formulation des jours.",
-      "recommendation_text": "Ne pas commander de nouvelles unités — le stock actuel couvre 999 jours, bien au‑delà du délai de livraison moyen de 12 jours. Le niveau de risque est faible et le point de réapprovisionnement de 10 unités n’est pas atteint, donc aucune commande n’est nécessaire. Aucun signal de hausse de la demande n’a été détecté cette semaine, l’estimation reste donc à la demande de base.",
+      "id": "context_signal_cases-05",
+      "category": "context_signal_cases",
+      "scenario": "Signal de demande très élevé (festival confirmé) — commande augmentée.",
+      "recommendation_text": "Expédier 110 unités en urgence — le stock disponible ne couvre que 6 jours alors que le délai de livraison moyen est de 8 jours. Sans cette expédition immédiate, la boutique sera en rupture de stock pendant au moins 2 jours avant que la prochaine livraison puisse arriver. Le coût total de cette expédition accélérée s’élève à 7 700 DT. La demande est tirée par le festival confirmé, ce qui augmente fortement les ventes prévues. Ce choix implique un coût de livraison plus élevé, mais il évite une rupture qui impacterait les ventes.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 1,
+        "mean": 4.33,
+        "verdict": "Le chiffre '2' (jours de rupture prévus) ne se trouve pas dans le scénario et ne peut être déduit d'un calcul simple à partir des données fournies, ce qui viole l'exigence d'ancrage.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "escalation_cases-03",
+      "category": "escalation_cases",
+      "scenario": "EXPEDITE avec coût très élevé (>100k DT) — double escalade.",
+      "recommendation_text": "Expédier 150 unités en urgence — le stock ne couvre que 2 jours et le délai de livraison moyen est de 15 jours. Sans cette expédition immédiate, la boutique sera en rupture pendant au moins 13 jours avant que la prochaine livraison puisse arriver. Le coût total de cette expédition s’élève à 95 000 DT. Aucun événement ni promotion n’a été détecté cette semaine — la décision repose uniquement sur le niveau de stock actuel. Le coût élevé de cette commande nécessite une validation du manager avant validation finale.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "La recommandation est claire, cohérente, complète, actionnable et riche, avec tous les chiffres (150, 2, 15, 13, 95000) correctement ancrés dans le scénario.",
+        "judge_model": "groq/openai/gpt-oss-120b"
+      }
+    },
+    {
+      "id": "escalation_cases-04",
+      "category": "escalation_cases",
+      "scenario": "Produit nouveau avec historique insuffisant — escalade pour validation.",
+      "recommendation_text": "Expédier 40 unités en urgence — le stock disponible ne couvre que 9 jours alors que le délai de livraison moyen est de 10 jours. Sans cette expédition immédiate, la boutique sera en rupture de stock dans 9 jours, avant que la prochaine livraison puisse arriver. Le coût total de cette expédition s'élève à 4 800 DT. Aucun événement ni promotion n'a été détecté cette semaine — la décision repose uniquement sur le niveau de stock actuel. Cette expédition rapide engendre un coût supplémentaire, mais garantit la disponibilité du produit pour les clients.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 5,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 5,
+        "mean": 5.0,
+        "verdict": "Tous les chiffres cités (40 unités, 9 jours de stock, 10 jours de délai, 4 800 DT de coût) sont présents dans le scénario et correctement reliés dans un raisonnement de conséquence : l'expédition immédiate évite une rupture certaine dans 9 jours avant livraison.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "edge_cases-03",
+      "category": "edge_cases",
+      "scenario": "Fournisseur unique avec délai variable — risque approvisionnement.",
+      "recommendation_text": "Expédier 80 unités en urgence : le stock ne dure plus que 12 jours alors que le délai de livraison moyen est de 14 jours. Sans cette expédition immédiate, la boutique sera en rupture pendant environ 2 jours avant que la prochaine livraison n'arrive. Le coût total de cette expédition s'élève à 5 200 DT. Aucun événement promotionnel n'est identifié cette semaine — la décision repose uniquement sur le niveau de stock actuel. Nous acceptons le coût supplémentaire d'une expédition accélérée pour garantir la disponibilité du produit.",
+      "action": "EXPEDITE",
+      "reasoning_source": "llm",
+      "error": "",
+      "judge": {
+        "clarte": 5,
+        "coherence": 4,
+        "completude": 5,
+        "actionabilite": 5,
+        "richesse": 5,
+        "ancrage": 1,
+        "mean": 4.17,
+        "verdict": "Le chiffre '2' (jours de rupture estimés) n'apparaît nulle part dans le scénario et ne se déduit pas d'un calcul simple à partir des données fournies (12 jours de stock - 14 jours de délai = -2, mais cela ne signifie pas 2 jours de rupture sans hypothèses non justifiées), ce qui viole l'ancrage malgré la clarté et la richesse du raisonnement.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+      }
+    },
+    {
+      "id": "edge_cases-04",
+      "category": "edge_cases",
+      "scenario": "Produit avec forte saisonnalité inversée — anticipation hors saison.",
+      "recommendation_text": "Pas de commande nécessaire pour le moment — le stock couvre la demande prévue pendant 42 jours alors que le délai de livraison moyen est de 9 jours. Une livraison prévue arrivera dans environ 9 jours, bien avant que le stock ne s’épuise. Cela évite un coût de réapprovisionnement de 1 050 DT. La demande chute de 40 % en raison de la fin de saison, ce qui a réduit la quantité recommandée. Vous privilégiez ainsi la maîtrise des coûts de stockage tout en restant couvert pour la prochaine période.",
       "action": "MONITOR",
       "reasoning_source": "llm",
       "error": "",
@@ -252,117 +586,17 @@
         "completude": 5,
         "actionabilite": 5,
         "richesse": 4,
-        "ancrage": 5,
-        "mean": 4.83,
-        "verdict": "Recommandation claire, cohérente et bien ancrée dans les données du scénario, avec une justification complète et une action concrète (HOLD). La richesse est légèrement limitée par l'absence de mise en perspective plus poussée des 999 jours (ex: 'couverture quasi illimitée'), mais reste très satisfaisante.",
+        "ancrage": 3,
+        "mean": 4.5,
+        "verdict": "La recommandation est globalement bien ancrée dans le scénario, mais la quantité recommandée (15) n'est pas explicitement citée dans le texte, ce qui n'affecte pas directement la note d'ancrage. Cependant, l'absence de mention de la quantité ajustée (formula_order_qty=15 dans adjusted_metrics) dans le raisonnement réduit légèrement la précision. Tous les autres chiffres sont vérifiés et cohérents.",
         "judge_model": "mistral/mistral-large-latest"
       }
     },
     {
-      "id": "context_signal_cases-01",
-      "category": "context_signal_cases",
-      "scenario": "Signal de demande à haute confiance qui fait basculer la couverture ajustée sous le point de commande — ORDER motivé par le contexte, pas seulement la formule de base.",
-      "recommendation_text": "Commander 95 unités dès aujourd'hui — le stock disponible ne couvre que 11 jours et le délai de livraison moyen est de 9 jours. Avec un point de commande révisé à 65 unités, le niveau actuel est bien en dessous, ce qui risque de provoquer une rupture pendant le festival prévu ce week-end. La commande arrivera dans environ 9 jours, juste avant l'épuisement du stock, assurant la disponibilité des produits pendant l'événement. Le signal d'événement local indique une hausse de la demande de 45 % avec une confiance élevée, justifiant l'augmentation du volume commandé.",
-      "action": "ORDER",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés et reliés entre eux par un raisonnement clair, expliquant l'impact du festival sur la couverture de stock (11 jours) et la nécessité de commander 95 unités.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "context_signal_cases-02",
-      "category": "context_signal_cases",
-      "scenario": "Signal de demande non-nul mais à faible confiance — la décision doit utiliser les métriques ajustées tout en abaissant la confiance de la décision.",
-      "recommendation_text": "Commander 47 unités cette semaine — le stock actuel ne couvre que 13 jours et le point de commande est de 40 unités. Le délai moyen de livraison est de 8 jours, la commande arrivera avant l'épuisement du stock, assurant ainsi la continuité des ventes. Une rumeur de campagne sur les réseaux sociaux suggère une hausse de la demande de +18 % mais la confiance est faible, ce qui justifie de rester prudent. Ce réapprovisionnement entraîne un coût supplémentaire de 560 DT, mais évite le risque de rupture de stock.",
-      "action": "ORDER",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 4,
-        "mean": 4.83,
-        "verdict": "La recommandation est claire, cohérente et riche en informations, mais le chiffre de 560 DT n'est pas explicitement justifié dans le scénario fourni, ce qui affecte légèrement l'ancrage.",
-        "judge_model": "groq/llama-3.3-70b-versatile"
-      }
-    },
-    {
-      "id": "context_signal_cases-03",
-      "category": "context_signal_cases",
-      "scenario": "Aucun signal détecté (uplift=0, confidence=low) — décision basée uniquement sur les maths de stock, confiance ne doit PAS être abaissée à cause de l'absence de signal.",
-      "recommendation_text": "Expédier 70 unités immédiatement — le stock tombe à zéro dans 4 jours et le délai de livraison moyen est de 5 jours. Avec seulement 4 jours de stock disponible, une commande standard arriverait trop tard, entraînant une rupture de stock. L'expédition accélérée garantit la disponibilité avant l'épuisement. Aucun signal de hausse de la demande n'a été détecté cette semaine, l'estimation reste à son niveau de base.",
-      "action": "EXPEDITE",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés et reliés logiquement, l'action est claire et justifiée par les données du scénario (jours de stock, délai de livraison).",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "escalation_cases-01",
-      "category": "escalation_cases",
-      "scenario": "ORDER dont le coût dépasse 50 000 DT — doit escalader au manager en plus de recommander la commande.",
-      "recommendation_text": "Commander 60 unités aujourd'hui — le stock actuel ne couvre que 15 jours alors que le délai de livraison moyen est de 10 jours. Avec un point de commande de 40 unités, le niveau actuel est en dessous, et sans réapprovisionnement le stock atteindra zéro avant la prochaine livraison, entraînant une rupture. Aucun signal de demande supplémentaire n'a été détecté cette semaine, la prévision reste donc à son niveau de base. Le coût de cette commande s'élève à 78 000 DT, il convient de le faire valider par la direction.",
-      "action": "ORDER",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement est clair, complet et actionnable, avec une mention explicite de la validation manager requise pour un coût de 78 000 DT.",
-        "judge_model": "mistral/mistral-large-latest"
-      }
-    },
-    {
-      "id": "escalation_cases-02",
-      "category": "escalation_cases",
-      "scenario": "Produit en fin de vie (end_of_life) avec risque CRITICAL — doit escalader pour vérifier l'écoulement intentionnel avant de commander.",
-      "recommendation_text": "Expédier 25 unités immédiatement — le stock tombe à zéro dans 3 jours et le délai de livraison moyen est de 12 jours. Avec un délai de 12 jours, même une commande standard n’arriverait pas à temps, entraînant une rupture de stock. Le coût d’expédition supplémentaire s’élèvera à 1 800 DT, mais garantit la disponibilité du produit. Aucun signal de demande supplémentaire n’a été détecté cette semaine, l’estimation reste donc à la demande de base. Veuillez confirmer avec le category manager, le produit étant en fin de vie, avant de valider cette commande.",
-      "action": "EXPEDITE",
-      "reasoning_source": "llm",
-      "error": "",
-      "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "La recommandation est claire, cohérente et complète, avec une richesse élevée dans l'explication des conséquences de la commande, notamment avec des chiffres tels que 25 unités, 3 jours de stock restant et 12 jours de délai de livraison, qui sont tous vérifiés dans le scénario.",
-        "judge_model": "groq/llama-3.3-70b-versatile"
-      }
-    },
-    {
-      "id": "edge_cases-01",
+      "id": "edge_cases-05",
       "category": "edge_cases",
-      "scenario": "Conflit d'objectif (objectif_conflict=true) avec coût élevé — vaut une escalade et une phrase dédiée, sans changer l'action.",
-      "recommendation_text": "Commander 200 unités dès aujourd'hui — le stock ne dure que 10 jours alors que le délai de livraison moyen est de 9 jours. Le stock actuel est inférieur au point de commande de 120 unités, ce qui entraînerait une rupture avant l'arrivée du réapprovisionnement. Le fournisseur disponible facture un tarif express de 55 000 DT, ce qui dépasse la cible de réduction des coûts. Aucun signal de demande supplémentaire n'a été détecté cette semaine, l'estimation de la demande reste donc à son niveau de base. En raison du conflit avec l'objectif de cost_savings, une validation du manager est requise.",
+      "scenario": "Produit avec obsolescence rapide — gestion prudente.",
+      "recommendation_text": "Commander 25 unités dès aujourd'hui — le stock ne couvre que 8 jours et le délai de livraison moyen est de 6 jours. Sans cette commande, la boutique serait en rupture avant que la prochaine livraison puisse arriver. Le coût total de cette commande s'élève à 3 200 DT. Aucun événement promotionnel n'est identifié cette semaine, la décision repose uniquement sur le niveau de stock actuel. Cette commande augmente légèrement le stock, mais assure la disponibilité du produit, évitant ainsi une rupture.",
       "action": "ORDER",
       "reasoning_source": "llm",
       "error": "",
@@ -374,30 +608,30 @@
         "richesse": 5,
         "ancrage": 5,
         "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement lie explicitement les jours de stock, le délai de livraison et le coût, et le conflit d'objectif est signalé distinctement.",
-        "judge_model": "mistral/mistral-large-latest"
+        "verdict": "Tous les chiffres cités (25 unités, 8 jours de stock, 6 jours de délai, 3200 DT de coût) sont présents dans le scénario et la recommandation relie clairement ces éléments pour justifier l'action, en cohérence avec le risque d'obsolescence mentionné.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
       }
     },
     {
-      "id": "edge_cases-02",
+      "id": "edge_cases-06",
       "category": "edge_cases",
-      "scenario": "MOQ contraignant : la quantité formule est inférieure au MOQ, l'analyste suggère de négocier — la quantité commandée doit être le MOQ, avec la déviation notée.",
-      "recommendation_text": "Commander 50 unités aujourd'hui — le stock actuel ne couvre que 11 jours et le point de commande est à 25 unités. Le fournisseur impose un MOQ de 50 unités, ce qui dépasse la quantité calculée de 12, mais c’est le minimum possible. Avec un délai moyen de livraison de 7 jours, la commande arrivera avant que le stock n’atteigne zéro. Aucun signal de demande supplémentaire n’a été détecté cette semaine, donc l’estimation de la demande reste au niveau de base. Il serait judicieux de négocier un MOQ plus bas avec le fournisseur pour éviter un surstock.",
-      "action": "ORDER",
+      "scenario": "Produit avec marge très faible — rentabilité à surveiller.",
+      "recommendation_text": "Pas de commande aujourd’hui — le stock couvre 16 jours de ventes. Si aucune commande n’est passée, le stock restera suffisant pendant au moins 8 jours, période pendant laquelle la prochaine livraison arrivera normalement. Cela évite un coût de réapprovisionnement de 1 500 DT. Aucun événement promotionnel n’est détecté cette semaine, la décision repose uniquement sur la consommation habituelle. Cette décision entre en tension avec l’objectif de réduction des coûts, une validation manager est recommandée.",
+      "action": "MONITOR",
       "reasoning_source": "llm",
       "error": "",
       "judge": {
-        "clarte": 5,
-        "coherence": 5,
-        "completude": 5,
-        "actionabilite": 5,
-        "richesse": 5,
-        "ancrage": 5,
-        "mean": 5.0,
-        "verdict": "Recommandation exemplaire : tous les chiffres sont vérifiés, le raisonnement est clair et relie explicitement les contraintes (MOQ) aux conséquences (risque de surstock), tout en proposant une action concrète (négocier le MOQ).",
-        "judge_model": "mistral/mistral-large-latest"
+        "clarte": 4,
+        "coherence": 3,
+        "completude": 2,
+        "actionabilite": 3,
+        "richesse": 2,
+        "ancrage": 3,
+        "mean": 2.83,
+        "verdict": "La recommandation évite une commande inutile en s'appuyant sur les 16 jours de stock restant, mais elle ne relie pas clairement cette décision à l'objectif de réduction des coûts ni à la faible marge du produit, ce qui affaiblit sa justification et son ancrage aux attentes.",
+        "judge_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
       }
     }
   ],
-  "run_at": "2026-07-28T12:25:45"
+  "run_at": "2026-08-26T21:28:52"
 }
