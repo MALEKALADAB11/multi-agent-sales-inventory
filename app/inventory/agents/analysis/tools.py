@@ -333,6 +333,19 @@ def compute_inventory_metrics(
     business_objective: str,
     # Optional promo uplift for decision agent re-computation
     promo_uplift_pct: float = 0.0,
+    # How many of the next days promo_uplift_pct actually applies to (1-30).
+    # Default 7 preserves the old "week-ish" assumption for callers that
+    # don't pass it. The decision agent passes the context agent's
+    # impact_window_days here instead of always assuming the full 30 days.
+    impact_window_days: float = 7.0,
+    # Temporary safety-stock bump (%) for situational uncertainty — distinct
+    # from demand size. Comes from the context agent's context_volatility
+    # read. 0 = no bump (default, backward compatible).
+    buffer_recommendation_pct: float = 0.0,
+    # Supplier lot size (commande_multiple) — order qty rounds up to the
+    # nearest multiple of this when >1. Default 1 = no rounding (no supplier
+    # data available, e.g. old-format products without supplier_products rows).
+    supplier_order_multiple: int = 1,
 ) -> Dict[str, Any]:
     """
     Compute all inventory metrics.
@@ -340,13 +353,39 @@ def compute_inventory_metrics(
 
     promo_uplift_pct: used by the decision agent when re-running with
                       context adjustment applied. Pass 0 for baseline.
+                      Whatever discount/mitigation is appropriate for a
+                      forecast_source that already bakes in some of this
+                      (e.g. ML Demand Sensing) must be applied by the CALLER
+                      before this function ever sees promo_uplift_pct — this
+                      function has no notion of forecast_source and applies
+                      whatever value it's given, in full, prorated over
+                      impact_window_days.
+
+    impact_window_days: the uplift is prorated over this many days (capped
+                      to the 30-day horizon) rather than applied uniformly
+                      across all 30 days. A 3-day event no longer inflates
+                      the full month — see additional_units below.
 
     Returns structured dict matching the analysis_report format.
     """
     if promo_uplift_pct != 0.0:
-        uplift_factor    = 1.0 + (promo_uplift_pct / 100.0)
-        avg_daily_demand = avg_daily_demand * uplift_factor
-        total_30d_demand = total_30d_demand * uplift_factor
+        days_capped = min(max(impact_window_days, 1.0), 30.0)
+
+        # Only the days actually touched by the signal get the elevated
+        # rate — the remaining days of the 30-day horizon stay at baseline.
+        # This is the fix for the "7-day signal applied to 30 days of
+        # demand" bias: a 3-day storm no longer inflates the whole month.
+        additional_units = avg_daily_demand * (promo_uplift_pct / 100.0) * days_capped
+        total_30d_demand = total_30d_demand + additional_units
+
+        # avg_daily_demand becomes the blended rate over the full 30-day
+        # horizon (elevated for days_capped days, baseline for the rest),
+        # since safety stock / EOQ / reorder point all key off a single
+        # avg_daily_demand value applied across the whole lead time —
+        # blending keeps that single number honest instead of assuming
+        # the elevated rate holds indefinitely.
+        if total_30d_demand > 0:
+            avg_daily_demand = total_30d_demand / 30.0
 
     eff_sl, sl_explanation = compute_effective_service_level(
         service_level_target, lifecycle_stage, business_objective
@@ -356,9 +395,26 @@ def compute_inventory_metrics(
     safety_stock = compute_safety_stock(
         z_score, lead_time_avg, lead_time_std, avg_daily_demand, demand_std
     )
+
+    # Situational buffer: widen safety stock for uncertainty in the *read*
+    # (contradictory signals, thin history, novel events) — separate from
+    # the demand-size adjustment above. 0% is a no-op, fully backward
+    # compatible with callers that don't pass this.
+    if buffer_recommendation_pct:
+        safety_stock = safety_stock * (1.0 + max(0.0, buffer_recommendation_pct) / 100.0)
+
     reorder_point     = avg_daily_demand * lead_time_avg + safety_stock
     eoq               = compute_eoq(avg_daily_demand, unit_cost, holding_cost_pct, order_cost)
     formula_order_qty = max(moq, round(eoq))
+
+    # Round up to the supplier's lot size (commande_multiple) so the order
+    # is actually placeable — e.g. MOQ=50, EOQ=65, lot=20 → order 80, not 65.
+    lot_size_rounded = False
+    if supplier_order_multiple and supplier_order_multiple > 1:
+        remainder = formula_order_qty % supplier_order_multiple
+        if remainder:
+            formula_order_qty += (supplier_order_multiple - remainder)
+            lot_size_rounded = True
 
     # Sentinelle 999 = "couverture illimitée" — valable UNIQUEMENT si du stock
     # existe sans demande. Stock nul ⇒ couverture nulle, quelle que soit la demande.
@@ -404,6 +460,12 @@ def compute_inventory_metrics(
             "demand_std_dev":   demand_std,
             "total_30d_demand": total_30d_demand,
             "trend_direction":  trend_direction,
+            # Audit trail for the proration math above — lets a caller (or a
+            # human reading the DB row) see exactly what was applied without
+            # having to re-derive it from avg_daily_demand alone.
+            "promo_uplift_pct_applied":     promo_uplift_pct,
+            "impact_window_days_applied":   min(max(impact_window_days, 1.0), 30.0) if promo_uplift_pct != 0.0 else 0.0,
+            "buffer_recommendation_pct_applied": max(0.0, buffer_recommendation_pct),
         },
         "metrics": {
             "days_of_stock_remaining":   days_remaining,
@@ -431,6 +493,8 @@ def compute_inventory_metrics(
             "high_holding_flag":       high_holding_flag,
             "objective_conflict":      False,   # set by LLM in reason node
             "objective_conflict_note": None,
+            "supplier_order_multiple": int(supplier_order_multiple or 1),
+            "lot_size_rounded":        lot_size_rounded,  # True if rounding up actually changed the qty
         },
         "objective_note":   "",    # filled by LLM in reason node
         "analyst_flag":     None,  # filled by LLM in reason node

@@ -80,7 +80,7 @@ def load_providers() -> dict[str, Provider]:
             api_key=groq[0] if groq else "",
             models=[
                 os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-                os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile"),
+                os.getenv("GROQ_MODEL_FALLBACK", "openai/gpt-oss-120b"),
             ],
         ),
         "openrouter": Provider(

@@ -389,6 +389,7 @@ class CycleOrchestrator:
                         "timestamp": datetime.now().isoformat(),
                     },
                 )
+                logger.info(f"[LANGFUSE] Created trace root for cycle {cycle_id}")
 
         # ── Etat initial ──────────────────────────────────────────────────
         state = initial_state(
@@ -520,9 +521,9 @@ class CycleOrchestrator:
                     # Pas de lf.flush() ici : c'est un queue.join() synchrone qui
                     # attend l'upload réseau et gèle l'event loop pendant plusieurs
                     # secondes par cycle. Le worker Langfuse flushe en arrière-plan.
-                    logger.debug(f"[LANGFUSE] Cycle {cycle_id} trace complete | quality={score_val}")
+                    logger.info(f"[LANGFUSE] Cycle {cycle_id} trace complete | quality={score_val}")
                 except Exception as e:
-                    logger.debug(f"[LANGFUSE] Cycle finalize: {e}")
+                    logger.warning(f"[LANGFUSE] Cycle finalize failed: {e}")
 
         # ── Log cycle via agent_logger ─────────────────────────────────────
         if _LOGGING_ENABLED:

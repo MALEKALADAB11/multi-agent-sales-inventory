@@ -523,9 +523,15 @@ class InventoryOrchestrator:
                 context_report           = ctx_raw.get("context_report", {})
                 if context_span:
                     context_span.end(output={
-                        "demand_uplift_pct": context_report.get("demand_uplift_pct"),
-                        "dominant_signal":   context_report.get("dominant_signal"),
-                        "confidence":        context_report.get("confidence"),
+                        "demand_uplift_pct":  context_report.get("demand_uplift_pct"),
+                        "dominant_signal":    context_report.get("dominant_signal"),
+                        "confidence":         context_report.get("confidence"),
+                        # v2 fields — the double-counting guard (forecast_source
+                        # aware) runs later in decision_span, since this agent
+                        # runs in parallel with analysis and never sees
+                        # forecast_source. See decision/agent.py.
+                        "impact_window_days": context_report.get("impact_window_days"),
+                        "context_volatility":  context_report.get("context_volatility"),
                     })
             except Exception as exc:
                 logger.warning("[Orchestrator] context_agent failed SKU=%s: %s", sku, exc)
@@ -553,6 +559,10 @@ class InventoryOrchestrator:
                 "sku": sku,
                 "risk_level": analysis_report.get("risk_assessment", {}).get("level"),
                 "demand_uplift_pct": context_report.get("demand_uplift_pct"),
+                # forecast_source only becomes known here (Phase 2, sequential) —
+                # the decision agent is where the demand_sensing double-counting
+                # guard actually applies it, see decision/agent.py.
+                "forecast_source": analysis_report.get("forecast_source"),
             },
         ) if lf_trace else None
         try:

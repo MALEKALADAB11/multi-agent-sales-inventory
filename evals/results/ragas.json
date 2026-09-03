@@ -4,7 +4,7 @@
   "embed_model": "ollama/bge-m3",
   "store_id": "I63",
   "top_k": 3,
-  "n_cases": 8,
+  "n_cases": 15,
   "context_coverage": 1.0,
   "metrics": [
     "faithfulness",
@@ -13,16 +13,16 @@
     "context_recall"
   ],
   "means": {
-    "faithfulness": 0.81,
-    "answer_relevancy": 0.544,
-    "llm_context_precision_without_reference": 0.75,
-    "context_recall": 0.248
+    "faithfulness": 0.865,
+    "answer_relevancy": 0.667,
+    "llm_context_precision_without_reference": 0.635,
+    "context_recall": 0.111
   },
   "scored_cases": {
-    "faithfulness": 5,
-    "answer_relevancy": 5,
-    "llm_context_precision_without_reference": 2,
-    "context_recall": 7
+    "faithfulness": 14,
+    "answer_relevancy": 14,
+    "llm_context_precision_without_reference": 13,
+    "context_recall": 15
   },
   "details": [
     {
@@ -30,12 +30,12 @@
       "domain": "sales_script",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "**Réponse basée sur le contexte fourni :**\n\nSi le client trouve le produit trop cher, utilisez l'argument correspondant à sa situation :\n\n- **Si c'est un forfait mobile** : *\"Regardons bien les détails : le forfait Telecom à 35 DT est moins cher, mais il est hors 5G, avec un plafond data à 20 Go et des appels limités. Le forfait Ooredoo 5G Max à 49 DT offre l'illimité partout + la 5G réelle au Lac 2. Sur 30 jours, la différence n'est que de 47 centimes par jour.\"*\n\n- **Si c'est la Box Fibre** : *\"La Box Fibre à 59 DT peut sembler plus chère que l'ADSL à 40 DT, mais avec l'ADSL, tu paies séparément la ligne, les dépassements et tu n'as rien pour la TV. La Box Ooredoo inclut la fibre 1 Go + TV + téléphone fixe illimité. Tu économises en réalité 19 DT par mois en regroupant tes services.\"*\n\n- **Si c'est un iPhone** : *\"Un iPhone dure en moyenne 4 ans avec les mises à jour. 1 299 DT sur 4 ans, c'est moins d'1 DT par jour. Comparé à un Android mid-range qui se ralentit après 2 ans, le coût réel est inférieur.\"*\n\n**Choisissez l'argument en fonction du produit concerné.** Si le contexte ne correspond pas à l'une de ces situations, précisez le produit pour une réponse adaptée.",
+      "answer": "Utilise la décomposition mensuelle avec l'avance postpayé :\n*\"1 299 DT en une fois, c'est vrai que c'est un investissement. Mais sur 24 mois, avec l'avance postpayé, c'est seulement 54 DT/mois, forfait 5G inclus. C'est moins qu'un plein d'essence, et tu as le meilleur iPhone du marché.\"*",
       "scores": {
-        "faithfulness": null,
-        "answer_relevancy": 0.8036104453023735,
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.5144117918075084,
         "llm_context_precision_without_reference": null,
-        "context_recall": 0.4
+        "context_recall": 0.0
       }
     },
     {
@@ -43,10 +43,10 @@
       "domain": "sales_script",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "Utilise la **technique du choix limité** (C1) :\n*\"Tu préfères repartir avec l'iPhone 16 Pro qui te donne l'écosystème Apple complet, ou le Samsung Galaxy S25 pour la flexibilité Android ? Les deux sont disponibles maintenant.\"*",
+      "answer": "Utilise la **technique du choix limité** (C1) :\n*\"Tu préfères repartir avec l'iPhone qui te donne l'écosystème Apple complet, ou le Samsung pour la flexibilité Android ? Les deux sont disponibles maintenant.\"*",
       "scores": {
         "faithfulness": null,
-        "answer_relevancy": null,
+        "answer_relevancy": 0.695690969407687,
         "llm_context_precision_without_reference": 0.99999999995,
         "context_recall": 0.0
       }
@@ -56,11 +56,37 @@
       "domain": "sales_script",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "**Actionnable :**\n1. **Propose systématiquement le bundle accessoires essentiels** (coque + verre trempé) à **40 DT** avant la finalisation de la vente.\n   - Argument : *\"Un smartphone sans protection, c'est risqué. Coque + verre trempé, ça évite la première rayure dès aujourd'hui. Je les installe moi-même avant que vous partiez.\"*\n   - **Taux de conversion actuel** : 62% des ventes de terminaux quand proposé à la caisse.\n\n2. **Ajoute un accessoire complémentaire** (ex. écouteurs à **12 DT**) si le client hésite sur le bundle ou pour augmenter le panier moyen.\n   - **Exemple** : *\"Pour compléter votre achat, nos écouteurs à 12 DT sont parfaits pour votre nouveau smartphone.\"*\n\n3. **Cible les smartphones haut de gamme** (stratégie en cours) avec des accessoires premium (Apple Watch, Assurance, Cloud) pour maximiser la marge.\n\n**À faire maintenant** :\n- **Systématise la proposition** du bundle à chaque vente de smartphone.\n- **Observe les réactions** et ajuste en fonction des objections (ex. prix, besoin).",
+      "answer": "**Actionnable :**\n\n1. **Propose systématiquement le bundle protection** dès l'achat du smartphone :\n   *\"Un smartphone sans protection, c'est risqué. La coque + verre trempé à 40 DT ensemble, ça évite la première rayure le jour même. Je les installe moi-même avant que vous partiez.\"*\n\n2. **Cible les événements HIGH** (Carthage/Back to School) pour maximiser l'upsell :\n   *\"Pour les étudiants/touristes, ce bundle est idéal pour protéger leur investissement.\"*\n\n3. **Utilise les données** : 62% des ventes de terminaux incluent des accessoires quand proposés à la caisse → **taux de conversion élevé**, insiste !\n\n**À dire :**\n*\"Avec votre achat, le bundle protection est un must-have. On l’a en stock à 40 DT, installation incluse.\"*",
       "scores": {
-        "faithfulness": null,
-        "answer_relevancy": null,
-        "llm_context_precision_without_reference": null,
+        "faithfulness": 0.6875,
+        "answer_relevancy": 0.6489272147490394,
+        "llm_context_precision_without_reference": 0.8333333332916666,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-vente-paiement",
+      "domain": "sales_script",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "Propose les solutions de paiement différé ou de recharge progressive pour les clients en attente de paie.",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.6793291179317072,
+        "llm_context_precision_without_reference": 0.9999999999,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-vente-closing",
+      "domain": "sales_script",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "Utilise la méthode **C3 (closing)** :\n\n*\"On a vu ensemble tout ce que tu cherches. Ce forfait 5G Max à [prix non précisé dans le contexte] te donne [data illimitée + appels illimités]. Qu'est-ce qui t'empêche de signer là maintenant ?\"*\n\n→ **Force une réponse concrète** (blocage ou signature immédiate).",
+      "scores": {
+        "faithfulness": 0.8571428571428571,
+        "answer_relevancy": 0.6879025422000232,
+        "llm_context_precision_without_reference": 0.3333333333,
         "context_recall": 0.0
       }
     },
@@ -69,11 +95,11 @@
       "domain": "inventory_playbook",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "D'après le contexte [C1], si le besoin prévu est sous le MOQ du fournisseur, deux options :\n1. Commander le MOQ et accepter le surstock temporaire (si rotation justifiée).\n2. Regrouper avec d'autres SKU du même fournisseur pour atteindre le seuil.\n\n*Le contexte ne précise pas le MOQ ni le besoin exact, donc appliquez l'une de ces solutions.*",
+      "answer": "Si le besoin prévu est inférieur au MOQ du fournisseur, deux options s'offrent à toi :\n\n1. **Commander le MOQ** (1000 unités pour le SKU 4000010) et accepter un surstock temporaire si la rotation le justifie.\n2. **Regrouper avec d'autres SKU** du même fournisseur pour atteindre le seuil du MOQ.\n\n*Arbitrage nécessaire* : Évaluer le coût de possession du stock supplémentaire vs. le coût de rupture.",
       "scores": {
         "faithfulness": 1.0,
-        "answer_relevancy": 0.0,
-        "llm_context_precision_without_reference": null,
+        "answer_relevancy": 0.8961390891578692,
+        "llm_context_precision_without_reference": 0.9999999999666667,
         "context_recall": 1.0
       }
     },
@@ -82,11 +108,11 @@
       "domain": "inventory_playbook",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "Priorise l'écoulement de ce stock dans ton discours de vente. Intègre-le dans un bundle avec un produit à forte rotation pour accélérer la vente. Suspends tout réapprovisionnement jusqu'à normalisation des stocks (jours de couverture > 90 et rotation faible). Cela libérera de la trésorerie et réduira les coûts de possession.",
+      "answer": "1. **Priorise l'écoulement** : Intègre ce produit dans un **bundle** avec un article à forte rotation pour accélérer sa vente.\n2. **Suspends les réappros** : Ne commande pas de nouveau stock tant que la couverture n'est pas normalisée (jours de couverture > 90 et rotation faible).\n3. **Objectif** : Libère de la trésorerie et réduis les coûts de possession.\n\n*Si le produit est identifié dans le stock, applique ces actions immédiatement.*",
       "scores": {
         "faithfulness": 0.7142857142857143,
-        "answer_relevancy": 0.588922500906116,
-        "llm_context_precision_without_reference": null,
+        "answer_relevancy": 0.6171930154249144,
+        "llm_context_precision_without_reference": 0.9999999999,
         "context_recall": 0.0
       }
     },
@@ -95,25 +121,12 @@
       "domain": "inventory_playbook",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "Augmente le stock de sécurité en utilisant la formule :\n**stock_securite = z × sqrt(lead_time × var_demande + demande² × lead_time_std²)**\npour absorber la variabilité du délai, sans surstock généralisé.",
+      "answer": "Augmente le stock de sécurité en fonction de l'écart-type du délai (lead_time_std), pas du délai moyen. Utilise la formule :\n**stock_securite = z × sqrt(lead_time × var_demande + demande² × lead_time_std²)**.\n\nCela absorbe la variabilité fournisseur sans surstock généralisé.",
       "scores": {
         "faithfulness": 1.0,
-        "answer_relevancy": 0.5447993214317645,
-        "llm_context_precision_without_reference": null,
-        "context_recall": null
-      }
-    },
-    {
-      "id": "ragas-produit-prix",
-      "domain": "product",
-      "n_contexts": 3,
-      "rag_relevant": true,
-      "answer": "L'iPhone 16 Pro coûte **6349,00 TND** (prix terminal, sku 5015684).",
-      "scores": {
-        "faithfulness": 1.0,
-        "answer_relevancy": null,
-        "llm_context_precision_without_reference": 0.49999999995,
-        "context_recall": 0.0
+        "answer_relevancy": 0.6126075044908735,
+        "llm_context_precision_without_reference": 0.9999999999,
+        "context_recall": 0.3333333333333333
       }
     },
     {
@@ -121,14 +134,92 @@
       "domain": "inventory_playbook",
       "n_contexts": 3,
       "rag_relevant": true,
-      "answer": "D'après le contexte [C1], le terminal (Galaxy S25) est en rupture mais l'accessoire associé est déjà en rupture. Propose au client d'acheter le terminal seul sans conditionner la vente à l'accessoire. Si le client insiste sur l'accessoire, propose une commande avec livraison sous 48h.",
+      "answer": "Propose le **Samsung Galaxy S25 Ultra** en mettant en avant ses avantages (S Pen, écran plus grand, intégration Galaxy AI) et oriente vers ce modèle si le client est compatible avec son usage.",
       "scores": {
-        "faithfulness": 0.3333333333333333,
-        "answer_relevancy": 0.7823084206539188,
-        "llm_context_precision_without_reference": null,
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.6223706225560708,
+        "llm_context_precision_without_reference": 0.5833333333041666,
         "context_recall": 0.3333333333333333
+      }
+    },
+    {
+      "id": "ragas-produit-prix",
+      "domain": "product",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "L'iPhone 16 Pro coûte **6349,00 TND**.",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.9839928378445228,
+        "llm_context_precision_without_reference": 0.49999999995,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-produit-specs",
+      "domain": "product",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "Le contexte fourni ne contient pas les spécifications techniques du Samsung Galaxy S24. Seules les informations commerciales (prix, marge, SKU) sont disponibles. Pour répondre à la question, il faudrait consulter la fiche technique officielle de Samsung ou un document interne détaillant les caractéristiques matérielles (processeur, écran, RAM, stockage, etc.).",
+      "scores": {
+        "faithfulness": 0.5,
+        "answer_relevancy": 0.0,
+        "llm_context_precision_without_reference": 0.0,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-produit-forfaits",
+      "domain": "product",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "D'après le contexte fourni, seul le **forfait Voix et SMS (Home Security)** est mentionné avec les détails suivants :\n- **SKU** : 8812029\n- **Prix** : 61,33 TND\n- **Marge** : 70,0%\n\nAucun autre forfait n'est listé dans les documents disponibles.",
+      "scores": {
+        "faithfulness": 0.6666666666666666,
+        "answer_relevancy": 0.7906819334365828,
+        "llm_context_precision_without_reference": 0.49999999995,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-cross-marge",
+      "domain": "inventory_playbook",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "D'après le contexte, les produits à **forte marge** et à **rotation rapide** à pousser en priorité sont :\n- **Recharges data**\n- **Accessoires**\n\n*(Source : C2 - Stratégie du 17/08 axée sur ces produits pour maximiser le ticket moyen en fin de journée.)*",
+      "scores": {
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.8013714378960657,
+        "llm_context_precision_without_reference": 0.49999999995,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-cross-adaptation",
+      "domain": "inventory_playbook",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "**Si stock suffisant :**\n- **Priorité au forfait HONOR** pour combler le gap (291 TND) en une vente.\n- **Attacher systématiquement la SIM 4G** (100% de bons acceptés).\n- **Relancer les recharges 50 DT** pendant le pic (16h-20h).\n\n**Si stock limité ou doute sur la confiance :**\n- **Escalader au superviseur** avec :\n  - Motif (stock/confiance).\n  - Trade-offs (coût commande vs risque rupture).\n  - Recommandation claire.\n\n*Cas spécifique :* Si l'adaptateur ADSL (SKU 7093003) est en stock, le proposer en complément si pertinent.",
+      "scores": {
+        "faithfulness": 0.75,
+        "answer_relevancy": 0.7872534215605639,
+        "llm_context_precision_without_reference": null,
+        "context_recall": 0.0
+      }
+    },
+    {
+      "id": "ragas-decision-strategies",
+      "domain": "decision",
+      "n_contexts": 3,
+      "rag_relevant": true,
+      "answer": "D'après le contexte :\n\n1. **Relance téléphonique** : Taux de conversion devis→vente de **35% le jour même** en appelant les 10 derniers clients ayant demandé un devis.\n2. **Vente contextuelle météo** : Proposer **coque waterproof + Assurance Premium** aux clients mouillés par la pluie (argument visible et immédiat).\n3. **Upgrade forfait** : Proposer le **Forfait Flexi 25Go** aux clients revenant pour SAV ou activation SIM (post-Eid).\n\n*Stratégies validées par des résultats concrets (taux de conversion, ventes immédiates).*",
+      "scores": {
+        "faithfulness": 0.9333333333333333,
+        "answer_relevancy": null,
+        "llm_context_precision_without_reference": 0.0,
+        "context_recall": 0.0
       }
     }
   ],
-  "run_at": "2026-07-28T13:12:33"
+  "run_at": "2026-08-27T13:04:11"
 }

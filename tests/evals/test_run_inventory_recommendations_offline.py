@@ -178,9 +178,11 @@ class TestInventoryEvalWiring(unittest.TestCase):
         self.assertNotEqual(corrupted, text)
         self.assertNotIn("45", corrupted)
 
-    def test_dataset_has_15_cases_across_categories(self):
+    def test_dataset_has_30_cases_across_categories(self):
         cases = rir.load_dataset("inventory_recommendations.json")
-        self.assertEqual(len(cases), 15)
+        # Compte fige volontairement : il attrape une troncature accidentelle
+        # du dataset. A mettre a jour en meme temps que le fichier JSON.
+        self.assertEqual(len(cases), 30)
         categories = {c["category"] for c in cases}
         self.assertEqual(categories, {
             "critical_stockout", "normal_reorder", "monitor_situations",
@@ -190,9 +192,12 @@ class TestInventoryEvalWiring(unittest.TestCase):
         self.assertGreaterEqual(len(fallback_anchors), 2)
 
     def test_full_run_aggregates_correctly(self):
+        n = len(rir.load_dataset("inventory_recommendations.json"))
         summary = rir.run(use_judge=True, run_sanity=True, run_determinism=True)
-        self.assertEqual(summary["n_cases"], 15)
-        self.assertEqual(summary["n_success"], 15)
+        # L'invariant est que le run couvre TOUT le dataset, quelle que soit
+        # sa taille — pas qu'il fasse un nombre de cas donne.
+        self.assertEqual(summary["n_cases"], n)
+        self.assertEqual(summary["n_success"], n)
         self.assertEqual(set(summary["judge_scores_mean"]), set(INVENTORY_CRITERIA))
         self.assertIsNotNone(summary["judge_global_mean"])
 

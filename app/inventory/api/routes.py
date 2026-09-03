@@ -63,9 +63,9 @@ def _json_safe(obj: Any) -> Any:
 # unrelated WebSocket handshakes time out too. Capping bounds worst-case
 # latency regardless of store size. Raise this (or pass force_refresh with a
 # dedicated "full" endpoint) if you need the complete, uncapped view.
-DEMO_SKU_CAP = int(os.getenv("INVENTORY_SKU_CAP", "80"))
+DEMO_SKU_CAP = int(os.getenv("INVENTORY_SKU_CAP", "100"))
 
-# Per-store pipeline lock — only one pipeline run per store at a time.
+# Per-store pipeline lock — only one pipeline run per store at a time. 
 # Concurrent callers (WS + HTTP poll) block here and share the result.
 import threading
 from app.core.config import DEFAULT_STORE_ID
@@ -282,6 +282,121 @@ def invalidate_store(store_id: str, sku: str = None, new_stock: float = None) ->
             loop.call_soon_threadsafe(_schedule)
     except RuntimeError:
         logger.warning("No event loop available for WebSocket broadcast")
+
+
+# ---------------------------------------------------------------------------
+# Selective startup pre-warm — Top 4-8 "featured demo SKUs"
+# ---------------------------------------------------------------------------
+# See implementation_plan.md §5/§6/§7: instead of running the full LLM
+# pipeline (3 agents) over every SKU at boot (300 calls, exhausts free-tier
+# quotas before the demo even starts — Problem 1), we run the cheap
+# rule-based/demand-sensing batch (fast=True, zero tokens) for the whole
+# table, then hand-pick 1-2 representative SKUs per action category
+# (EXPEDITE/ORDER/MONITOR/HOLD) and run the *real* LLM pipeline on just
+# those ~4-8 SKUs. Everything else stays Tier-3 (on-demand, click-to-run).
+
+def _classify_action_bucket(item: Dict[str, Any]) -> str:
+    """
+    Approximates which of the 4 demo action categories an item falls into,
+    using only fields the fast/rule-based tier already computes (no LLM
+    decision available yet at this point — see implementation_plan.md §5
+    for the target semantics of each bucket).
+
+        HOLD     — overstocked / stock covers 45+ days: freeze ordering
+        EXPEDITE — stock has already dropped below safety stock: rupture risk
+        ORDER    — stock at/under the reorder point: standard replenishment
+        MONITOR  — everything else: buffer still healthy, just watch it
+    """
+    days_of_stock = item.get("daysOfStock") or 0
+    if item.get("overstockFlag") or days_of_stock > 45:
+        return "HOLD"
+
+    stock        = item.get("stock") or 0
+    safety_stock = item.get("safetyStock") or 0
+    reorder_pt   = item.get("reorderPoint") or 0
+
+    if item.get("riskLevel") == "critical" or stock < safety_stock:
+        return "EXPEDITE"
+    if stock <= reorder_pt:
+        return "ORDER"
+    return "MONITOR"
+
+
+# Sort key per bucket — picks the most *representative* / demo-worthy SKU
+# first: the most urgent EXPEDITE, the tightest ORDER, the MONITOR item
+# sitting closest to its reorder point, the deepest HOLD overstock.
+_FEATURED_SORT_KEY = {
+    "EXPEDITE": lambda i: i.get("daysOfStock", 999),
+    "ORDER":    lambda i: i.get("coverageRatio", 999),
+    "MONITOR":  lambda i: abs((i.get("stock") or 0) - (i.get("reorderPoint") or 0)),
+    "HOLD":     lambda i: -(i.get("daysOfStock") or 0),
+}
+
+
+def select_featured_skus(
+    store_id: str,
+    business_objective: str = "balanced",
+    per_action: int = 2,
+) -> List[str]:
+    """
+    Returns up to `per_action` SKUs for each of EXPEDITE/ORDER/MONITOR/HOLD
+    (4-8 SKUs total) to pre-warm with a real LLM run at startup.
+
+    Reads the fast/rule-based table (running it first if it isn't cached
+    yet — cheap, zero tokens) and buckets every item with
+    _classify_action_bucket. When available, DB-seeded ORDER/EXPEDITE picks
+    (SyncInventoryRepo.get_featured_skus_by_action — the SKUs the decision
+    agent actually acted on last time) take priority over the heuristic
+    bucketing, so the demo shows the same SKUs across restarts instead of
+    whichever one the rule-based ranking happens to surface first.
+    """
+    cached = _get_cached(store_id, business_objective)
+    if cached is None:
+        cached = analyze_store(
+            store_id, business_objective,
+            force_refresh=False, fast=True, page=1, page_size=0,
+        )
+
+    items = [i for i in (cached.get("items") or []) if not i.get("error")]
+    buckets: Dict[str, List[Dict[str, Any]]] = {
+        "EXPEDITE": [], "ORDER": [], "MONITOR": [], "HOLD": [],
+    }
+    for item in items:
+        buckets[_classify_action_bucket(item)].append(item)
+    for name, bucket_items in buckets.items():
+        bucket_items.sort(key=_FEATURED_SORT_KEY[name])
+
+    # DB-seeded stability for ORDER/EXPEDITE (see get_featured_skus_by_action).
+    try:
+        from app.inventory.repositories.inventory_repo import SyncInventoryRepo
+        seeded = SyncInventoryRepo.get_featured_skus_by_action(store_id, limit_per_type=per_action)
+    except Exception as exc:
+        logger.debug("select_featured_skus: DB seed unavailable (%s)", exc)
+        seeded = {"ORDER": [], "EXPEDITE": []}
+
+    selected: List[str] = []
+    seen: set = set()
+    for name in ("EXPEDITE", "ORDER", "MONITOR", "HOLD"):
+        picks: List[str] = list(seeded.get(name, []))[:per_action]
+        if len(picks) < per_action:
+            for item in buckets[name]:
+                sku_str = str(item["sku"])
+                if sku_str in picks:
+                    continue
+                picks.append(sku_str)
+                if len(picks) >= per_action:
+                    break
+        for sku_str in picks:
+            if sku_str not in seen:
+                seen.add(sku_str)
+                selected.append(sku_str)
+
+    logger.info(
+        "select_featured_skus(%s): %d SKUs selected — %s",
+        store_id, len(selected),
+        {n: [str(i["sku"]) for i in buckets[n][:per_action]] for n in buckets},
+    )
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +943,7 @@ def _to_inventory_item(
     preloaded_stock: Dict[str, int] = None,
     product_lookup: Dict[str, Any] = None,
     preloaded_complements: Dict[str, List[Dict[str, Any]]] = None,
+    preloaded_recommendations: Dict[str, Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if "error" in result:
         return {"sku": result.get("sku", ""), "error": result["error"]}
@@ -1027,6 +1143,29 @@ def _to_inventory_item(
                     item["recommendationStatus"] = rec_row.get("status", "pending")
             except Exception:
                 pass  # Non-fatal — frontend defaults to pending
+    elif preloaded_recommendations:
+        # No fresh decision this run (fast/rule-based batch tier never calls
+        # the DecisionAgent LLM) — fall back to the last saved recommendation
+        # from inventory.recommendations so the item doesn't regress to
+        # order_qty=0 / "En attente" on every plain page load.
+        saved = preloaded_recommendations.get(str(sku))
+        if saved:
+            # DB stores confidence as numeric (see the high/medium/low → float
+            # map in analyze_single) — convert back to the categorical label
+            # the frontend expects, so decisionConfidence is always a string
+            # regardless of whether it came from a live LLM run or the DB.
+            saved_conf = saved.get("confidence")
+            if isinstance(saved_conf, (int, float)):
+                saved_conf = "high" if saved_conf >= 0.75 else "low" if saved_conf <= 0.45 else "medium"
+
+            item["recommendation"]       = saved.get("recommendation_type")
+            item["recommendationDetail"] = saved.get("recommendation_text")
+            item["recommendationId"]     = str(saved["id"]) if saved.get("id") else None
+            item["finalOrderQty"]        = saved.get("suggested_quantity")
+            item["orderTiming"]          = saved.get("urgency")
+            item["decisionConfidence"]   = saved_conf
+            item["recommendationStatus"] = saved.get("status", "pending")
+            item["reasoningSource"]      = "saved"
 
     return item
 
@@ -1447,6 +1586,22 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
                 )
                 return {"raw": None, "item": existing}
 
+    return run_llm_analysis(req.sku, req.store_id, req.business_objective)
+
+
+def run_llm_analysis(sku: str, store_id: str, business_objective: str = "balanced") -> Dict[str, Any]:
+    """
+    Core of analyze_single, factored out so it can be called from two places
+    with identical behavior (persistence, cache merge, error handling):
+      1. POST /analyze — on-demand, user clicked "Voir Rapport"
+      2. main.py::_prewarm_inventory — startup pre-warm of the 4-8 featured
+         demo SKUs (see select_featured_skus above)
+
+    Unlike the route, this does NOT check the "already cached" shortcut —
+    callers that want that should check first (the route does; the prewarm
+    caller intentionally always runs fresh since it's warming a cold cache).
+    """
+    req = AnalyzeRequest(sku=sku, store_id=store_id, business_objective=business_objective)
     result = get_orchestrator().analyze_sku(
         req.sku, req.store_id, req.business_objective
     )
@@ -1460,6 +1615,47 @@ def analyze_single(req: AnalyzeRequest) -> Dict[str, Any]:
     # same SKU can tell it apart from the batch's rule-based version and
     # reuse it instead of discarding it / re-running the LLM.
     item["llmAnalyzed"] = True
+
+    # ── Persist the decision to PostgreSQL ─────────────────────────────────
+    # Without this, the recommendation only ever lived in _store_cache
+    # (see _merge_item_into_cache below) — fine for the current worker
+    # process within CACHE_TTL, but gone the moment the cache entry expires,
+    # the process restarts, or GET /store/{id} runs the fast/rule-based
+    # batch tier and rebuilds items from scratch. Saving here means a later
+    # GET /store/{id} finds this recommendation via
+    # get_latest_recommendations_batch and pre-fills it instead of showing
+    # order_qty=0 / "En attente".
+    decision_result = result.get("decision_result", {}) or {}
+    dec              = decision_result.get("decision", {}) or {}
+    if dec.get("action") in ("ORDER", "EXPEDITE"):
+        try:
+            from app.inventory.repositories.inventory_repo import SyncInventoryRepo
+            # Decision agent confidence is categorical ("high"/"medium"/"low");
+            # save_recommendation's column is numeric — map it the same way
+            # the rest of the pipeline treats confidence tiers.
+            _confidence_map = {"high": 0.9, "medium": 0.6, "low": 0.3}
+            rec_id = SyncInventoryRepo.save_recommendation(
+                sku=req.sku,
+                store_id=req.store_id,
+                recommendation_type=dec.get("action"),
+                recommendation_text=dec.get("recommendation_text", ""),
+                suggested_quantity=dec.get("order_qty"),
+                confidence=_confidence_map.get(str(dec.get("confidence", "medium")).lower(), 0.5),
+                urgency=dec.get("urgency", "this_week"),
+                context_snapshot={
+                    "analysis_report": result.get("analysis_report"),
+                    "context_result":  result.get("context_result"),
+                    "adjusted_metrics": decision_result.get("adjusted_metrics"),
+                },
+            )
+            if rec_id:
+                item["recommendationId"]     = rec_id
+                item["recommendationStatus"] = "pending"
+        except Exception as exc:
+            logger.warning(
+                "analyze_single: failed to persist recommendation for %s/%s: %s",
+                req.store_id, req.sku, exc,
+            )
 
     # Persist into the store cache so this analysis survives navigation
     # instead of being silently thrown away the moment the modal closes.
@@ -1627,6 +1823,21 @@ def analyze_store(
         except Exception:
             product_lookup = {}
 
+        # ── Pre-fetch latest saved recommendations for all SKUs in ONE DB query ──
+        # Without this, items only show a recommendation/order_qty when the
+        # DecisionAgent (LLM) ran in THIS pipeline call. The fast/rule-based
+        # batch tier used for GET /store/{id} never runs the LLM, so on a
+        # fresh page load every item fell back to order_qty=0 / "En attente"
+        # even when a previous single-SKU analysis had already produced and
+        # saved a real recommendation to inventory.recommendations.
+        preloaded_recommendations: Dict[str, Dict[str, Any]] = {}
+        try:
+            from app.inventory.repositories.inventory_repo import SyncInventoryRepo as _Repo
+            preloaded_recommendations = _Repo.get_latest_recommendations_batch(skus, store_id)
+            logger.info("Pre-fetched saved recommendations for %d/%d SKUs", len(preloaded_recommendations), len(skus))
+        except Exception as exc:
+            logger.warning("Recommendations batch pre-fetch failed (%s) — items fall back to 'no recommendation yet'", exc)
+
         # ── Pre-fetch complementary products for all SKUs in ONE DB query ──
         # Same reasoning as the stock pre-fetch above: this is pure DB lookup
         # (inventory.product_associations), no LLM involved, so it must not
@@ -1646,6 +1857,7 @@ def analyze_store(
                 preloaded_stock=preloaded_stock,
                 product_lookup=product_lookup,
                 preloaded_complements=preloaded_complements,
+                preloaded_recommendations=preloaded_recommendations,
             )
             for r in results
         ]

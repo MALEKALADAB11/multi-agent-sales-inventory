@@ -137,14 +137,54 @@ def get_stock_level(sku, store_id: str = DEFAULT_STORE_ID) -> Dict[str, Any]:
 # 2. PRODUCT INFO — Informations produit enrichies
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _get_supplier_context(sku: int) -> Dict[str, Any]:
+    """
+    Fournisseur préféré + fallback pour ce SKU, depuis
+    supply.supplier_products + supply.suppliers. Lecture seule, aucune
+    jointure/index nouveau — SELECT existant uniquement (voir plan §Rules).
+    """
+    rows = _query("""
+        SELECT sp.supplier_id, s.nom AS supplier_name,
+               s.taux_fiabilite, s.actif AS supplier_actif,
+               s.commande_multiple, sp.lead_time_days AS sp_lead_time
+        FROM supply.supplier_products sp
+        JOIN supply.suppliers s ON s.supplier_id = sp.supplier_id
+        WHERE sp.sku = %s
+        ORDER BY sp.is_preferred DESC, s.taux_fiabilite DESC
+        LIMIT 2
+    """, (sku,), fetch="all") or []
+
+    if not rows:
+        return {
+            "preferred_supplier_id": None, "preferred_supplier_name": None,
+            "preferred_supplier_reliable": True, "preferred_supplier_active": True,
+            "supplier_order_multiple": 1,
+            "fallback_supplier_name": None, "fallback_supplier_active": False,
+        }
+
+    preferred = rows[0]
+    fallback  = rows[1] if len(rows) > 1 else None
+
+    return {
+        "preferred_supplier_id":       preferred.get("supplier_id"),
+        "preferred_supplier_name":     preferred.get("supplier_name"),
+        "preferred_supplier_reliable": float(preferred.get("taux_fiabilite") or 0) >= 0.90,
+        "preferred_supplier_active":   bool(preferred.get("supplier_actif")),
+        "supplier_order_multiple":     int(preferred.get("commande_multiple") or 1),
+        "fallback_supplier_name":      fallback.get("supplier_name") if fallback else None,
+        "fallback_supplier_active":    bool(fallback.get("supplier_actif")) if fallback else False,
+    }
+
+
 def get_product_info(sku) -> Dict[str, Any]:
-    """Retourne les infos produit depuis produits + product_master."""
+    """Retourne les infos produit depuis produits + product_master + fournisseurs."""
     sku = int(sku)
 
     row = _query("""
         SELECT p.sku, p.nom AS product_name, p.categorie AS category,
                p.famille AS family, p.prix_ht, p.prix_ttc AS unit_price,
                p.marge_pct, p.actif AS active,
+               p.flag_4g, p.flag_5g, p.marque AS brand,
                pm.unit_cost, pm.lead_time_days, pm.lead_time_std,
                pm.moq, pm.holding_cost_pct, pm.order_cost,
                pm.lifecycle_stage
@@ -154,7 +194,7 @@ def get_product_info(sku) -> Dict[str, Any]:
     """, (sku,), fetch="one")
 
     if row:
-        return {
+        info = {
             "sku": sku,
             "product_name": row["product_name"] or f"SKU {sku}",
             "category": row["category"] or "",
@@ -169,15 +209,23 @@ def get_product_info(sku) -> Dict[str, Any]:
             "order_cost": float(row["order_cost"] or 50),
             "lifecycle_stage": row["lifecycle_stage"] or "growth",
             "active": bool(row["active"]),
+            "flag_4g": bool(row.get("flag_4g")),
+            "flag_5g": bool(row.get("flag_5g")),
+            "brand": row.get("brand") or "",
             "source": "postgresql",
         }
+        info.update(_get_supplier_context(sku))
+        return info
 
     logger.warning("No product data for %s", sku)
-    return {
+    fallback_info = {
         "sku": sku, "product_name": f"SKU {sku}", "category": "",
         "unit_cost": 0, "unit_price": 0, "lead_time_days": 10,
         "moq": 1, "lifecycle_stage": "unknown", "source": "none",
+        "flag_4g": False, "flag_5g": False, "brand": "",
     }
+    fallback_info.update(_get_supplier_context(sku))
+    return fallback_info
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -411,6 +459,53 @@ def prefetch_store_data(store_id: str) -> Dict[str, Any]:
         "nb_skus": len(skus),
         "nb_ruptures": sum(1 for s in stock_map.values() if int(s.get("stock_available", s.get("stock_on_hand", 0)) or 0) <= 0),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9b. STORE CAPACITY CONTEXT — type_boutique + total stock units (cached 5min)
+# ══════════════════════════════════════════════════════════════════════════════
+# Called once per SKU by the analysis agent's fetch_node, but the value is the
+# same for every SKU in a given store within a batch run — cache it in-process
+# (same TTL pattern as _DataCache below) instead of hitting Postgres per SKU.
+
+_store_ctx_cache: Dict[str, Any] = {}
+_store_ctx_ts: Dict[str, float] = {}
+_STORE_CTX_TTL: float = 300.0  # 5 minutes
+
+
+def _store_ctx_fresh(key: str) -> bool:
+    return key in _store_ctx_cache and (_time.time() - _store_ctx_ts.get(key, 0)) < _STORE_CTX_TTL
+
+
+def get_store_type(store_id: str) -> str:
+    """type_boutique depuis sales.boutiques — single SELECT, no join."""
+    key = f"type:{store_id}"
+    if _store_ctx_fresh(key):
+        return _store_ctx_cache[key]
+    row = _query(
+        "SELECT type_boutique FROM sales.boutiques WHERE store_id = %s",
+        (store_id,), fetch="one",
+    )
+    val = (str(row.get("type_boutique") or "S")).strip() if row else "S"
+    _store_ctx_cache[key] = val
+    _store_ctx_ts[key] = _time.time()
+    return val
+
+
+def get_store_total_stock_units(store_id: str) -> float:
+    """SUM(quantity) tous SKUs pour ce store, depuis inventory.stock_levels —
+    single aggregate SELECT, no join."""
+    key = f"totalstock:{store_id}"
+    if _store_ctx_fresh(key):
+        return _store_ctx_cache[key]
+    row = _query(
+        "SELECT SUM(quantity) AS total FROM inventory.stock_levels WHERE store_id = %s",
+        (store_id,), fetch="one",
+    )
+    val = float(row.get("total") or 0) if row else 0.0
+    _store_ctx_cache[key] = val
+    _store_ctx_ts[key] = _time.time()
+    return val
 
 
 # ══════════════════════════════════════════════════════════════════════════════

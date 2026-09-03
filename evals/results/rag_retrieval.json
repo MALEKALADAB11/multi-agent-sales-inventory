@@ -2,13 +2,24 @@
   "suite": "rag_retrieval",
   "top_k": 3,
   "store_id": "I63",
-  "n_grounded": 11,
-  "n_offtopic": 3,
-  "hit_rate": 1.0,
-  "mrr": 0.955,
-  "token_recall": 1.0,
+  "n_grounded": 38,
+  "n_offtopic": 28,
+  "hit_rate": 0.974,
+  "mrr": 0.855,
+  "token_recall": 0.789,
   "purity": 1.0,
-  "abstention_rate": 1.0,
-  "failures": [],
-  "run_at": "2026-07-30T13:08:45"
+  "abstention_rate": 0.964,
+  "failures": [
+    "[tokens] 'comment conclure une vente quand le client est prêt ?' -> aucun de ['closing', 'signature', 'contrat'] dans le top_k",
+    "[tokens] 'comment gérer un client mécontent ?' -> aucun de ['meccontent', 'reclamation', 'satisfaction'] dans le top_k",
+    "[tokens] 'stratégie pour les produits saisonniers' -> aucun de ['saisonnier', 'saisonalite', 'anticipation'] dans le top_k",
+    "[tokens] 'spécifications techniques du Samsung S24' -> aucun de ['samsung s24', 'specifications', 'technique'] dans le top_k",
+    "[tokens] 'options de garantie disponibles' -> aucun de ['garantie', 'extension', 'protection'] dans le top_k",
+    "[tokens] 'produits en fin de vie à écouler' -> aucun de ['fin de vie', 'ecoulement', 'promotion'] dans le top_k",
+    "[hit@3] 'nouvelles arrivées à mettre en avant' -> domaine 'inventory_playbook' absent (obtenu : sales_script)",
+    "[tokens] 'nouvelles arrivées à mettre en avant' -> aucun de ['nouveau', 'lancement', 'mise en avant'] dans le top_k",
+    "[tokens] 'actions ayant amélioré satisfaction client' -> aucun de ['satisfaction', 'amelioration', 'action'] dans le top_k",
+    "[abstention] 'qui a gagné la coupe du monde 2018 ?' -> relevant=True (top=0.78, BEIN:Renouvellement Coupe du Monde Fifa )"
+  ],
+  "run_at": "2026-08-26T14:33:19"
 }

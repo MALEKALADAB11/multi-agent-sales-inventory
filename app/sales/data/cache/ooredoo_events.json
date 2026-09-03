@@ -2,75 +2,72 @@
   "total": 2,
   "events": [
     {
-      "title": "Activation SIM 4G frais offerts",
-      "type": "promotion",
-      "category": "SIM Kit Ooredoo 4G",
-      "price": "-100%",
-      "details": "Valable jusqu'au 2026-08-31",
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "999,00 DT",
+      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
-      "scraped": false,
-      "date": "2026-08-28T14:22:14.303493"
+      "scraped": true,
+      "date": "2026-09-01T18:53:40.718232"
     },
     {
-      "title": "Rentrée anticipée : forfait étudiant -15%",
-      "type": "promotion",
-      "category": "Forfait étudiant Ooredoo",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-09-15",
+      "title": "TECNO",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "499,90 DT",
+      "details": "SPARK 30C 4/64 +GF 5G | 499,90 DT",
       "is_active": true,
-      "scraped": false,
-      "date": "2026-08-28T14:22:14.303493"
+      "scraped": true,
+      "date": "2026-09-01T18:53:40.752865"
     }
   ],
   "active": [
     {
-      "title": "Activation SIM 4G frais offerts",
-      "type": "promotion",
-      "category": "SIM Kit Ooredoo 4G",
-      "price": "-100%",
-      "details": "Valable jusqu'au 2026-08-31",
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "999,00 DT",
+      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
-      "scraped": false,
-      "date": "2026-08-28T14:22:14.303493"
+      "scraped": true,
+      "date": "2026-09-01T18:53:40.718232"
     },
     {
-      "title": "Rentrée anticipée : forfait étudiant -15%",
-      "type": "promotion",
-      "category": "Forfait étudiant Ooredoo",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-09-15",
+      "title": "TECNO",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "499,90 DT",
+      "details": "SPARK 30C 4/64 +GF 5G | 499,90 DT",
       "is_active": true,
-      "scraped": false,
-      "date": "2026-08-28T14:22:14.303493"
+      "scraped": true,
+      "date": "2026-09-01T18:53:40.752865"
     }
   ],
-  "promotions": [
+  "promotions": [],
+  "new_offers": [
     {
-      "title": "Activation SIM 4G frais offerts",
-      "type": "promotion",
-      "category": "SIM Kit Ooredoo 4G",
-      "price": "-100%",
-      "details": "Valable jusqu'au 2026-08-31",
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "999,00 DT",
+      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
       "is_active": true,
-      "scraped": false,
-      "date": "2026-08-28T14:22:14.303493"
+      "scraped": true,
+      "date": "2026-09-01T18:53:40.718232"
     },
     {
-      "title": "Rentrée anticipée : forfait étudiant -15%",
-      "type": "promotion",
-      "category": "Forfait étudiant Ooredoo",
-      "price": "-15%",
-      "details": "Valable jusqu'au 2026-09-15",
+      "title": "TECNO",
+      "type": "new_offer",
+      "category": "promotion",
+      "price": "499,90 DT",
+      "details": "SPARK 30C 4/64 +GF 5G | 499,90 DT",
       "is_active": true,
-      "scraped": false,
-      "date": "2026-08-28T14:22:14.303493"
+      "scraped": true,
+      "date": "2026-09-01T18:53:40.752865"
     }
   ],
-  "new_offers": [],
   "tarifs": [],
-  "source": "fallback (aucune offre extraite)",
-  "fetched_at": "2026-08-28T14:22:14.303493",
-  "degraded": true,
-  "degraded_reason": "aucune offre extraite",
-  "fail_streak": 3
+  "source": "ooredoo.tn (playwright)",
+  "fetched_at": "2026-09-01T18:53:51.021619"
 }

@@ -67,6 +67,7 @@ from app.inventory.agents.context.tools import (
     get_upcoming_holidays,
     get_upcoming_events,
     get_product_category,
+    _CAT_CODE_TO_NAME,
 )
 
 
@@ -89,10 +90,17 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── 1. Product category (SKU-specific — no cache) ──────────────────────
     try:
-        category = get_product_category(sku)
+        raw_category = get_product_category(sku)
     except Exception as e:
         logger.warning("[Context/fetch] category lookup failed for %s: %s", sku, e)
-        category = "unknown"
+        raw_category = "unknown"
+
+    # Normalize immediately: raw codes ("70") never matched uplift columns or
+    # in-memory category names downstream — this was why events/promotions
+    # for accessoires were silently dropped. Everything below uses the
+    # normalized name; tools.py functions re-normalize internally too, so
+    # this is safe to pass through even if already normalized.
+    category = _CAT_CODE_TO_NAME.get(raw_category, raw_category)
 
     today_str = str(date.today())
 
@@ -152,12 +160,15 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
             return []
 
     def _fetch_events():
-        key = f"events:{category}:{today_str}"
+        # sku/store_id-specific now (inventory.events is per-SKU/boutique) —
+        # cache key must include them, this signal is no longer store-level
+        # only like weather/holidays.
+        key = f"events:{category}:{sku}:{store_id}:{today_str}"
         cached = _cache_get(key)
         if cached is not None:
             return cached
         try:
-            result = get_upcoming_events(category)
+            result = get_upcoming_events(category, sku=sku, store_id=store_id)
             _cache_set(key, result)
             return result
         except Exception as e:
@@ -255,6 +266,48 @@ def fetch_signals_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "signals": signals}
 
 
+def _build_events_summary(signals: Dict[str, Any], max_items: int = 4) -> str:
+    """
+    Résumé français court des événements/promotions/offres actifs pour ce
+    SKU/store, destiné à être cité tel quel par le Decision Agent dans
+    recommendation_text (ex: "la demande est soutenue par Rentrée scolaire
+    2026"). Sans ceci, les events existent dans `signals` mais ne sont
+    jamais mentionnés par leur nom dans la décision finale — seulement
+    noyés dans un pourcentage d'uplift anonyme.
+
+    Combine les 3 sources de signal :
+      - events        (market.events scrapé + inventory.events en base)
+      - promotions     (inventory.promotions)
+      - market_offers  (offres Ooredoo scrapées, ooredoo.tn)
+    Trié par impact décroissant, tronqué à max_items pour rester lisible.
+    """
+    items: list = []  # (abs_impact, phrase)
+
+    for ev in signals.get("events", []) or []:
+        name   = ev.get("event_name") or "Événement"
+        uplift = ev.get("estimated_uplift_pct")
+        if uplift:
+            items.append((abs(float(uplift)), f"{name} ({float(uplift):+.0f}%)"))
+        else:
+            items.append((0.5, name))
+
+    for p in signals.get("promotions", []) or []:
+        name = p.get("promo_name") or "Promotion"
+        disc = float(p.get("discount_pct") or 0)
+        phrase = f"{name} (-{disc:.0f}%)" if disc else name
+        items.append((disc or 1.0, phrase))
+
+    for o in signals.get("market_offers", []) or []:
+        title = str(o.get("title", ""))[:40] or "Offre Ooredoo"
+        items.append((1.0, f"Offre Ooredoo — {title}"))
+
+    if not items:
+        return "Aucun"
+
+    items.sort(key=lambda t: t[0], reverse=True)
+    return "; ".join(phrase for _, phrase in items[:max_items])
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Rule-Based Fallback
 # ═══════════════════════════════════════════════════════════════════════════
@@ -350,19 +403,66 @@ def _rule_based_interpret(
     conf_min     = SIGNAL_WEIGHTS["confidence_min_sample"]
     confidence   = "medium" if sample_size >= conf_min else "low"
 
+    # ── Contextual Intelligence fields (v2 schema) ──────────────────────────
+    # No LLM reasoning available here, so these are conservative heuristics,
+    # not judgment — they exist so the rule-based path returns the same
+    # shape as the LLM path and never leaves the decision agent guessing.
+
+    # impact_window_days: use the shortest *known* duration among active
+    # signals when one is knowable (bad weather days), otherwise default 7 —
+    # we have no per-event/promo duration data at this layer to do better.
+    bad_days = signals.get("weather", {}).get("bad_weather_days", 0)
+    if dominant == "weather" and bad_days:
+        impact_window_days = min(max(int(bad_days), 1), 14)
+    else:
+        impact_window_days = 7
+
+    # context_volatility: more active signal *types* stacking → more
+    # uncertain combined read. No historical sample → automatically HIGH.
+    active_signal_types = sum([
+        promo_uplift != 0.0,
+        holiday_uplift != 0.0,
+        event_uplift != 0.0,
+        weather_uplift != 0.0,
+        market_uplift != 0.0,
+    ])
+    if sample_size == 0 or active_signal_types >= 3:
+        context_volatility = "HIGH"
+    elif active_signal_types >= 2:
+        context_volatility = "MEDIUM"
+    else:
+        context_volatility = "LOW"
+
+    buffer_recommendation_pct = {
+        "HIGH": 15.0, "MEDIUM": 5.0, "LOW": 0.0,
+    }[context_volatility]
+
+    operational_directives = {
+        "urgency": "immediate" if abs(uplift) >= 20.0 else (
+            "this_week" if abs(uplift) >= 5.0 else "none"
+        ),
+        "delivery_timing": "N/A — mode règles, pas d'estimation de timing.",
+        "risk_mitigation": "N/A — mode règles, pas d'estimation de risque.",
+    }
+
     signal_summary = "; ".join(notes) if notes else "no active signals"
     interpretation = (
         f"Rule-based fallback estimate (LLM unavailable). "
         f"Active signals: {signal_summary}. "
-        f"Combined demand adjustment: {uplift:+.1f}%."
+        f"Combined demand adjustment: {uplift:+.1f}% over {impact_window_days}d."
     )
 
     return {
-        "demand_uplift_pct": round(uplift, 1),
-        "interpretation":    interpretation,
-        "confidence":        confidence,
-        "dominant_signal":   dominant,
-        "reasoning_source":  "rule_based_fallback",
+        "demand_uplift_pct":          round(uplift, 1),
+        "impact_window_days":         impact_window_days,
+        "context_volatility":         context_volatility,
+        "buffer_recommendation_pct":  buffer_recommendation_pct,
+        "store_context_impact":       "Non déterminable — mode règles, aucune analyse qualitative de boutique.",
+        "operational_directives":     operational_directives,
+        "interpretation":             interpretation,
+        "confidence":                 confidence,
+        "dominant_signal":            dominant,
+        "reasoning_source":           "rule_based_fallback",
     }
 
 
@@ -385,6 +485,7 @@ def create_interpret_node(llm, use_llm: bool):
         if not use_llm or llm is None:
             report = _rule_based_interpret(signals, sku, store_id)
             report["signals"] = signals
+            report["events_summary"] = _build_events_summary(signals)
             return {**state, "context_report": report}
 
         # ── LLM path ──────────────────────────────────────────────────────
@@ -440,18 +541,54 @@ def create_interpret_node(llm, use_llm: bool):
 
             parsed = json.loads(raw)
 
+            # impact_window_days: clamp to the documented 1-14 range — an
+            # LLM occasionally returns 0 or an out-of-range value, and a
+            # 0-day window would silently zero out the decision agent's
+            # proration math.
+            try:
+                impact_window_days = int(parsed.get("impact_window_days", 7))
+            except (TypeError, ValueError):
+                impact_window_days = 7
+            impact_window_days = min(max(impact_window_days, 1), 14)
+
+            context_volatility = str(parsed.get("context_volatility", "LOW")).upper()
+            if context_volatility not in ("LOW", "MEDIUM", "HIGH"):
+                context_volatility = "LOW"
+
+            try:
+                buffer_recommendation_pct = max(0.0, float(parsed.get("buffer_recommendation_pct", 0.0)))
+            except (TypeError, ValueError):
+                buffer_recommendation_pct = 0.0
+
+            operational_directives = parsed.get("operational_directives", {})
+            if not isinstance(operational_directives, dict):
+                operational_directives = {}
+            operational_directives = {
+                "urgency":         str(operational_directives.get("urgency", "none")),
+                "delivery_timing": str(operational_directives.get("delivery_timing", "N/A")),
+                "risk_mitigation": str(operational_directives.get("risk_mitigation", "N/A")),
+            }
+
             report = {
-                "demand_uplift_pct": float(parsed.get("demand_uplift_pct", 0.0)),
-                "interpretation":    str(parsed.get("interpretation", "")),
-                "confidence":        str(parsed.get("confidence", "low")),
-                "dominant_signal":   str(parsed.get("dominant_signal", "none")),
-                "reasoning_source":  "llm",
+                "demand_uplift_pct":          float(parsed.get("demand_uplift_pct", 0.0)),
+                "impact_window_days":         impact_window_days,
+                "context_volatility":         context_volatility,
+                "buffer_recommendation_pct":  buffer_recommendation_pct,
+                "store_context_impact":       str(parsed.get("store_context_impact", "Non déterminable")),
+                "operational_directives":     operational_directives,
+                "interpretation":             str(parsed.get("interpretation", "")),
+                "confidence":                 str(parsed.get("confidence", "low")),
+                "dominant_signal":            str(parsed.get("dominant_signal", "none")),
+                "reasoning_source":           "llm",
             }
 
             logger.info(
-                "[Context/interpret] SKU=%s uplift=%.1f%% confidence=%s dominant=%s",
+                "[Context/interpret] SKU=%s uplift=%.1f%% window=%dd volatility=%s "
+                "confidence=%s dominant=%s",
                 sku,
                 report["demand_uplift_pct"],
+                report["impact_window_days"],
+                report["context_volatility"],
                 report["confidence"],
                 report["dominant_signal"],
             )
@@ -464,6 +601,7 @@ def create_interpret_node(llm, use_llm: bool):
             report = _rule_based_interpret(signals, sku, store_id)
 
         report["signals"] = signals
+        report["events_summary"] = _build_events_summary(signals)
         return {**state, "context_report": report}
 
     return interpret_node

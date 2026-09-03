@@ -20,6 +20,8 @@ from app.inventory.tools.internal.stock_tools import (
     get_product,
     get_sales_history,
     get_forecast,
+    get_store_type,
+    get_store_total_stock_units,
     _DataCache,
 )
 from app.inventory.agents.analysis.tools import (
@@ -51,6 +53,30 @@ try:
 except Exception:
     _DB_AVAILABLE = False
     logger.warning("SyncInventoryRepo not importable — business objective DB reads disabled.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Boutique Storage Capacity — per-unit volume (L) and capacity by store type
+# ═══════════════════════════════════════════════════════════════════════════
+# categorie in sales.produits is a raw numeric code — mirrors the mapping in
+# context/tools.py's _CAT_CODE_TO_NAME so both agents estimate volume off the
+# same category names.
+_CAT_CODE_TO_VOLUME_L: Dict[str, float] = {
+    "50": 0.6,   # TERMINAL
+    "70": 0.2,   # ACCESSOIRE
+    "88": 0.01, "80": 0.01,  # FORFAIT
+    "20": 0.01, "40": 0.01,  # SIM
+    "30": 0.01, "32": 0.01,  # RECHARGE
+}
+_DEFAULT_UNIT_VOLUME_L = 0.1  # fallback for uncategorized/AUTRE SKUs
+
+_STORE_CAPACITY_L = {
+    "M": 5000.0,  # Mall
+    "I": 2000.0,  # Official (Ooredoo-owned)
+    "O": 2000.0,  # Official (partner)
+    "S": 1000.0,  # Standard / other
+}
+_DEFAULT_STORE_CAPACITY_L = 1000.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -182,6 +208,20 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             logger.warning("Failed to get business objective from DB: %s", e)
 
+    # ── Boutique storage capacity context (Part 2, section B) ───────────────
+    # Cached 5min in stock_tools — one SELECT per store per cache window, not
+    # per SKU, even though fetch_node runs per-SKU within a batch.
+    try:
+        store_type = get_store_type(store_id)
+    except Exception as e:
+        logger.warning("get_store_type failed for %s: %s", store_id, e)
+        store_type = "S"
+    try:
+        store_total_stock_units = get_store_total_stock_units(store_id)
+    except Exception as e:
+        logger.warning("get_store_total_stock_units failed for %s: %s", store_id, e)
+        store_total_stock_units = 0.0
+
     return {
         "fetch_data": {
             "stock":              stock_data,
@@ -192,6 +232,8 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "forecast_source":    forecast_source,  # "demand_sensing_db" | "live_ts_engine" | "fallback_flat"
             "business_objective": business_objective,
             "seasonal_profile":   seasonal_profile,
+            "store_type":              store_type,
+            "store_total_stock_units": store_total_stock_units,
         }
     }
 
@@ -220,6 +262,8 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
     forecast_source    = fetch_data.get("forecast_source", "unknown")
     business_objective = fetch_data["business_objective"]
     seasonal_profile   = fetch_data.get("seasonal_profile", {})
+    store_type              = fetch_data.get("store_type", "S")
+    store_total_stock_units = fetch_data.get("store_total_stock_units", 0.0)
 
     # ── Statistiques de demande : TS engine > saisonnier > forecast_df ───────
     if ts_result:
@@ -300,6 +344,18 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "until the row is backfilled)", sku
         )
 
+    # ── Boutique storage capacity estimate (Part 2, section B) ──────────────
+    unit_volume_l = _CAT_CODE_TO_VOLUME_L.get(str(product.get("category", "")), _DEFAULT_UNIT_VOLUME_L)
+    store_capacity_l = _STORE_CAPACITY_L.get(
+        (store_type or "S")[:1].upper(), _DEFAULT_STORE_CAPACITY_L
+    )
+    store_space_utilization_pct = (
+        (store_total_stock_units * unit_volume_l / store_capacity_l) * 100
+        if store_capacity_l > 0 else 0.0
+    )
+
+    supplier_order_multiple = int(product.get("supplier_order_multiple", 1) or 1)
+
     # Compute all metrics
     metrics = compute_inventory_metrics(
         # Stock
@@ -323,7 +379,26 @@ def compute_node(state: Dict[str, Any]) -> Dict[str, Any]:
         trend_direction    = trend,
         # Business context
         business_objective = business_objective,
+        # Supplier lot size (Part 2, section A)
+        supplier_order_multiple = supplier_order_multiple,
     )
+
+    # ── Enrich metrics["stock"] with supplier/product/capacity context so the
+    # decision agent (and reason_node below) can read it straight off
+    # baseline_report["stock"] without re-querying anything. ─────────────────
+    metrics["stock"].update({
+        "flag_4g":                     bool(product.get("flag_4g", False)),
+        "flag_5g":                     bool(product.get("flag_5g", False)),
+        "brand":                       product.get("brand", "") or "",
+        "preferred_supplier_id":       product.get("preferred_supplier_id"),
+        "preferred_supplier_name":     product.get("preferred_supplier_name"),
+        "preferred_supplier_reliable": bool(product.get("preferred_supplier_reliable", True)),
+        "preferred_supplier_active":   bool(product.get("preferred_supplier_active", True)),
+        "fallback_supplier_name":      product.get("fallback_supplier_name"),
+        "fallback_supplier_active":    bool(product.get("fallback_supplier_active", False)),
+        "store_type":                  store_type,
+        "store_space_utilization_pct": store_space_utilization_pct,
+    })
 
     # Enrichir les métriques avec les données TS engine si disponibles
     if ts_result:
@@ -405,6 +480,17 @@ def create_reason_node(llm, use_llm: bool = True):
             moq_is_binding         = metrics["constraints"]["moq_is_binding"],
             high_cost_flag         = metrics["constraints"]["high_cost_flag"],
             high_holding_flag      = metrics["constraints"]["high_holding_flag"],
+            # Supplier / store / product context (Part 2)
+            preferred_supplier_name     = metrics["stock"].get("preferred_supplier_name") or "N/A",
+            preferred_supplier_active   = metrics["stock"].get("preferred_supplier_active", True),
+            preferred_supplier_reliable = metrics["stock"].get("preferred_supplier_reliable", True),
+            fallback_supplier_name      = metrics["stock"].get("fallback_supplier_name") or "aucun",
+            supplier_order_multiple     = metrics["constraints"].get("supplier_order_multiple", 1),
+            store_type                  = metrics["stock"].get("store_type", "?"),
+            store_space_utilization_pct = metrics["stock"].get("store_space_utilization_pct", 0.0),
+            brand                       = metrics["stock"].get("brand", ""),
+            flag_4g                     = metrics["stock"].get("flag_4g", False),
+            flag_5g                     = metrics["stock"].get("flag_5g", False),
         )
 
         try:

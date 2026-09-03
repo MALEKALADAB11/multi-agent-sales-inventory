@@ -55,11 +55,49 @@ def _extract_adjusted(state: Dict[str, Any]) -> tuple:
             reorder_point, repl_cost, overstock_flag, lead_time_avg)
 
 
+def _extract_supply_context(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pull supplier/capacity/product context that the analysis agent (Part 2 of
+    the plan) is expected to add to baseline_report — supplier logistics,
+    boutique storage utilization, tech/lifecycle flags.
+
+    Looks across a few plausible locations (top of baseline_report, under
+    "stock", under "constraints") rather than hard-requiring one exact shape,
+    since the analysis agent's fetch/compute nodes may surface these fields
+    at different nesting levels depending on how they get wired in.
+    """
+    base  = state.get("baseline_report", {}) or {}
+    stock = base.get("stock", {}) or {}
+    cons  = base.get("constraints", {}) or {}
+
+    def _pick(*keys, default=None):
+        for src in (base, stock, cons):
+            for k in keys:
+                if k in src and src[k] not in (None, ""):
+                    return src[k]
+        return default
+
+    return {
+        "supplier_name":     _pick("preferred_supplier_name", default="fournisseur principal"),
+        "supplier_active":   bool(_pick("preferred_supplier_active", default=True)),
+        "supplier_reliable": bool(_pick("preferred_supplier_reliable", default=True)),
+        "fallback_supplier": _pick("fallback_supplier_name", default=None),
+        "fallback_active":   _pick("fallback_supplier_active", default=None),
+        "supplier_lot_size": int(_safe_float(_pick("supplier_order_multiple", default=1), 1)),
+        "store_space_pct":   _safe_float(_pick("store_space_utilization_pct", default=0.0), 0.0),
+        "store_type":        _pick("store_type", "type_boutique", default="?"),
+        "flag_4g":           bool(_pick("flag_4g", default=False)),
+        "flag_5g":           bool(_pick("flag_5g", default=False)),
+        "brand":             _pick("brand", "marque", default=""),
+    }
+
+
 def _extract_constraints(state: Dict[str, Any]) -> Dict[str, Any]:
-    base  = state.get("baseline_report", {})
-    cons  = base.get("constraints", {})
-    stock = base.get("stock", {})
-    adj_m = (state.get("adjusted_metrics", {}).get("metrics") or base.get("metrics", {}))
+    base   = state.get("baseline_report", {})
+    cons   = base.get("constraints", {})
+    stock  = base.get("stock", {})
+    adj_m  = (state.get("adjusted_metrics", {}).get("metrics") or base.get("metrics", {}))
+    supply = _extract_supply_context(state)
     return {
         "moq":            _safe_float(cons.get("moq"), 1.0),
         "moq_is_binding": cons.get("moq_is_binding", False),
@@ -70,7 +108,12 @@ def _extract_constraints(state: Dict[str, Any]) -> Dict[str, Any]:
         "risk_override":  (base.get("risk_assessment") or {}).get("override"),
         "repl_cost":      _safe_float(adj_m.get("total_replenishment_cost"), 0.0),
         "analyst_flag":   base.get("analyst_flag", ""),
-        "obj_conflict":   cons.get("objective_conflict", False),
+        # ── Supply logistics / capacity (Part 2 & 3 of the plan) ───────────
+        "supplier_order_multiple":    supply["supplier_lot_size"],
+        "preferred_supplier_active":  supply["supplier_active"],
+        "preferred_supplier_name":    supply["supplier_name"],
+        "store_space_utilization_pct": supply["store_space_pct"],
+        "lot_size_rounded":           cons.get("lot_size_rounded", False),
     }
 
 
@@ -175,6 +218,38 @@ def _build_recommendation_text(
                 f"Le coût de réapprovisionnement est de {adj_cost:,.0f} DT pour {order_qty:,} unités."
             )
 
+        # ── S3b: Supply & capacity constraints — only mention what actually
+        # changed something, in plain French, never technical jargon (MOQ/EOQ/SS).
+        supply = _extract_supply_context(state)
+        constraint_bits = []
+
+        if cons["moq_is_binding"]:
+            constraint_bits.append(
+                f"la quantité minimale de commande imposée par {supply['supplier_name']} "
+                f"est de {cons['moq']:.0f} unités"
+            )
+
+        lot_size = supply["supplier_lot_size"]
+        # Now backed by the real flag from compute_inventory_metrics (Part 2)
+        # instead of a heuristic — it's set exactly when rounding up to the
+        # lot size actually changed the quantity.
+        if lot_size > 1 and cons.get("lot_size_rounded"):
+            constraint_bits.append(f"arrondie au lot fournisseur de {lot_size} unités")
+
+        if supply["supplier_active"] is False and supply["fallback_supplier"]:
+            constraint_bits.append(
+                f"le fournisseur habituel est temporairement indisponible — "
+                f"la commande passe par {supply['fallback_supplier']}"
+            )
+
+        if supply["store_space_pct"] > 85:
+            constraint_bits.append(
+                f"l'espace en boutique est déjà utilisé à {supply['store_space_pct']:.0f}%"
+            )
+
+        if constraint_bits:
+            sentences.append("À noter : " + " ; ".join(constraint_bits) + ".")
+
     elif action == "MONITOR":
         sentences.append(
             f"Revoir avant que le stock ne passe sous {rop:.0f} unités — "
@@ -187,23 +262,51 @@ def _build_recommendation_text(
         )
 
     # ── S4: Context influence ─────────────────────────────────────────────
+    # Name the actual events/promotions/offers driving the uplift rather than
+    # a bare percentage attributed to an anonymous "dominant signal" category —
+    # this is what the operator actually needs to act on.
+    events_summary = ctx.get("events_summary", "Aucun")
+    events_clause = f" ({events_summary})" if events_summary and events_summary != "Aucun" else ""
+
+    # Operational timing and situational buffer — folded as trailing clauses
+    # onto the existing context sentence rather than added as new sentences,
+    # to keep the same 3-5 sentence discipline as before. Only surfaced when
+    # the context agent actually flagged something concrete: a real timing
+    # constraint, or HIGH volatility with a non-zero buffer already applied.
+    op_dirs = ctx.get("operational_directives", {}) or {}
+    delivery_timing = op_dirs.get("delivery_timing", "N/A")
+    timing_clause = (
+        f" {delivery_timing.rstrip('.')}." if delivery_timing and delivery_timing != "N/A" else ""
+    )
+
+    volatility = ctx.get("context_volatility", "LOW")
+    buffer_pct = _safe_float(ctx.get("buffer_recommendation_pct"))
+    buffer_clause = (
+        f" Le contexte restant incertain, un tampon de sécurité de {buffer_pct:.0f}% "
+        f"a été intégré au stock de sécurité."
+        if volatility == "HIGH" and buffer_pct > 0 and action in ("ORDER", "EXPEDITE")
+        else ""
+    )
+
     if uplift != 0.0 and dominant != "none":
         # Ne chiffrer l'effet que s'il est réel et hors sentinelle (évite "de 999 à 999")
         if base_days < 999 and abs(adj_days - base_days) >= 0.5:
             s_ctx = (
-                f"Une hausse de demande de {uplift:+.1f}% liée à {dominant} (confiance : {ctx_conf}) "
-                f"a été appliquée, réduisant les jours ajustés de {base_days:.0f} à {adj_days:.0f}."
+                f"Une hausse de demande de {uplift:+.1f}% liée à {dominant}{events_clause} "
+                f"(confiance : {ctx_conf}) a été appliquée, réduisant les jours ajustés "
+                f"de {base_days:.0f} à {adj_days:.0f}.{timing_clause}{buffer_clause}"
             )
         else:
             s_ctx = (
-                f"Une hausse de demande de {uplift:+.1f}% liée à {dominant} "
-                f"(confiance : {ctx_conf}) a été prise en compte, sans impact matériel sur la couverture."
+                f"Une hausse de demande de {uplift:+.1f}% liée à {dominant}{events_clause} "
+                f"(confiance : {ctx_conf}) a été prise en compte, sans impact matériel sur la couverture.{timing_clause}{buffer_clause}"
             )
         sentences.append(s_ctx)
     elif action in ("ORDER", "EXPEDITE") and dominant == "none":
         # Only mention lack of signals for ORDER/EXPEDITE where it's relevant
         sentences.append(
             f"Aucun signal de demande cette semaine — la décision repose uniquement sur le calcul de stock."
+            f"{buffer_clause}"
         )
 
     # ── S5: Escalation flag ───────────────────────────────────────────────
@@ -281,6 +384,8 @@ def _rule_based_decide(state: Dict[str, Any]) -> Dict[str, Any]:
     escalate: bool            = False
     esc_reason: Optional[str] = None
 
+    supply = _extract_supply_context(state)
+
     if action in ("ORDER", "EXPEDITE") and repl_cost > 50_000:
         escalate   = True
         esc_reason = f"Coût de commande {repl_cost:,.0f} DT dépasse 50 000 DT — validation manager requise."
@@ -293,11 +398,24 @@ def _rule_based_decide(state: Dict[str, Any]) -> Dict[str, Any]:
     elif action in ("ORDER", "EXPEDITE") and cons["high_cost_flag"] and cons["obj_conflict"]:
         escalate   = True
         esc_reason = "Commande à coût élevé en conflit avec l'objectif business actif — validation requise."
+    elif supply["supplier_active"] is False and not supply["fallback_supplier"]:
+        escalate   = True
+        esc_reason = (
+            f"Le fournisseur principal ({supply['supplier_name']}) est inactif et aucun "
+            f"fournisseur de repli n'est disponible — approvisionnement bloqué."
+        )
+    elif action in ("ORDER", "EXPEDITE") and supply["store_space_pct"] > 90:
+        escalate   = True
+        esc_reason = (
+            f"L'espace en boutique est utilisé à {supply['store_space_pct']:.0f}% — "
+            f"vérifier la capacité de stockage avant de commander."
+        )
 
     # ── Confidence ───────────────────────────────────────────────────────
     ctx          = state.get("context_report", {})
     uplift       = _safe_float(ctx.get("demand_uplift_pct"))
     ctx_conf     = ctx.get("confidence", "low")
+    ctx_volatility = ctx.get("context_volatility", "LOW")
 
     if override or cons["obj_conflict"] or cons["moq_is_binding"]:
         # Structural uncertainty — always low regardless of risk clarity
@@ -312,6 +430,14 @@ def _rule_based_decide(state: Dict[str, Any]) -> Dict[str, Any]:
     elif risk_level in ("CRITICAL", "LOW") and not escalate:
         confidence = "high"
     else:
+        confidence = "medium"
+
+    # HIGH context volatility caps confidence even when the risk level and
+    # inventory math are clear — a stable formula sitting on top of a
+    # genuinely uncertain read of the environment (contradictory signals,
+    # novel event, thin history) is not "high confidence", per the
+    # architecture guide's volatility framing.
+    if ctx_volatility == "HIGH" and confidence == "high":
         confidence = "medium"
 
     recommendation_text = _build_recommendation_text(
@@ -370,6 +496,15 @@ def create_decide_node(llm, use_llm: bool):
         a_risk    = adj.get("risk_assessment") or base.get("risk_assessment", {})
         cons      = base.get("constraints", {})
         stock     = base.get("stock", {})
+        supply    = _extract_supply_context(state)
+
+        # context_adjustment: written by decision/agent.py::_compute_adjusted_metrics
+        # — the double-counting guard's audit trail (raw vs effective uplift,
+        # forecast_source, mitigation flag). Falls back to raw context_report
+        # values if adjusted_metrics didn't produce it (e.g. compute failure
+        # path, which still returns baseline metrics without this key).
+        ctx_adj = adj.get("context_adjustment", {})
+        op_dirs = ctx.get("operational_directives", {}) or {}
 
         user_prompt = DECIDE_USER.format(
             sku=sku,
@@ -399,6 +534,18 @@ def create_decide_node(llm, use_llm: bool):
             dominant_signal             = ctx.get("dominant_signal", "none"),
             context_confidence          = ctx.get("confidence", "low"),
             context_interpretation      = ctx.get("interpretation", "No demand signals detected."),
+            # Context v2 — double-counting audit trail + operational read
+            raw_uplift_pct              = _safe_float(ctx_adj.get("raw_uplift_pct", ctx.get("demand_uplift_pct"))),
+            effective_uplift_pct        = _safe_float(ctx_adj.get("effective_uplift_pct", ctx.get("demand_uplift_pct"))),
+            mitigation_applied          = ctx_adj.get("double_counting_mitigation_applied", False),
+            forecast_source             = ctx_adj.get("forecast_source", base.get("forecast_source", "unknown")),
+            impact_window_days          = _safe_float(ctx_adj.get("impact_window_days", ctx.get("impact_window_days", 7)), 7.0),
+            context_volatility          = ctx.get("context_volatility", "LOW"),
+            buffer_recommendation_pct   = _safe_float(ctx_adj.get("buffer_recommendation_pct", ctx.get("buffer_recommendation_pct")), 0.0),
+            store_context_impact        = ctx.get("store_context_impact", "Non déterminable"),
+            op_urgency                  = op_dirs.get("urgency", "none"),
+            op_delivery_timing          = op_dirs.get("delivery_timing", "N/A"),
+            op_risk_mitigation          = op_dirs.get("risk_mitigation", "N/A"),
             # Adjusted
             adjusted_risk_level         = a_risk.get("level", "N/A"),
             adjusted_days_remaining     = _safe_float(a_metrics.get("days_of_stock_remaining")),
@@ -406,6 +553,19 @@ def create_decide_node(llm, use_llm: bool):
             adjusted_reorder_point      = _safe_float(a_metrics.get("reorder_point")),
             adjusted_replenishment_cost = _safe_float(a_metrics.get("total_replenishment_cost")),
             adjusted_safety_stock       = _safe_float(a_metrics.get("safety_stock")),
+            # Supply & capacity context (Part 2/3 of the plan)
+            supplier_name       = supply["supplier_name"],
+            supplier_active     = supply["supplier_active"],
+            supplier_reliable   = supply["supplier_reliable"],
+            fallback_supplier   = supply["fallback_supplier"] or "aucun",
+            supplier_lot_size   = supply["supplier_lot_size"],
+            lot_size_rounded    = cons.get("lot_size_rounded", False),
+            store_space_pct     = supply["store_space_pct"],
+            flag_5g             = supply["flag_5g"],
+            # Events/promotions/offers actually driving demand, named — built
+            # in the context agent so the LLM can cite them instead of
+            # folding everything into an anonymous uplift percentage.
+            active_events       = ctx.get("events_summary", "Aucun"),
         )
 
         # Boucle de feedback : les arbitrages humains passés (HITL, PO annulés,

@@ -72,7 +72,7 @@ GROQ_KEYS = list(dict.fromkeys(
 ))
 _GROQ_MODEL_ROTATION = [
     os.getenv("GROQ_MODEL",          "openai/gpt-oss-120b"),
-    os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile"),
+    os.getenv("GROQ_MODEL_FALLBACK", "openai/gpt-oss-120b"),
 ]
 
 OPENROUTER_KEY   = os.getenv("OPENROUTER_API_KEY", "")

@@ -8,14 +8,48 @@ Modular architecture:
     1. Learn from history what impact past events/promotions had on this
        product category (real observed uplifts from inventory.sales_history PG)
     2. Assess the current moment through that historical lens and produce
-       a calibrated demand_uplift_pct for the next 7 days
+       a calibrated Contextual Intelligence Report for the next 1-14 days
 
-Output feeds directly into the decision agent — the demand_uplift_pct
-is applied to baseline metrics to produce adjusted EOQ, safety stock,
-and reorder point.
+This agent is the Environmental Intelligence Hub, not a fallback for the
+ML Demand Sensing model — it resolves contradictory signals, flags
+volatility/uncertainty, and issues operational directives (timing, risk),
+in addition to the headline demand_uplift_pct.
+
+context_report shape (v2):
+  demand_uplift_pct          float, signed % vs baseline
+  impact_window_days         int, 1-14 — how many days the effect actually lasts
+  context_volatility         "LOW" | "MEDIUM" | "HIGH"
+  buffer_recommendation_pct  float >= 0.0 — suggested temporary safety-stock bump
+  store_context_impact       str — qualitative note on store typology, if inferable
+  operational_directives     {urgency, delivery_timing, risk_mitigation}
+  interpretation, confidence, dominant_signal — unchanged from v1
+
+IMPORTANT — parallel execution boundary:
+  The orchestrator runs this agent in parallel with the Analysis agent for
+  performance (they are independent). That means this agent never knows
+  whether the Analysis agent's baseline demand came from the ML Demand
+  Sensing model (forecast_source == "demand_sensing_db") or a simpler
+  source — that information doesn't exist yet when this agent runs.
+  Consequently this agent always returns its best full read of the
+  signals; it does NOT attempt to avoid double-counting anything the ML
+  model may already have priced in. That guard lives entirely in the
+  Decision agent (decision/agent.py::_compute_adjusted_metrics), which
+  runs sequentially after both this agent and the Analysis agent finish,
+  and has both reports available at once.
+
+Output feeds directly into the decision agent — demand_uplift_pct and
+impact_window_days are applied to baseline metrics (prorated over the
+window, not blanket-applied over 30 days) to produce adjusted EOQ,
+safety stock, and reorder point.
 
 Persists to:
   inventory.context_adjustments  — timestamped audit trail (monitoring reads this)
+                                    NOTE: only the v1 fields (demand_uplift_pct,
+                                    dominant_signal, confidence, interpretation)
+                                    are persisted today — the new v2 fields are
+                                    passed in-memory to the decision agent but
+                                    are not yet written to this table pending a
+                                    schema migration. See _persist_result().
   inventory.agent_runs           — agent health tracking
 """
 
@@ -144,7 +178,12 @@ class InventoryContextAgent:
                 "sku":            str,
                 "store_id":       str,
                 "context_report": {
-                    "demand_uplift_pct": float,
+                    "demand_uplift_pct":         float,
+                    "impact_window_days":        int,    # 1-14, see module docstring
+                    "context_volatility":        str,    # LOW|MEDIUM|HIGH
+                    "buffer_recommendation_pct": float,
+                    "store_context_impact":      str,
+                    "operational_directives":    dict,   # urgency/delivery_timing/risk_mitigation
                     "interpretation":   str,
                     "confidence":       str,
                     "dominant_signal":  str,
@@ -263,6 +302,15 @@ class InventoryContextAgent:
 
         This write is for the monitoring module's audit trail.
         The orchestrator does NOT re-read this row — it uses the in-memory dict.
+
+        NOTE: the v2 fields (impact_window_days, context_volatility,
+        buffer_recommendation_pct, store_context_impact, operational_directives)
+        are deliberately NOT written here — inventory.context_adjustments and
+        SyncInventoryRepo.save_context_adjustment() were not touched by this
+        change (no schema/repo access), so only the original v1 columns are
+        persisted. The decision agent still receives the full v2 report
+        in-memory via the orchestrator, so nothing is lost for the running
+        pipeline — only the DB audit trail is behind, for now.
         """
         if not _DB_AVAILABLE:
             return

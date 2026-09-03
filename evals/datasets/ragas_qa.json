@@ -48,6 +48,168 @@
       "domain": "inventory_playbook",
       "question": "Le Galaxy S25 est en rupture, qu'est-ce que je propose au client ?",
       "reference": "Face à la rupture, proposer un produit substitut disponible de gamme équivalente, expliquer le délai de réassort, et éventuellement prendre les coordonnées pour rappeler à l'arrivée."
+    },
+    {
+      "id": "ragas-vente-paiement",
+      "domain": "sales_script",
+      "question": "Le client veut payer en plusieurs fois, comment je réponds ?",
+      "reference": "Proposer les facilités de paiement disponibles (échéances, conditions d'éligibilité), vérifier la solvabilité si nécessaire, et présenter la solution comme un avantage pour l'achat."
+    },
+    {
+      "id": "ragas-vente-closing",
+      "domain": "sales_script",
+      "question": "Le client est prêt à acheter, comment je conclus la vente proprement ?",
+      "reference": "Confirmer le choix, récapituler les éléments du panier, présenter les options de garantie/accessoires, procéder à l'enregistrement et remercier le client."
+    },
+    {
+      "id": "ragas-vente-fidelite",
+      "domain": "sales_script",
+      "question": "Un client fidèle demande une réduction spéciale, je fais quoi ?",
+      "reference": "Reconnaître la fidélité, vérifier les offres disponibles pour les clients fidèles, ne jamais promettre de remise non autorisée, proposer des alternatives (programme fidélité, offres en cours)."
+    },
+    {
+      "id": "ragas-vente-meccontent",
+      "domain": "sales_script",
+      "question": "Comment gérer un client qui est mécontent de son achat ?",
+      "reference": "Écouter activement le problème, s'excuser sincèrement, proposer une solution concrète (échange, réparation, remboursement selon conditions), suivre jusqu'à résolution."
+    },
+    {
+      "id": "ragas-vente-data",
+      "domain": "sales_script",
+      "question": "Comment vendre un forfait data illimité à un client qui hésite ?",
+      "reference": "Argumenter sur la liberté d'utilisation, comparer avec les forfaits limités, mettre en avant la valeur à long terme, identifier les besoins réels en data du client."
+    },
+    {
+      "id": "ragas-vente-reseau",
+      "domain": "sales_script",
+      "question": "Le client se plaint de la qualité du réseau, comment je réponds ?",
+      "reference": "Reconnaître le problème, vérifier la couverture spécifique, expliquer les améliorations en cours, proposer des solutions techniques (Wi-Fi calling, équipements adaptés)."
+    },
+    {
+      "id": "ragas-vente-concurrent",
+      "domain": "sales_script",
+      "question": "Le client dit que c'est moins cher chez Orange, je réponds quoi ?",
+      "reference": "Argumenter sur la valeur ajoutée (qualité réseau, service client, avantages Ooredoo), ne jamais dénigrer le concurrent, proposer des équivalences de prix avec services inclus."
+    },
+    {
+      "id": "ragas-vente-senior",
+      "domain": "sales_script",
+      "question": "Comment adapter ma vente pour un client senior ?",
+      "reference": "Adapter le ton et le rythme, privilégier la simplicité, proposer des équipements faciles à utiliser, prendre le temps d'expliquer, proposer un accompagnement post-vente."
+    },
+    {
+      "id": "ragas-stock-securite",
+      "domain": "inventory_playbook",
+      "question": "Comment calculer le stock de sécurité optimal pour un produit ?",
+      "reference": "Analyser la variabilité de la demande et des délais, appliquer la formule du stock de sécurité basée sur l'écart-type, ajuster selon le niveau de service souhaité et le coût de rupture."
+    },
+    {
+      "id": "ragas-stock-exceptionnel",
+      "domain": "inventory_playbook",
+      "question": "Quand faut-il déclencher une commande exceptionnelle hors procédure standard ?",
+      "reference": "En cas de rupture critique, d'événement exceptionnel (promotion, pic de demande imprévu), avec validation managériale si coûts élevés, et en documentant la raison pour analyse ultérieure."
+    },
+    {
+      "id": "ragas-stock-retour",
+      "domain": "inventory_playbook",
+      "question": "Comment gérer les retours clients dans le stock ?",
+      "reference": "Vérifier l'état du produit retourné, décider réintégration ou réparation selon condition, mettre à jour le stock en temps réel, analyser les causes de retour pour réduire les futurs retours."
+    },
+    {
+      "id": "ragas-stock-espace",
+      "domain": "inventory_playbook",
+      "question": "Comment optimiser l'espace de stockage en boutique ?",
+      "reference": "Analyser la rotation des produits, placer les best-sellers accessibles, optimiser le rayonnage, utiliser l'espace vertical, éliminer les produits dormants pour libérer de la place."
+    },
+    {
+      "id": "ragas-stock-saisonnier",
+      "domain": "inventory_playbook",
+      "question": "Quelle stratégie adopter pour les produits saisonniers ?",
+      "reference": "Anticiper les pics de demande par analyse historique, stocker en avance des produits saisonniers, réduire les commandes hors saison, écouler les stocks restants avant fin de saison."
+    },
+    {
+      "id": "ragas-stock-rotation",
+      "domain": "inventory_playbook",
+      "question": "Comment suivre efficacement la rotation des stocks ?",
+      "reference": "Calculer les indicateurs de rotation (stock moyen, ventes), identifier les produits lents et rapides, ajuster les réapprovisionnements selon la rotation, éliminer les produits à rotation nulle."
+    },
+    {
+      "id": "ragas-stock-multiboutique",
+      "domain": "inventory_playbook",
+      "question": "Comment gérer les stocks entre plusieurs boutiques ?",
+      "reference": "Centraliser la visibilité des stocks, transférer les produits entre boutiques selon les besoins, optimiser les réapprovisionnements globaux, éviter les doublons et ruptures localisées."
+    },
+    {
+      "id": "ragas-produit-specs",
+      "domain": "product",
+      "question": "Quelles sont les spécifications techniques du Samsung S24 ?",
+      "reference": "Donner les caractéristiques principales : écran, processeur, mémoire, appareil photo, batterie, connectivité. Si l'information n'est pas dans le contexte, dire qu'il faut vérifier la fiche technique."
+    },
+    {
+      "id": "ragas-produit-batterie",
+      "domain": "product",
+      "question": "Quelle est la capacité de la batterie de l'iPhone 15 ?",
+      "reference": "Donner la capacité exacte en mAh si disponible dans le contexte, sinon indiquer qu'il faut vérifier les spécifications techniques officielles."
+    },
+    {
+      "id": "ragas-produit-forfaits",
+      "domain": "product",
+      "question": "Quels sont les différents forfaits disponibles actuellement ?",
+      "reference": "Lister les catégories de forfaits (entrée de gamme, standard, premium), donner les fourchettes de prix et de data si disponibles, inviter à consulter le catalogue pour les détails."
+    },
+    {
+      "id": "ragas-produit-garantie",
+      "domain": "product",
+      "question": "Quelles options de garantie sont disponibles pour les smartphones ?",
+      "reference": "Présenter les options de garantie standard et extension, mentionner la durée et la couverture, expliquer les conditions, donner les fourchettes de prix si disponibles."
+    },
+    {
+      "id": "ragas-produit-accessoires",
+      "domain": "product",
+      "question": "Quels accessoires sont compatibles avec l'iPhone 16 ?",
+      "reference": "Lister les catégories d'accessoires compatibles (coques, protections écran, chargeurs, écouteurs), mentionner les spécificités de compatibilité si disponibles, donner des exemples de références."
+    },
+    {
+      "id": "ragas-cross-marge",
+      "domain": "inventory_playbook",
+      "question": "Quels produits ont la forte marge et devraient être poussés en priorité ?",
+      "reference": "Identifier les catégories produits à forte marge (accessoires, services), donner des exemples de produits rentables, expliquer comment les intégrer dans les arguments de vente."
+    },
+    {
+      "id": "ragas-cross-adaptation",
+      "domain": "inventory_playbook",
+      "question": "Comment adapter les recommandations de vente selon le stock disponible ?",
+      "reference": "Prioriser les produits bien stockés, proposer des alternatives pour les produits en rupture, adapter le discours commercial selon la disponibilité, éviter de promettre des produits indisponibles."
+    },
+    {
+      "id": "ragas-cross-findevie",
+      "domain": "inventory_playbook",
+      "question": "Comment gérer les produits en fin de vie dans les recommandations ?",
+      "reference": "Identifier les produits en fin de vie, proposer des promotions pour écouler les stocks, éviter de les pousser prioritairement sauf pour liquidation, planifier le remplacement par de nouveaux produits."
+    },
+    {
+      "id": "ragas-cross-nouveautes",
+      "domain": "inventory_playbook",
+      "question": "Quelles sont les nouvelles arrivées à mettre en avant ?",
+      "reference": "Lister les nouveaux produits disponibles, expliquer leurs avantages principaux, suggérer des arguments de vente pour les nouveautés, proposer des stratégies de lancement."
+    },
+    {
+      "id": "ragas-decision-strategies",
+      "domain": "decision",
+      "question": "Quelles stratégies de vente ont fonctionné récemment ?",
+      "reference": "Analyser les succès récents (types de produits, arguments, moments de vente), identifier les patterns de réussite, proposer de reproduire les approches efficaces."
+    },
+    {
+      "id": "ragas-decision-panier",
+      "domain": "decision",
+      "question": "Quels conseils ont augmenté le panier moyen ?",
+      "reference": "Identifier les techniques d'upsell et cross-sell efficaces, donner des exemples de combinaisons produits qui fonctionnent, proposer des méthodes pour augmenter la valeur du panier."
+    },
+    {
+      "id": "ragas-decision-satisfaction",
+      "domain": "decision",
+      "question": "Quelles actions ont amélioré la satisfaction client ?",
+      "reference": "Analyser les actions positives sur la satisfaction (service après-vente, accompagnement, résolution de problèmes), proposer de reproduire ces pratiques, identifier les facteurs clés de satisfaction."
     }
   ]
 }

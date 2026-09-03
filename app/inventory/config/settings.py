@@ -108,7 +108,7 @@ class Settings:
         if k.strip()
     ))
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-    groq_model_fallback: str = os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile")
+    groq_model_fallback: str = os.getenv("GROQ_MODEL_FALLBACK", "openai/gpt-oss-120b")
     groq_base_url: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
