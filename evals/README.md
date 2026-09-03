@@ -12,6 +12,55 @@ racine du repo, les clés API sont lues dans `.env`.
 | Inventory Recs | `python -m evals.run_inventory_recommendations` | clés LLM (pas de serveur requis — decide_node appelé directement) | scores clarté/coherence/completude/actionabilite/richesse/ancrage |
 | Inventory Recs (échantillon réel) | `python -m evals.run_inventory_recommendations_live` | DB + orchestrateur inventaire + clés LLM, SKUs réels — **non-déterministe**, à lancer périodiquement, pas en CI | mêmes 6 critères que ci-dessus, sur des recommandations réelles au lieu du dataset figé |
 | Modèles | `python -m evals.run_models` | clés Mistral/Groq/OpenRouter | classement des modèles à prompt/contexte/juge constants |
+| BLEU / ROUGE | `python -m evals.run_ngram_overlap` | rien (offline, relit `results/ragas.json`) | BLEU-4, ROUGE-1/2/L, ratio de longueur — **détection de dérive de style**, pas une mesure de qualité (voir ci-dessous) |
+| Demande par SKU | `python -m evals.run_demand_backtest` | PostgreSQL (+ statsforecast optionnel) | WAPE, MAE, RMSE, MASE, biais — rolling-origin sur les couples (SKU, boutique) ≥ 90 j |
+
+### Coach E2E — ablation de l'ancrage documentaire
+
+Deux exécutions du **même** banc, à questions et juge identiques, séparées uniquement par la
+disponibilité de la base vectorielle. C'est une ablation de la génération augmentée par
+recherche, et le résultat est net :
+
+| Indicateur | `coach_e2e_no_rag.json` (Milvus éteint) | `coach_e2e.json` (Milvus actif) |
+|---|---|---|
+| Usage du RAG | 0 % | **85 %** |
+| **Taux d'hallucination** | **16,7 %** | **0 %** |
+| Score juge global | 4,14 / 5 | **4,66 / 5** |
+| ↳ actionnabilité | 3,65 | **4,65** |
+| ↳ pertinence | 3,30 | **4,10** |
+| Checks déterministes | 84,6 % | **88,5 %** |
+| Latence p50 / p95 | 6 350 / 41 730 ms | 4 678 / 34 907 ms |
+
+Le gain se concentre sur les critères qui dépendent du contexte (actionnabilité, pertinence),
+pas sur ceux que les garde-fous contraignent déjà (sécurité, langue). Les 15 % de réponses
+sans RAG correspondent à l'**abstention** : aucun extrait ne dépassait le seuil de pertinence.
+
+Pour rejouer la mesure nominale :
+
+```bash
+docker compose up -d etcd minio standalone redis   # attendre le healthcheck de standalone
+uvicorn app.main:app --port 8000                   # dans un autre terminal
+python -m evals.run_coach                          # écrase results/coach_e2e.json
+```
+
+Comparer ensuite `rag_usage_rate`, `hallucination_rate` et `judge.ancrage` entre
+`coach_e2e.json` et `coach_e2e_no_rag.json` : l'écart mesure l'apport réel de l'ancrage
+documentaire.
+
+### BLEU / ROUGE — pourquoi ces scores sont bas et ce qu'on en fait
+
+Le banc compare les réponses générées (`results/ragas.json`) aux réponses de
+référence (`datasets/ragas_qa.json`). Les valeurs obtenues sont très basses
+(BLEU-4 ≈ 0,05 ; ROUGE-L F1 ≈ 0,12) alors que la fidélité RAGAS est de 0,81 sur
+les mêmes cas : le système n'invente presque rien mais ne reprend presque aucun
+n-gramme de la référence. Trois causes — les réponses sont 2,35× plus longues
+que les références, un argumentaire correct admet des centaines de formulations,
+et ces métriques mesurent la forme et non le fond.
+
+Elles ne sont donc **pas** des métriques de qualité ici. Elles sont conservées
+pour un usage précis : à corpus et questions constants, un effondrement de
+ROUGE-L entre deux versions signale que le système ne répond plus de la même
+manière — signal de dérive obtenu sans aucun appel LLM.
 
 ### Benchmark modèles — protocole
 

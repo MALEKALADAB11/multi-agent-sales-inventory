@@ -1,0 +1,193 @@
+{
+  "suite": "ngram_overlap",
+  "source_answers": "evals/results/ragas.json",
+  "source_references": "evals/datasets/ragas_qa.json",
+  "n_cases": 8,
+  "means": {
+    "bleu4": 0.0533,
+    "rouge1_f1": 0.1869,
+    "rouge2_f1": 0.0491,
+    "rougeL_f1": 0.1233,
+    "rougeL_recall": 0.1772,
+    "length_ratio": 2.352
+  },
+  "details": [
+    {
+      "id": "ragas-vente-prix",
+      "domain": "sales_script",
+      "len_answer": 227,
+      "len_reference": 36,
+      "bleu4": 0.0116,
+      "rouge1": {
+        "precision": 0.0661,
+        "recall": 0.4167,
+        "f1": 0.1141
+      },
+      "rouge2": {
+        "precision": 0.0088,
+        "recall": 0.0571,
+        "f1": 0.0153
+      },
+      "rougeL": {
+        "precision": 0.0308,
+        "recall": 0.1944,
+        "f1": 0.0532
+      }
+    },
+    {
+      "id": "ragas-vente-hesitation",
+      "domain": "sales_script",
+      "len_answer": 36,
+      "len_reference": 31,
+      "bleu4": 0.0399,
+      "rouge1": {
+        "precision": 0.0833,
+        "recall": 0.0968,
+        "f1": 0.0896
+      },
+      "rouge2": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "rougeL": {
+        "precision": 0.0833,
+        "recall": 0.0968,
+        "f1": 0.0896
+      }
+    },
+    {
+      "id": "ragas-vente-upsell",
+      "domain": "sales_script",
+      "len_answer": 148,
+      "len_reference": 33,
+      "bleu4": 0.0153,
+      "rouge1": {
+        "precision": 0.0811,
+        "recall": 0.3636,
+        "f1": 0.1326
+      },
+      "rouge2": {
+        "precision": 0.0068,
+        "recall": 0.0312,
+        "f1": 0.0112
+      },
+      "rougeL": {
+        "precision": 0.0473,
+        "recall": 0.2121,
+        "f1": 0.0773
+      }
+    },
+    {
+      "id": "ragas-stock-moq",
+      "domain": "inventory_playbook",
+      "len_answer": 60,
+      "len_reference": 35,
+      "bleu4": 0.092,
+      "rouge1": {
+        "precision": 0.25,
+        "recall": 0.4286,
+        "f1": 0.3158
+      },
+      "rouge2": {
+        "precision": 0.1017,
+        "recall": 0.1765,
+        "f1": 0.129
+      },
+      "rougeL": {
+        "precision": 0.1833,
+        "recall": 0.3143,
+        "f1": 0.2316
+      }
+    },
+    {
+      "id": "ragas-stock-dormant",
+      "domain": "inventory_playbook",
+      "len_answer": 52,
+      "len_reference": 27,
+      "bleu4": 0.0336,
+      "rouge1": {
+        "precision": 0.1538,
+        "recall": 0.2963,
+        "f1": 0.2025
+      },
+      "rouge2": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "rougeL": {
+        "precision": 0.0769,
+        "recall": 0.1481,
+        "f1": 0.1013
+      }
+    },
+    {
+      "id": "ragas-stock-lead",
+      "domain": "inventory_playbook",
+      "len_answer": 30,
+      "len_reference": 29,
+      "bleu4": 0.1727,
+      "rouge1": {
+        "precision": 0.3667,
+        "recall": 0.3793,
+        "f1": 0.3729
+      },
+      "rouge2": {
+        "precision": 0.2069,
+        "recall": 0.2143,
+        "f1": 0.2105
+      },
+      "rougeL": {
+        "precision": 0.2333,
+        "recall": 0.2414,
+        "f1": 0.2373
+      }
+    },
+    {
+      "id": "ragas-produit-prix",
+      "domain": "product",
+      "len_answer": 12,
+      "len_reference": 32,
+      "bleu4": 0.0233,
+      "rouge1": {
+        "precision": 0.25,
+        "recall": 0.0938,
+        "f1": 0.1364
+      },
+      "rouge2": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "rougeL": {
+        "precision": 0.1667,
+        "recall": 0.0625,
+        "f1": 0.0909
+      }
+    },
+    {
+      "id": "ragas-cross-rupture",
+      "domain": "inventory_playbook",
+      "len_answer": 49,
+      "len_reference": 27,
+      "bleu4": 0.0384,
+      "rouge1": {
+        "precision": 0.102,
+        "recall": 0.1852,
+        "f1": 0.1316
+      },
+      "rouge2": {
+        "precision": 0.0208,
+        "recall": 0.0385,
+        "f1": 0.027
+      },
+      "rougeL": {
+        "precision": 0.0816,
+        "recall": 0.1481,
+        "f1": 0.1053
+      }
+    }
+  ],
+  "run_at": "2026-08-28T12:10:29"
+}

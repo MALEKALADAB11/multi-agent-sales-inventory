@@ -42,15 +42,25 @@ def _get_svc(store_id: str) -> JsonDataService:
 
 @router.get("/stores")
 def list_stores():
-    """Liste toutes les boutiques depuis PostgreSQL."""
+    """Liste toutes les boutiques depuis PostgreSQL.
+
+    Tables qualifiées `sales.` : le pool de `_query()` ne pose pas de
+    search_path et la base est en `"$user", public` par défaut. Non qualifiée,
+    la requête levait `relation "boutiques" does not exist` — erreur avalée par
+    le `except` de `_query()`, qui renvoyait `[]`. L'endpoint répondait donc
+    `200 {"stores": []}` en silence alors que la base contient 201 boutiques.
+    """
     from app.sales.data.json_service import _query
     rows = _query("""
         SELECT b.store_id, b.store_name, b.ville, b.type_boutique,
                COUNT(DISTINCT a.agent_id) AS nb_agents,
                COALESCE(o.objectif_ca, 0) AS objectif_ca
-        FROM boutiques b
-        LEFT JOIN agents a ON a.store_id = b.store_id AND a.actif = true
-        LEFT JOIN objectifs o ON o.store_id = b.store_id
+        FROM sales.boutiques b
+        -- `actif` n'existe pas sur sales.agents ; un conseiller est en poste
+        -- tant qu'aucune date de départ n'est renseignée.
+        LEFT JOIN sales.agents a ON a.store_id = b.store_id
+            AND a.date_depart IS NULL
+        LEFT JOIN sales.objectifs o ON o.store_id = b.store_id
             AND o.agent_id IS NULL
             AND o.date_objectif = CURRENT_DATE
         GROUP BY b.store_id, b.store_name, b.ville, b.type_boutique, o.objectif_ca

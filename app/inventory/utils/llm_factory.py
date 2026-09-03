@@ -81,6 +81,21 @@ def get_llm(
     if provider != "ollama":
         kwargs.setdefault("max_retries", 0)
 
+    # Plafond sur UNE requête. Par défaut le SDK OpenAI attend 600 s et le
+    # client ollama n'attend rien du tout : un modèle gratuit en file d'attente
+    # chez OpenRouter tenait donc un agent bien plus longtemps que le budget de
+    # son appelant. L'orchestrator inventory dimensionne son propre timeout
+    # (_DECISION_TIMEOUT_S) sur cette valeur × la longueur de la chaîne de
+    # secours — les modifier séparément casse cet accord.
+    # ChatOllama (0.2.x) n'a pas de champ `timeout` : il faut le passer à httpx
+    # via client_kwargs.
+    if provider == "ollama":
+        client_kwargs = dict(kwargs.pop("client_kwargs", None) or {})
+        client_kwargs.setdefault("timeout", settings.llm_request_timeout_s)
+        kwargs["client_kwargs"] = client_kwargs
+    else:
+        kwargs.setdefault("timeout", settings.llm_request_timeout_s)
+
     # ══════════════════════════════════════════════════════════════════════════
     # OPENROUTER — recommandé (accès unifié Claude/Gemini/Llama)
     # ══════════════════════════════════════════════════════════════════════════
@@ -244,11 +259,17 @@ def _rotatable_llm_error(exc: Exception) -> bool:
     status = getattr(exc, "status_code", None)
     if status in (401, 403, 413, 429, 498, 499, 500, 502, 503, 504):
         return True
+    # Le dépassement de `timeout` est justement le cas où il faut basculer, et
+    # son message ne contient pas toujours de quoi le reconnaître : le SDK
+    # OpenAI lève APITimeoutError("Request timed out.") — d'où le test sur le
+    # nom de la classe en plus du texte.
+    if "timeout" in type(exc).__name__.lower():
+        return True
     msg = str(exc).lower()
     return any(t in msg for t in (
         "rate limit", "rate_limit", "quota", "invalid api key",
         "over capacity", "insufficient", "too many requests",
-        "connection", "timeout", "unreachable", "refused",
+        "connection", "timeout", "timed out", "unreachable", "refused",
         "unavailable", "temporarily",
     ))
 

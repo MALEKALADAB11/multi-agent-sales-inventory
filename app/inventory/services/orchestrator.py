@@ -101,12 +101,31 @@ def _get_bg_loop() -> "asyncio.AbstractEventLoop":
         return loop
 
 
-_DECISION_TIMEOUT_S = 120.0
+# Budget d'un SKU côté décision. Il doit couvrir le pire cas de la chaîne de
+# secours LLM — un essai par provider (openrouter → groq → ollama), chacun
+# borné par settings.llm_request_timeout_s — plus les écritures DB (recommanda-
+# tion + suggestion de bon de commande). Une valeur inférieure re-crée le bug
+# d'origine : le SKU expire ici alors que la chaîne travaille encore.
+_LLM_CHAIN_LENGTH = 3
+_DECISION_TIMEOUT_S = max(120.0, settings.llm_request_timeout_s * _LLM_CHAIN_LENGTH + 30.0)
 
 
 def _await_sync(coro, timeout: float = _DECISION_TIMEOUT_S):
     """Exécute une coroutine sur la boucle de fond partagée et rend son résultat."""
-    return asyncio.run_coroutine_threadsafe(coro, _get_bg_loop()).result(timeout)
+    future = asyncio.run_coroutine_threadsafe(coro, _get_bg_loop())
+    try:
+        return future.result(timeout)
+    except FutureTimeoutError:
+        # `.result(timeout)` rend la main SANS arrêter la coroutine. Laissée
+        # telle quelle, elle continue d'occuper la boucle de fond partagée (et,
+        # si elle en est encore à la requête asyncpg des produits complémen-
+        # taires, une connexion du pool) pour un SKU déjà déclaré en échec.
+        # Le cancel l'interrompt au prochain point d'await ; l'étape bloquante
+        # déjà partie dans un thread, elle, est bornée par le timeout HTTP du
+        # client LLM (settings.llm_request_timeout_s) — rien d'autre ne peut
+        # la libérer.
+        future.cancel()
+        raise
 
 
 try:

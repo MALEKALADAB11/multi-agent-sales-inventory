@@ -88,6 +88,11 @@ class Settings:
     # LLM config - READ FROM ENVIRONMENT
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
+    # Délai maximal d'UNE requête HTTP vers un provider. Sans ce plafond, les
+    # clients (SDK OpenAI : 600 s ; ollama : aucun) laissent un modèle gratuit
+    # en file d'attente bloquer un agent bien au-delà du budget des appelants —
+    # c'est ce qui faisait expirer decision_agent (voir orchestrator).
+    llm_request_timeout_s: float = float(os.getenv("LLM_REQUEST_TIMEOUT_S", "45"))
 
     groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
     # Rotation multi-clés : GROQ_API_KEYS=clef1,clef2,... ou GROQ_API_KEY_1..N
