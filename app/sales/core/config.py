@@ -5,6 +5,8 @@ from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 from functools import lru_cache
 
+from app.core import config as _shared_config
+
 
 class SalesModuleConfig(BaseSettings):
 
@@ -33,8 +35,11 @@ class SalesModuleConfig(BaseSettings):
     urgency_medium_threshold: float = 0.15
     default_daily_target: float = 15000.0
 
-    # Redis
-    redis_url: str = "redis://localhost:6379"
+    # Redis — point d'entrée unique : AlertBus, StateBus et AlertCycleTrigger
+    # lisent tous ce champ. Le défaut vient de REDIS_HOST/REDIS_PORT (ou
+    # REDIS_URL) via la config partagée, sinon un déploiement conteneurisé
+    # continuerait de viser localhost. SALES_REDIS_URL reste prioritaire.
+    redis_url: str = _shared_config.Config.redis_url()
     redis_context_ttl: int = 300
 
     # BigQuery

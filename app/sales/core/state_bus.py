@@ -132,6 +132,15 @@ class UnifiedCycleState:
 # StateBus — Redis Streams
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Défaut Redis résolu depuis l'environnement (REDIS_URL, sinon
+# REDIS_HOST/REDIS_PORT/REDIS_DB). L'ancien littéral « redis://localhost:6379 »
+# rendait le bus inopérant dès que Redis n'était pas sur la même machine —
+# typiquement en conteneur, où il faut viser le service « redis ».
+def _default_redis_url() -> str:
+    from app.core.config import Config
+    return Config.redis_url()
+
+
 class StateBus:
     """
     Bus d'état partagé via Redis Streams.
@@ -161,8 +170,8 @@ class StateBus:
     MAX_LEN_INV        = 20
     MAX_LEN_FEEDBACK   = 500
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
-        self._url    = redis_url
+    def __init__(self, redis_url: Optional[str] = None):
+        self._url    = redis_url or _default_redis_url()
         self._client = None
 
     # ── Connection ──────────────────────────────────────────────────────────
@@ -474,7 +483,7 @@ class StateBus:
 _state_bus: Optional[StateBus] = None
 
 
-def get_state_bus(redis_url: str = "redis://localhost:6379") -> StateBus:
+def get_state_bus(redis_url: Optional[str] = None) -> StateBus:
     """Retourne le singleton StateBus."""
     global _state_bus
     if _state_bus is None:
@@ -483,6 +492,6 @@ def get_state_bus(redis_url: str = "redis://localhost:6379") -> StateBus:
             cfg = get_config()
             url = cfg.redis_url
         except Exception:
-            url = redis_url
+            url = redis_url or _default_redis_url()
         _state_bus = StateBus(url)
     return _state_bus

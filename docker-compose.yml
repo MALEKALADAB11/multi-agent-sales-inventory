@@ -1,9 +1,182 @@
-version: '3.5'
+# ==============================================================================
+# Stack complète — AI Sales Coach & Inventory Ooredoo Tunisia
+# ==============================================================================
+#   docker compose up -d --build     démarre tout (première fois : ~15 min)
+#   docker compose logs -f backend   suit l'API
+#   docker compose down              arrête (les volumes de données survivent)
+#
+# Exposé sur l'hôte :
+#   http://localhost:8080   dashboard Angular (+ proxy /api et /ws vers l'API)
+#   http://localhost:8000   API FastAPI en direct (Swagger sur /docs)
+#   http://localhost:3001   Langfuse (admin@ooredoo.tn / admin123)
+#   localhost:5433          PostgreSQL — 5433 et non 5432 pour ne pas entrer en
+#                           conflit avec le PostgreSQL 17 installé sur l'hôte
+#
+# Les secrets (clés LLM) viennent de .env, jamais de l'image : app/main.py
+# appelle load_dotenv(override=True), donc un .env embarqué écraserait les
+# variables ci-dessous et le backend chercherait la base sur « localhost ».
+# ------------------------------------------------------------------------------
 
 services:
+
+  # ── Base applicative ────────────────────────────────────────────────────────
+  postgres:
+    container_name: retail-postgres
+    # 17 : les dumps de backups/ sont produits par pg_dump 17.10, un serveur
+    # plus ancien refuserait de les relire.
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin}
+      POSTGRES_DB: ${DB_NAME:-ooredoo_sales}
+      # Le dump contient des accents (noms de boutiques, libellés produits).
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - max_connections=200
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ooredoo_sales}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Préparation de la base : migrations puis restauration (une seule fois) ──
+  db-init:
+    container_name: retail-db-init
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: retail-backend:latest
+    restart: "no"
+    command: ["bootstrap-db.sh"]
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-ooredoo_sales}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+      # AUTO_RESTORE=0 pour repartir d'une base vide (schéma seul, puis seeds).
+      AUTO_RESTORE: ${AUTO_RESTORE:-1}
+    volumes:
+      # Lecture seule : le dump de 74 Mo reste sur l'hôte, hors de l'image.
+      - ./backups:/backups:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── API FastAPI + agents ────────────────────────────────────────────────────
+  backend:
+    container_name: retail-backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: retail-backend:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Ces valeurs écrasent celles du .env, qui pointent vers un poste Windows.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-ooredoo_sales}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-admin}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-admin}@postgres:5432/${DB_NAME:-ooredoo_sales}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MILVUS_URI: http://milvus-standalone:19530
+      LANGFUSE_HOST: http://langfuse:3000
+      # Ollama tourne sur l'hôte (les modèles pèsent plusieurs Go et sont déjà
+      # téléchargés) : le conteneur l'atteint via la passerelle Docker.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # nginx sert le front sur la même origine ; on garde 4200 pour un
+      # `ng serve` lancé en parallèle pendant le développement.
+      CORS_ORIGINS: http://localhost:8080,http://localhost:4200
+      FRONTEND_URL: http://localhost:8080
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Le pipeline inventory à froid coûte ~3 min par boutique et le dashboard
+      # abandonne à 60 s : sans préchauffage, la page Stocks affiche 0 partout
+      # à la première ouverture. I63 est la boutique par défaut du backend,
+      # I14 celle qu'ouvre le build production du front
+      # (environment.prod.ts) — les deux doivent être chaudes.
+      INVENTORY_PREWARM_STORES: ${INVENTORY_PREWARM_STORES:-I63,I14}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Journaux consultables depuis l'hôte (logs/errors.log notamment).
+      - ./logs:/srv/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      # Milvus démarre en ~90 s ; le RAG bascule sur son corpus de repli tant
+      # qu'il ne répond pas, inutile de retarder l'API pour lui.
+      milvus:
+        condition: service_started
+
+  # ── Dashboard Angular servi par nginx (+ reverse proxy /api et /ws) ─────────
+  frontend:
+    container_name: retail-frontend
+    build:
+      # Le front vit dans un dépôt distinct ; surcharge possible via
+      # FRONTEND_PATH dans .env si l'arborescence diffère.
+      context: ${FRONTEND_PATH:-../../frontend/PFE}
+      dockerfile: Dockerfile
+    image: retail-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  # ── Bus d'alertes stock (Pub/Sub) ───────────────────────────────────────────
+  redis:
+    container_name: retail-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Milvus (RAG hybride) et ses dépendances ─────────────────────────────────
   etcd:
     container_name: milvus-etcd
     image: quay.io/coreos/etcd:v3.5.5
+    restart: unless-stopped
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -21,6 +194,7 @@ services:
   minio:
     container_name: milvus-minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    restart: unless-stopped
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
@@ -33,7 +207,7 @@ services:
       timeout: 20s
       retries: 3
 
-  standalone:
+  milvus:
     container_name: milvus-standalone
     # 2.5.x : full-text search natif (fonction BM25 -> sparse vector) + hybrid_search
     # avec RRFRanker. Indispensable au retriever hybride (app/sales/data/rag/).
@@ -60,29 +234,11 @@ services:
       - "etcd"
       - "minio"
 
-  # ── Redis Alert Bus — Pub/Sub alertes critiques stock ─────────────────────
-  redis:
-    container_name: retail-redis
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    command: >
-      redis-server
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-      --save ""
-      --appendonly no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  # ── Langfuse v2 (autonome — pas besoin de ClickHouse) ──────────────────────
+  # ── Langfuse v2 (observabilité LLM — autonome, pas de ClickHouse) ───────────
   langfuse-db:
     container_name: langfuse-db
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: langfuse
       POSTGRES_PASSWORD: langfuse
@@ -98,6 +254,7 @@ services:
   langfuse:
     container_name: langfuse
     image: langfuse/langfuse:2
+    restart: unless-stopped
     ports:
       - "3001:3000"
     depends_on:
@@ -121,8 +278,9 @@ services:
       - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=false
 
 volumes:
+  pgdata:
   langfuse-pg:
 
 networks:
   default:
-    name: milvus
+    name: retail-net

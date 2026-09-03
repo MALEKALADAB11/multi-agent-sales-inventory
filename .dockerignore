@@ -1,0 +1,44 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# app/main.py appelle load_dotenv(override=True) : un .env dans l'image
+# écraserait les variables de docker compose. Les secrets passent par env_file.
+.env
+.env.*
+!.env.example
+
+# ── Environnements Python ─────────────────────────────────────────────────────
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Données lourdes hors image (montées ou en volume) ─────────────────────────
+backups/
+volumes/
+data-archive/
+logs/
+.rag_cache/
+*.dump
+*.sql
+*.sql.gz
+# Exception : la baseline Alembic est un fichier .sql lu par 0001_baseline.py,
+# il doit être dans l'image sinon `alembic upgrade head` échoue au démarrage.
+!db/migrations/versions/sql/*.sql
+
+# ── Hors périmètre serveur ────────────────────────────────────────────────────
+.git/
+.github/
+.vscode/
+.claude/
+docs/
+rapport/
+evals/
+tests/
+node_modules/
+Dockerfile
+docker-compose*.yml
+*.md
+!README.md

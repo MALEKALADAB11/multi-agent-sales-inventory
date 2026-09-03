@@ -1,3 +1,24 @@
+# ==============================================================================
+# requirements-docker.txt — dépendances du conteneur backend (runtime seul)
+# ==============================================================================
+# Dérivé de requirements.txt, dont il conserve les pins à l'identique. Sont
+# retirés les paquets qu'AUCUN module de app/ n'importe : ils n'ajoutent que du
+# poids d'image et du temps de build.
+#
+#   torch / timesfm / huggingface-hub  -> ~2,5 Go ; seul app/inventory/forecasting/
+#                                        timesfm_forecaster.py les importe, et ce
+#                                        module n'est référencé nulle part.
+#   mlflow                             -> tracking d'expériences, hors serveur.
+#   ragas / datasets / langchain-community -> banc d'éval (evals/), pas l'API.
+#   matplotlib / seaborn / pillow + deps -> figures du rapport (docs/).
+#   scikit-learn / lightgbm / joblib   -> entraînement (scripts/train_*), pas
+#                                        l'inférence : xgboost charge les .ubj.
+#   pytest / coverage                  -> tests, exécutés hors image.
+#
+# Ajouter une dépendance à requirements.txt ? Si un module de app/ l'importe,
+# la répercuter ici avec le même pin.
+# ------------------------------------------------------------------------------
+
 # ── Core Framework ────────────────────────────────────────────
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
@@ -55,56 +76,32 @@ charset-normalizer==3.4.0
 
 # ── LLM Providers ─────────────────────────────────────────────
 ollama==0.4.4
+# tiré par langchain-openai (client OpenRouter/Mistral compatible OpenAI)
+openai==1.109.1
 
-# ── Forecasting ───────────────────────────────────────────────
-timesfm==2.0.1
-torch>=2.2.0
-utilsforecast==0.2.4
-huggingface-hub
-# Moteur principal de TimesFMTools (app/sales/mcp/timefm/tools.py) : l'import
-# est sous try/except, son absence fait retomber silencieusement la prévision
-# sur la méthode statistique — d'où l'oubli dans ce fichier jusqu'ici.
-prophet==1.3.0
-
-# ── Data & ML ─────────────────────────────────────────────────
+# ── Data & prévision (inférence) ──────────────────────────────
 pandas==2.1.4
 numpy==1.26.4
-matplotlib==3.9.3
-scikit-learn==1.5.2
-seaborn==0.13.2
 scipy==1.14.1
-joblib==1.4.2
-threadpoolctl==3.5.0
-pillow==10.4.0
-contourpy==1.3.0
-cycler==0.12.1
-fonttools==4.54.1
-kiwisolver==1.4.7
-pyparsing==3.2.0
 python-dateutil==2.9.0.post0
 pytz==2024.2
 tzdata==2024.2
 six==1.16.0
+statsforecast==1.7.6
+prophet==1.3.0
+utilsforecast==0.2.4
+# xgboost-cpu, pas xgboost : sous Linux le paquet standard tire
+# nvidia-nccl-cu12 (454 Mo) et embarque un libxgboost.so compilé CUDA
+# (333 Mo), pour rien — le serveur ne fait qu'appeler Booster/DMatrix sur des
+# modèles .ubj déjà entraînés (sensing_model.py, global_model.py). Même version,
+# même module `xgboost` à l'import, ~700 Mo d'image en moins.
+xgboost-cpu==2.1.4
 
 # ── Vecteurs / RAG ────────────────────────────────────────────
-# Client Milvus, importé par app/sales/data/rag/, coach/tools.py,
-# core/agent_logger.py et api/monitoring.py. Serveur en 2.5.14 (docker-compose) :
-# le client 3.x reste compatible, mais garder les deux versions cohérentes.
 pymilvus==3.0.0
 
 # ── Observability ─────────────────────────────────────────────
 langfuse==2.36.1
-mlflow==2.17.2
-
-# ── Evaluation (RAGAS) ────────────────────────────────────────
-# ragas juge la chaîne RAG avec les modèles du projet (Mistral/Groq + Ollama
-# bge-m3), pas OpenAI. Ses deps langchain ne sont PAS bornées en amont : les
-# pins langchain==0.3.14 / langchain-core==0.3.29 ci-dessus doivent rester pour
-# éviter que ragas tire langchain 1.x et casse l'orchestration LangGraph 0.2.
-ragas==0.2.15
-langchain-community==0.3.14
-datasets==5.0.0
-openai==1.109.1
 
 # ── Logging ───────────────────────────────────────────────────
 loguru==0.7.3
@@ -120,21 +117,9 @@ click==8.1.7
 tqdm==4.67.0
 filelock==3.16.1
 fsspec==2024.10.0
-sympy==1.13.3
-networkx==3.4.2
+# sympy et networkx retirés : ce sont des dépendances de torch, que cette image
+# n'installe pas, et aucun module de app/ ne les importe. Si un paquet en a
+# réellement besoin, pip les réinstalle de lui-même.
 
 # ── Rate Limiting ─────────────────────────────────────────────
 slowapi==0.1.9
-
-# ── Forecasting (optional statistical models) ─────────────────
-statsforecast==1.7.6
-lightgbm==4.5.0
-xgboost==2.1.4
-
-# ── Testing ───────────────────────────────────────────────────
-pytest==8.3.4
-pytest-asyncio==0.24.0
-pytest-cov==5.0.0
-coverage==7.6.4
-iniconfig==2.0.0
-pluggy==1.5.0

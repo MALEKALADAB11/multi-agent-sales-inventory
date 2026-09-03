@@ -134,6 +134,23 @@ def map_store_id(store_id: str) -> str:
     """Résout un alias boutique ; les ids inconnus passent tels quels."""
     return STORE_MAP.get(store_id, store_id or DEFAULT_STORE_ID)
 
+
+def _prewarm_store_ids() -> list:
+    """Boutiques dont le cache inventory est préchauffé au démarrage.
+
+    Liste unique pour les deux passes (rapide puis LLM) : les laisser diverger
+    revenait à préchauffer la boutique par défaut du backend et à laisser
+    froide celle qu'ouvre réellement le dashboard.
+    """
+    raw = os.getenv("INVENTORY_PREWARM_STORES", DEFAULT_STORE_ID)
+    seen, ids = set(), []
+    for part in raw.split(","):
+        sid = part.strip()
+        if sid and sid not in seen:
+            seen.add(sid)
+            ids.append(sid)
+    return ids or [DEFAULT_STORE_ID]
+
 _weather_cache: dict = {}
 _weather_cache_time: float = 0.0
 _WEATHER_CACHE_TTL = 300
@@ -304,34 +321,41 @@ async def startup_event():
     await _warmup_sales_data(DEFAULT_STORE_ID)
 
     # ── Inventory cache pre-warm (background, non-blocking) ───────────────
-    # Populates the /api/inventory/store/{store_id} result cache for
-    # DEFAULT_STORE_ID so the first user to open the inventory page doesn't
-    # pay the full pipeline cost. Runs in a worker thread via asyncio.to_thread
-    # so it never blocks the event loop (and therefore never blocks WS
-    # handshakes) while it runs.
+    # Populates the /api/inventory/store/{store_id} result cache so the first
+    # user to open the inventory page doesn't pay the full pipeline cost. Runs
+    # in a worker thread via asyncio.to_thread so it never blocks the event
+    # loop (and therefore never blocks WS handshakes) while it runs.
     #
-    # NOTE: this only pre-warms DEFAULT_STORE_ID and only helps until the
-    # cache TTL expires (CACHE_TTL = 3600s in app/inventory/api/routes.py).
-    # It does NOT bound how long a cold run takes for a *different* store —
-    # that's controlled by DEMO_SKU_CAP in routes.py.
+    # Same store list (INVENTORY_PREWARM_STORES) as the full LLM pre-warm
+    # further down: this fast pass is the one that actually fills the cache the
+    # dashboard reads, in minutes rather than the LLM pass's tens of minutes.
+    # Restricted to DEFAULT_STORE_ID it left every other store cold — including
+    # the one the production frontend opens by default (environment.prod.ts),
+    # whose first request then timed out at 60 s and showed 0 everywhere.
+    #
+    # NOTE: only helps until the cache TTL expires (CACHE_TTL = 3600s in
+    # app/inventory/api/routes.py). It does NOT bound how long a cold run takes
+    # for a store outside the list — that's controlled by DEMO_SKU_CAP.
     def _prewarm_inventory():
-        try:
-            from app.inventory.api.routes import analyze_store
-            t0 = time.time()
-            analyze_store(
-                DEFAULT_STORE_ID,
-                business_objective="balanced",
-                force_refresh=False,
-                fast=True,
-                page=1,
-                page_size=0,
-            )
-            logger.info(
-                "✅ Inventory cache pre-warmed for store %s (%.1fs)",
-                DEFAULT_STORE_ID, time.time() - t0,
-            )
-        except Exception as e:
-            logger.warning("⚠️ Inventory cache pre-warm failed: %s", e)
+        from app.inventory.api.routes import analyze_store
+        for store_id in _prewarm_store_ids():
+            try:
+                t0 = time.time()
+                analyze_store(
+                    store_id,
+                    business_objective="balanced",
+                    force_refresh=False,
+                    fast=True,
+                    page=1,
+                    page_size=0,
+                )
+                logger.info(
+                    "✅ Inventory cache pre-warmed for store %s (%.1fs)",
+                    store_id, time.time() - t0,
+                )
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Inventory cache pre-warm failed for %s: %s", store_id, e)
 
     # Gardée sur app.state pour être annulée à l'arrêt : sinon le batch continue
     # pendant la sortie de l'interpréteur et chaque SKU échoue sur
@@ -662,9 +686,7 @@ async def startup_event():
     # réellement, malgré son but explicite de pré-payer ce coût une fois.
     async def _prewarm_inventory():
         from app.inventory.api.routes import analyze_store
-        stores = [s.strip() for s in os.getenv(
-            "INVENTORY_PREWARM_STORES", DEFAULT_STORE_ID).split(",") if s.strip()]
-        for store_id in stores:
+        for store_id in _prewarm_store_ids():
             try:
                 t0 = time.time()
                 loop = asyncio.get_event_loop()

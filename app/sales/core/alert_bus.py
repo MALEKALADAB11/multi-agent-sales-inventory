@@ -58,6 +58,15 @@ def _channel_cycle(cycle_id: str) -> str:
 # AlertBus — Publisher
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Défaut Redis résolu depuis l'environnement (REDIS_URL, sinon
+# REDIS_HOST/REDIS_PORT/REDIS_DB). L'ancien littéral « redis://localhost:6379 »
+# rendait le bus inopérant dès que Redis n'était pas sur la même machine —
+# typiquement en conteneur, où il faut viser le service « redis ».
+def _default_redis_url() -> str:
+    from app.core.config import Config
+    return Config.redis_url()
+
+
 class AlertBus:
     """
     Bus d'alertes Redis Pub/Sub.
@@ -65,8 +74,8 @@ class AlertBus:
     CoachAgent souscrit et réagit.
     """
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
-        self._url    = redis_url
+    def __init__(self, redis_url: Optional[str] = None):
+        self._url    = redis_url or _default_redis_url()
         self._client = None
 
     def _get_client(self):
@@ -310,9 +319,9 @@ class AsyncAlertListener:
 
     URGENT_PRIORITIES = {"URGENT", "HIGH"}
 
-    def __init__(self, store_id: str, redis_url: str = "redis://localhost:6379"):
+    def __init__(self, store_id: str, redis_url: Optional[str] = None):
         self.store_id  = store_id
-        self._url      = redis_url
+        self._url      = redis_url or _default_redis_url()
         self._running  = False
         self._channels = [
             _channel_stock(store_id),
@@ -422,13 +431,13 @@ class AsyncAlertListener:
 _alert_bus: Optional[AlertBus] = None
 
 
-def get_alert_bus(redis_url: str = "redis://localhost:6379") -> AlertBus:
+def get_alert_bus(redis_url: Optional[str] = None) -> AlertBus:
     global _alert_bus
     if _alert_bus is None:
         try:
             from app.sales.core.config import get_config
             url = get_config().redis_url
         except Exception:
-            url = redis_url
+            url = redis_url or _default_redis_url()
         _alert_bus = AlertBus(url)
     return _alert_bus

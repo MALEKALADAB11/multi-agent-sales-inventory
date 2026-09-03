@@ -71,6 +71,26 @@ class Config:
             f"@{cls.DB_HOST}:{cls.DB_PORT}/{cls.DB_NAME}"
         )
 
+    # ── Redis ──────────────────────────────────────────────────
+    # Mêmes variables que app/inventory/services/redis_alert_bus.py, qui les
+    # lisait déjà. Le côté sales (AlertBus, StateBus, AlertCycleTrigger) avait
+    # « redis://localhost:6379 » en dur : dans un conteneur, le bus d'alertes
+    # tournait donc à vide en boucle de reconnexion, sans qu'aucun cycle
+    # événementiel ne parte.
+    REDIS_HOST:     str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT:     int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB:       int = int(os.getenv("REDIS_DB",   "0"))
+    REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
+
+    @classmethod
+    def redis_url(cls) -> str:
+        """URL Redis, surchargeable d'un bloc par REDIS_URL."""
+        override = os.getenv("REDIS_URL")
+        if override:
+            return override
+        auth = f":{cls.REDIS_PASSWORD}@" if cls.REDIS_PASSWORD else ""
+        return f"redis://{auth}{cls.REDIS_HOST}:{cls.REDIS_PORT}/{cls.REDIS_DB}"
+
     # ── Ollama LLM ─────────────────────────────────────────────
     OLLAMA_BASE_URL:    str = _prefer_ipv4(os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
     OLLAMA_MODEL_ANALYST:  str = os.getenv("OLLAMA_MODEL_ANALYST",  "llama3.2:latest")

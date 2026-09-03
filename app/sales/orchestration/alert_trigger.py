@@ -45,7 +45,8 @@ class AlertCycleTrigger:
                 from app.sales.core.config import get_config
                 redis_url = get_config().redis_url
             except Exception:
-                redis_url = "redis://localhost:6379"
+                from app.core.config import Config
+                redis_url = Config.redis_url()
         self._url = redis_url
         self._running = False
         self._task: Optional[asyncio.Task] = None
