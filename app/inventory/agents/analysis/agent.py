@@ -23,6 +23,12 @@ from pathlib import Path
 
 from app.inventory.agents.analysis.nodes import fetch_node, compute_node, create_reason_node
 from app.inventory.utils.llm_factory import get_llm, get_fast_llm
+try:
+    # Import optionnel, comme dans nodes.py : le moteur TS (statsforecast,
+    # pandas) ne doit jamais empêcher l'agent de démarrer.
+    from app.inventory.forecasting.timeseries_engine import BATCH_ENGINE
+except Exception:
+    BATCH_ENGINE = None
 from app.core.config import DEFAULT_STORE_ID
 
 try:
@@ -46,6 +52,7 @@ class AgentState(TypedDict):
     computed_metrics:   Dict[str, Any]
     preloaded_stock:    Dict[str, Any]   # batch pre-fetch: {sku: stock_current}
     preloaded_product:  Dict[str, Any]   # batch pre-fetch: product row for this SKU
+    forecast_engine:    Optional[str]    # moteur TS imposé (batch) ; None = auto
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -159,6 +166,12 @@ class InventoryAnalysisAgent:
                     "computed_metrics":   {},
                     "preloaded_stock":    preloaded_stock or {},
                     "preloaded_product":  preloaded_product or {},
+                    # Mode batch (use_llm=False : dashboard, préchauffage, WS) :
+                    # on impose le moteur de prévision borné, sinon les 100 SKUs
+                    # d'une passe fittent chacun un MSTL sous le GIL — cf.
+                    # BATCH_ENGINE dans timeseries_engine.py. Le mode unitaire
+                    # (use_llm=True) garde la sélection automatique.
+                    "forecast_engine":    None if self.use_llm else BATCH_ENGINE,
                 },
                 config={"callbacks": _callbacks} if _callbacks else {},
             )

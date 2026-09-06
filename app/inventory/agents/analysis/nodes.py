@@ -161,7 +161,13 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             series = extract_series_from_sales(sales_df, sku, store_id, days_back=730)
             if len(series) >= 7:
-                ts_result = ts_forecast(series, horizon=30)
+                # force_engine : imposé par l'agent en mode batch (Holt-Winters
+                # numpy) pour que les 100 SKUs d'une passe ne fittent pas chacun
+                # un MSTL sous le GIL. None en mode unitaire = sélection auto.
+                ts_result = ts_forecast(
+                    series, horizon=30,
+                    force_engine=state.get("forecast_engine") or None,
+                )
                 logger.debug(
                     "[FETCH] TS engine OK — SKU=%s engine=%s avg_daily=%.3f",
                     sku, ts_result.get("engine"), ts_result.get("avg_daily_demand"),
@@ -189,10 +195,23 @@ def fetch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     else:
         forecast_source = "fallback_flat"
         if forecast_df.empty:
-            logger.warning("No forecast data for %s@%s, using fallback baseline", sku, store_id)
+            logger.warning(
+                "No forecast data for %s@%s, using zero-demand baseline", sku, store_id)
+            # 0.0 et non 1.0 : sans demand-sensing NI historique de ventes, la
+            # demande de ce SKU est inconnue, pas égale à une unité par jour.
+            # La constante 1.0 était propagée telle quelle jusqu'à
+            # days_of_stock = stock / 1, ce qui classait CRITICAL tout produit
+            # à faible stock du seul fait d'une demande inventée : sur I63, 56
+            # des 59 alertes de rupture venaient de là (70 SKUs sur 100 n'ont
+            # aucune ligne dans inventory.sales_history pour ce magasin).
+            #
+            # À 0, compute_metrics prend la branche prévue pour ce cas
+            # (cf. tools.py : demande nulle + stock > 0 => 999 j, risque LOW ;
+            # stock nul => 0 j, CRITICAL). Les vraies ruptures — stock à zéro —
+            # restent donc signalées, les dormants ne le sont plus à tort.
             forecast_df = pd.DataFrame({
                 "date":             pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
-                "predicted_demand": 1.0,
+                "predicted_demand": 0.0,
                 "sku":              sku,
                 "store_id":         store_id,
             })

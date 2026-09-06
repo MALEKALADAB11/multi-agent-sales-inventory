@@ -60,6 +60,14 @@ def _rate_limit(limit_str: str):
 
 OLLAMA_URL       = config.OLLAMA_BASE_URL
 
+# Ollama en tete de LLM_FALLBACK_CHAIN — voir Config.llm_local_first().
+LOCAL_FIRST      = config.llm_local_first()
+# 22 s etait trop court : llama3.2 met deja ~16 s sur une invite triviale, donc
+# une reponse de coaching complete expirait systematiquement et la chaine
+# retombait sur le script fige de _build_intent_fallback. Reglable par
+# OLLAMA_TIMEOUT_S selon la machine de demo.
+OLLAMA_TIMEOUT_S = float(os.getenv("OLLAMA_TIMEOUT_S", "120"))
+
 # ── Groq (rotation multi-clés — primaire si configuré) ──────────────────────
 # GROQ_API_KEYS=clef1,clef2,... : quand une clé est épuisée (429/quota) ou
 # invalide, la suivante prend le relais. GROQ_API_KEY (singulier) reste
@@ -1480,7 +1488,7 @@ async def _call_ollama_fallback(system: str, user_msg: str, max_tokens: int) -> 
         )
         if not chat_model:
             return ""
-        resp = await client.post(f"{OLLAMA_URL}/api/generate", timeout=22.0, json={
+        resp = await client.post(f"{OLLAMA_URL}/api/generate", timeout=OLLAMA_TIMEOUT_S, json={
             "model":   chat_model,
             "prompt":  f"{system}\n\n{user_msg}",
             "stream":  False,
@@ -1488,7 +1496,7 @@ async def _call_ollama_fallback(system: str, user_msg: str, max_tokens: int) -> 
         })
         return resp.json().get("response", "").strip()
     except Exception as e:
-        logger.debug("[COACH OLLAMA] %.50s", str(e))
+        logger.warning("[COACH OLLAMA] echec: %.80s", str(e))
         return ""
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1777,9 +1785,22 @@ async def coach_chat(request: Request, body: dict):
     else:
         max_tokens, temp = 350, 0.22
 
+    # ── Tentative 0 : Ollama local, si LLM_FALLBACK_CHAIN le place en tete ──
+    # Sans acces sortant, les quatre tentatives distantes ci-dessous echouent
+    # chacune par timeout DNS/TLS : ~80 s avant qu'Ollama ne soit seulement
+    # essaye, souvent apres que le client a abandonne. On l'essaie d'abord ;
+    # les fournisseurs distants restent en secours derriere, inchanges.
+    reply, llm_ms, model_used = "", 0.0, ""
+    if LOCAL_FIRST:
+        _t_local = time.time()
+        reply = await _call_ollama_fallback(system_prompt, user_message, max_tokens)
+        llm_ms = (time.time() - _t_local) * 1000
+        model_used = "ollama" if _is_valid_reply(reply) else ""
+
     # ── Tentative 1 : Groq (rotation multi-clés — primaire si configuré) ────
-    reply, llm_ms = await _call_groq(system_prompt, user_message, max_tokens, temp, day_history)
-    model_used = "groq" if _is_valid_reply(reply) else ""
+    if not _is_valid_reply(reply):
+        reply, llm_ms = await _call_groq(system_prompt, user_message, max_tokens, temp, day_history)
+        model_used = "groq" if _is_valid_reply(reply) else ""
 
     # ── Tentative 2 : OpenRouter / nano-30b ─────────────────────────────────
     if not _is_valid_reply(reply):

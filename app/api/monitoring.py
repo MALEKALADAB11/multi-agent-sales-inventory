@@ -527,7 +527,10 @@ def monitoring_health():
     # Milvus
     try:
         from pymilvus import MilvusClient
-        c = MilvusClient(uri="http://localhost:19530")
+        # Meme correction qu'a la ligne ~824 : "localhost" ne designe pas
+        # Milvus depuis le conteneur, la sonde de la page /monitoring le
+        # rapportait donc toujours indisponible.
+        c = MilvusClient(uri=os.getenv("MILVUS_URI", "http://localhost:19530"))
         status["milvus"] = c.has_collection("coaching_scripts")
         if status["milvus"]:
             status["milvus_docs"] = c.get_collection_stats("coaching_scripts").get("row_count", 0)
@@ -537,7 +540,7 @@ def monitoring_health():
     # Ollama
     try:
         import httpx
-        r = httpx.get("http://localhost:11434/api/tags", timeout=3)
+        r = httpx.get(os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/api/tags", timeout=3)
         status["ollama"] = r.status_code == 200
         models = [m["name"] for m in r.json().get("models", [])]
         status["ollama_models"] = models

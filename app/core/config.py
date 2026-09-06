@@ -98,6 +98,19 @@ class Config:
     OLLAMA_MODEL_COACH:    str = os.getenv("OLLAMA_MODEL_COACH",    "qwen2.5:0.5b")
     OLLAMA_EMBED_MODEL:    str = os.getenv("OLLAMA_EMBED_MODEL",    "nomic-embed-text")
 
+    # Ordre des fournisseurs LLM, surchargeable par LLM_FALLBACK_CHAIN (liste
+    # séparée par des virgules). Sur un poste sans accès sortant, chaque appel
+    # distant échoue en timeout : les essayer d'abord ajoute une minute de
+    # latence à chaque réponse du coach avant d'atteindre Ollama.
+    # `LLM_FALLBACK_CHAIN=ollama,...` fait passer les agents en local d'abord.
+    LLM_FALLBACK_CHAIN: str = os.getenv("LLM_FALLBACK_CHAIN", "")
+
+    @classmethod
+    def llm_local_first(cls) -> bool:
+        """Vrai si Ollama est en tête de la chaîne configurée."""
+        chain = [p.strip().lower() for p in cls.LLM_FALLBACK_CHAIN.split(",") if p.strip()]
+        return bool(chain) and chain[0] == "ollama"
+
     # Rétrocompatibilité
     @classmethod
     def ollama_model(cls) -> str:

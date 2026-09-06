@@ -84,6 +84,27 @@ _chronos_pipeline = None
 # than just staying weekly-only). See implementation guide Section 5 Step 0.
 MSTL_MIN_N = 730
 
+# Moteur imposé au chemin batch (orchestrateur rule-based : table inventaire du
+# dashboard, préchauffage au démarrage, broadcasts WS — 100 SKUs par passe).
+#
+# Pourquoi ce garde-fou : `_select_engine` choisit StatsForecast dès 30 points
+# d'historique, et `fetch_node` lui en fournit 730. À cette longueur
+# `_get_sf_models` bascule sur MSTL(season_length=[7, 365]), mesuré à ~33 s au
+# premier appel (compilation numba) puis ~1,1 s par SKU à chaud, sous le GIL.
+# Sur 100 SKUs cela met le premier `GET /store/{id}` à ~15 min : le dashboard
+# affiche « 0 / 0 produits » pendant tout ce temps, et le résumé de stock
+# expire côté navigateur avant d'avoir une réponse.
+#
+# Le chemin batch prend donc le moteur Holt-Winters numpy (<1 ms/SKU, WAPE
+# comparable sur cet historique). StatsForecast/MSTL reste le moteur du chemin
+# unitaire — POST /analyze, analyze_store(fast=False) — où la seconde par SKU
+# est payée une fois, sur demande explicite.
+# Mettre INVENTORY_BATCH_TS_ENGINE="" pour rendre au batch la sélection
+# automatique (comportement historique).
+BATCH_ENGINE: Optional[str] = (
+    os.getenv("INVENTORY_BATCH_TS_ENGINE", "numpy").strip().lower() or None
+)
+
 
 def _get_sf_models(n: int = 0):
     """Retourne les modèles StatsForecast — instanciés une seule fois.

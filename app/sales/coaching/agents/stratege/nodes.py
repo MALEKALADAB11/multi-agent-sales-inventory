@@ -58,6 +58,10 @@ COLLECTION        = os.getenv("RAG_COLLECTION", "retail_knowledge")
 
 USE_OPENROUTER = bool(OPENROUTER_KEY)
 
+# Ollama en tête de LLM_FALLBACK_CHAIN — voir Config.llm_local_first().
+from app.core.config import Config as _SharedConfig
+LOCAL_FIRST = _SharedConfig.llm_local_first()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LANGFUSE HELPERS
@@ -760,8 +764,27 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
     strategie_data = {}; llm_ok = False; llm_latency_ms = 0.0
     llm_response = ""; model_used = ""
 
+    # ── Ollama d'abord si la chaîne configurée le demande ────────────────────
+    # Sur un poste sans accès sortant, OpenRouter puis Mistral échouent chacun
+    # en timeout avant qu'Ollama ne soit atteint : ~1 min de latence ajoutée à
+    # chaque cycle, pour un résultat identique. LLM_FALLBACK_CHAIN=ollama,...
+    # inverse l'ordre ; les fournisseurs distants restent en secours derrière.
+    if LOCAL_FIRST:
+        logger.info(f"[STRATEGE] Node 4 — Appel Ollama en premier ({OLLAMA_MODEL})...")
+        try:
+            t_llm = time.time()
+            response = await get_llm().ainvoke([
+                SystemMessage(content=system_with_rag),
+                HumanMessage(content=user_msg),
+            ])
+            llm_latency_ms = (time.time() - t_llm) * 1000
+            llm_response   = response.content.strip()
+            model_used     = OLLAMA_MODEL
+        except Exception as e:
+            logger.warning(f"[STRATEGE] Ollama indisponible ({str(e)[:60]}) — bascule distante")
+
     # ── OpenRouter/nano-30b d'abord, puis Mistral (quota indépendant), puis Ollama ──
-    if USE_OPENROUTER:
+    if not llm_response and USE_OPENROUTER:
         logger.info(f"[STRATEGE] Node 4 — Appel OpenRouter ({OPENROUTER_MODEL})...")
         llm_response, llm_latency_ms = await _call_openrouter_stratege(
             system_with_rag, user_msg, urgency_level)
@@ -773,7 +796,7 @@ async def node_generate_strategy(state: SalesAgentState) -> dict:
             system_with_rag, user_msg, urgency_level)
         model_used = _mistral_rotation(urgency_level)[0]
 
-    if not llm_response:
+    if not llm_response and not LOCAL_FIRST:
         logger.info(f"[STRATEGE] Node 4 — Appel Ollama ({OLLAMA_MODEL})...")
         try:
             llm = get_llm()

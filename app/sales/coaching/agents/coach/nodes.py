@@ -33,6 +33,10 @@ OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 
 USE_OPENROUTER = bool(OPENROUTER_KEY)
 
+# Ollama en tête de LLM_FALLBACK_CHAIN — voir Config.llm_local_first().
+from app.core.config import Config as _SharedConfig
+LOCAL_FIRST = _SharedConfig.llm_local_first()
+
 
 def _cycle_id(state):
     return (state.get("metrics") or {}).get("cycle_id","") or state.get("cycle_id","unknown")
@@ -300,8 +304,11 @@ async def node_generate_conseil(state: SalesAgentState) -> dict:
 
     reply = ""; llm_ok = False; confidence = 0.65; llm_source = "fallback"
 
-    # ── OpenRouter en priorité ─────────────────────────────────────────────────
-    if USE_OPENROUTER:
+    # ── OpenRouter en priorité, sauf chaîne locale d'abord ────────────────────
+    # LOCAL_FIRST : sur un poste sans accès sortant, l'appel OpenRouter part en
+    # timeout avant chaque réponse du coach. On le saute pour aller directement
+    # au repli Ollama ci-dessous, qui produit la réponse.
+    if USE_OPENROUTER and not LOCAL_FIRST:
         reply, _ = await _call_openrouter_coach(system, user_prompt, urgency, question_type)
         if reply:
             llm_ok = True

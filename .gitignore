@@ -69,3 +69,6 @@ data-archive/
 
 # Cache local des embeddings RAG (regenerable via: python -m app.sales.data.rag.ingest --all)
 .rag_cache/
+
+# Rapports de couverture pytest
+.coverage

@@ -646,12 +646,23 @@ def get_forecast(sku, store_id: str = DEFAULT_STORE_ID) -> pd.DataFrame:
     if not df.empty and "quantity_sold" in df.columns:
         df = df.rename(columns={"quantity_sold": "predicted_demand"})
     elif df.empty:
+        # 0.0 et non 1.0 : inventory.demand_forecast ne couvre qu'une partie
+        # des couples SKU/magasin (le pipeline demand-sensing plafonne aux
+        # meilleures ventes). Pour tous les autres, cette fonction inventait
+        # une demande d'une unite par jour sur 30 jours, indiscernable d'une
+        # vraie prevision en aval : days_of_stock valait stock/1 et le SKU
+        # ressortait CRITICAL sans qu'aucune donnee ne le justifie. Sur I63,
+        # 70 SKUs sur 100 passaient par ici.
+        #
+        # A 0, la demande est traitee comme inconnue : compute_metrics rend
+        # une couverture illimitee (999 j) quand il reste du stock, et une
+        # couverture nulle quand le stock est a zero — la seule vraie rupture.
         df = pd.DataFrame({
             "date": pd.date_range(start=pd.Timestamp.now(), periods=30, freq="D"),
-            "predicted_demand": [1.0] * 30,
+            "predicted_demand": [0.0] * 30,
             "sku": [str(sku)] * 30,
             "store_id": [store_id] * 30,
         })
     if "predicted_demand" not in df.columns:
-        df["predicted_demand"] = 1.0
+        df["predicted_demand"] = 0.0
     return df

@@ -23,6 +23,7 @@ Usage :
 from __future__ import annotations
 
 import logging
+import os
 from typing import Literal, Optional
 
 from langchain_core.language_models import BaseChatModel
@@ -432,7 +433,18 @@ def _build_groq_multikey(keys: list, model: str, temperature: float, **kwargs) -
 # Mistral est volontairement EXCLU de cette chaîne : il est réservé au rôle
 # "guardian" (évaluation), et Ollama est trop faible pour ce rôle-là (voir
 # get_guardian_llm ci-dessous) — donc pas de croisement des deux.
-_FALLBACK_CHAIN_PROVIDERS = ("groq", "openrouter", "ollama")
+#
+# L'ordre est surchargeable par LLM_FALLBACK_CHAIN (liste séparée par des
+# virgules). Sert quand la machine de démo n'a pas d'accès sortant : chaque
+# provider distant y échoue par timeout, et les essayer d'abord ajoute une
+# minute de latence avant d'atteindre Ollama. `LLM_FALLBACK_CHAIN=ollama`
+# court-circuite la chaîne distante ; laisser vide garde l'ordre par défaut.
+_DEFAULT_FALLBACK_CHAIN = ("groq", "openrouter", "ollama")
+_FALLBACK_CHAIN_PROVIDERS = tuple(
+    p.strip().lower()
+    for p in os.getenv("LLM_FALLBACK_CHAIN", "").split(",")
+    if p.strip()
+) or _DEFAULT_FALLBACK_CHAIN
 
 
 def _get_fallback_wrapper_cls():

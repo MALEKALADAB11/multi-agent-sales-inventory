@@ -537,7 +537,13 @@ def enrich_rag_from_cycle(
 
         try:
             from pymilvus import MilvusClient
-            client = MilvusClient(uri="http://localhost:19530")
+            # URI et URL Ollama lues dans la configuration, pas codees en dur :
+            # dans le conteneur, "localhost" ne designe ni Milvus (service
+            # milvus-standalone) ni Ollama (qui tourne sur l'hote, joignable via
+            # host.docker.internal). L'enrichissement du corpus RAG echouait
+            # donc systematiquement en environnement Docker.
+            from app.core.config import Config as _Cfg
+            client = MilvusClient(uri=_Cfg.MILVUS_URI)
             data   = []
             for script, pg_id in zip(new_scripts, pg_ids):
                 text = (
@@ -547,7 +553,7 @@ def enrich_rag_from_cycle(
                     f"Argument: {script['argument_vente']}"
                 )
                 r   = requests.post(
-                    "http://localhost:11434/api/embeddings",
+                    f"{_Cfg.OLLAMA_BASE_URL}/api/embeddings",
                     json={"model":"nomic-embed-text","prompt":text},
                     timeout=15,
                 )

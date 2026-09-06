@@ -1,73 +1,103 @@
 {
-  "total": 2,
+  "total": 3,
   "events": [
+    {
+      "title": "HONOR 600 12/256 5G +GF",
+      "type": "new_offer",
+      "category": "internet",
+      "price": "999,00 DT",
+      "details": "1 999,00 DT | J’en profite",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-09-04T15:18:02.021998"
+    },
     {
       "title": "HONOR",
       "type": "new_offer",
-      "category": "promotion",
-      "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
+      "category": "internet",
+      "price": "399,00 DT",
+      "details": "HONOR 600 LITE 8/256 5G +GF | 1 399,00 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-09-01T18:53:40.718232"
+      "date": "2026-09-04T15:18:02.028995"
     },
     {
       "title": "TECNO",
       "type": "new_offer",
-      "category": "promotion",
+      "category": "internet",
       "price": "499,90 DT",
       "details": "SPARK 30C 4/64 +GF 5G | 499,90 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-09-01T18:53:40.752865"
+      "date": "2026-09-04T15:18:02.037995"
     }
   ],
   "active": [
     {
-      "title": "HONOR",
+      "title": "HONOR 600 12/256 5G +GF",
       "type": "new_offer",
-      "category": "promotion",
+      "category": "internet",
       "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
+      "details": "1 999,00 DT | J’en profite",
       "is_active": true,
       "scraped": true,
-      "date": "2026-09-01T18:53:40.718232"
+      "date": "2026-09-04T15:18:02.021998"
+    },
+    {
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "internet",
+      "price": "399,00 DT",
+      "details": "HONOR 600 LITE 8/256 5G +GF | 1 399,00 DT",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-09-04T15:18:02.028995"
     },
     {
       "title": "TECNO",
       "type": "new_offer",
-      "category": "promotion",
+      "category": "internet",
       "price": "499,90 DT",
       "details": "SPARK 30C 4/64 +GF 5G | 499,90 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-09-01T18:53:40.752865"
+      "date": "2026-09-04T15:18:02.037995"
     }
   ],
   "promotions": [],
   "new_offers": [
     {
-      "title": "HONOR",
+      "title": "HONOR 600 12/256 5G +GF",
       "type": "new_offer",
-      "category": "promotion",
+      "category": "internet",
       "price": "999,00 DT",
-      "details": "HONOR 600 12/256 5G +GF | 1 999,00 DT",
+      "details": "1 999,00 DT | J’en profite",
       "is_active": true,
       "scraped": true,
-      "date": "2026-09-01T18:53:40.718232"
+      "date": "2026-09-04T15:18:02.021998"
+    },
+    {
+      "title": "HONOR",
+      "type": "new_offer",
+      "category": "internet",
+      "price": "399,00 DT",
+      "details": "HONOR 600 LITE 8/256 5G +GF | 1 399,00 DT",
+      "is_active": true,
+      "scraped": true,
+      "date": "2026-09-04T15:18:02.028995"
     },
     {
       "title": "TECNO",
       "type": "new_offer",
-      "category": "promotion",
+      "category": "internet",
       "price": "499,90 DT",
       "details": "SPARK 30C 4/64 +GF 5G | 499,90 DT",
       "is_active": true,
       "scraped": true,
-      "date": "2026-09-01T18:53:40.752865"
+      "date": "2026-09-04T15:18:02.037995"
     }
   ],
   "tarifs": [],
   "source": "ooredoo.tn (playwright)",
-  "fetched_at": "2026-09-01T18:53:51.021619"
+  "fetched_at": "2026-09-04T15:18:08.326606"
 }

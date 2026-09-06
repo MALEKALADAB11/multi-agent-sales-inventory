@@ -72,6 +72,36 @@ from app.core.config import DEFAULT_STORE_ID
 _pipeline_locks: Dict[str, threading.Lock] = {}
 _pipeline_locks_guard: threading.Lock = threading.Lock()
 
+def _warm_store_in_background(store_id: str, business_objective: str) -> None:
+    """
+    Lance une passe pipeline hors du thread de la requête, si aucune n'est déjà
+    en cours pour ce couple magasin/objectif.
+
+    Sert les routes de lecture seule (résumé de stock) : elles ont besoin d'un
+    cache chaud mais ne doivent jamais payer la passe elles-mêmes — le résumé
+    est rechargé toutes les 60 s par le dashboard, un appel bloquant y
+    monopoliserait un worker pendant toute la passe.
+    """
+    lock = _get_store_lock(f"{store_id}::{business_objective}")
+    if lock.locked():
+        return                      # une passe tourne déjà : rien à déclencher
+
+    def _run() -> None:
+        try:
+            analyze_store(
+                store_id, business_objective,
+                force_refresh=False, fast=True, page=1, page_size=0,
+                blocking=False,
+            )
+        except Exception as exc:
+            logger.warning("Préchauffage de fond %s échoué: %s", store_id, exc)
+
+    threading.Thread(
+        target=_run, name=f"inv-warm-{store_id}", daemon=True,
+    ).start()
+    logger.info("Préchauffage inventory lancé en tâche de fond pour %s", store_id)
+
+
 def _get_store_lock(store_id: str) -> threading.Lock:
     with _pipeline_locks_guard:
         if store_id not in _pipeline_locks:
@@ -685,11 +715,15 @@ def _quick_risk(store_id: str, sku: str, current_stock: float):
         if "store_id" in forecast_df.columns:
             forecast_df = forecast_df[forecast_df["store_id"] == store_id]
 
-        avg_daily = float(forecast_df["predicted_demand"].mean()) if not forecast_df.empty else 1.0
-        if avg_daily <= 0:
-            avg_daily = 1.0
+        # Idem : pas de plancher artificiel a 1 unite/jour.
+        avg_daily = float(forecast_df["predicted_demand"].mean()) if not forecast_df.empty else 0.0
 
-        days_remaining = current_stock / avg_daily
+        if avg_daily > 0:
+            days_remaining = current_stock / avg_daily
+        elif current_stock > 0:
+            days_remaining = 999.0
+        else:
+            days_remaining = 0.0
         coverage_ratio = round(days_remaining / lead_time_avg, 2) if lead_time_avg else 0
         lt_var = lead_time_std * 2
 
@@ -981,7 +1015,13 @@ def _to_inventory_item(
             pass
         current_stock = db_stock if db_stock is not None else report_stock
 
-    avg_daily  = forecast.get("avg_daily_demand", 1) or 1
+    # `or 1` reinjectait une demande d'une unite/jour des que l'agent renvoyait
+    # 0.0 — c'est-a-dire pour tout SKU sans historique de ventes ni prevision
+    # demand-sensing (70 des 100 SKUs de I63). La couverture affichee valait
+    # alors stock/1 et le produit ressortait critique sur une demande inventee.
+    # On garde la valeur telle que l'agent l'a calculee, 0.0 compris, et on
+    # traite l'absence de demande plus bas comme une couverture illimitee.
+    avg_daily  = float(forecast.get("avg_daily_demand") or 0.0)
 
     # ── Lead time: preloaded product_lookup dict → CSV filter fallback ────
     # product_lookup is built once before the loop from the cached CSV.
@@ -1003,7 +1043,15 @@ def _to_inventory_item(
         except Exception:
             pass
 
-    days_remain = current_stock / avg_daily if avg_daily > 0 else 0
+    # Meme convention que compute_metrics (agents/analysis/tools.py) : sans
+    # demande mais avec du stock, la couverture est illimitee (sentinelle 999),
+    # pas nulle. Stock a zero => couverture nulle, c'est une vraie rupture.
+    if avg_daily > 0:
+        days_remain = current_stock / avg_daily
+    elif current_stock > 0:
+        days_remain = 999.0
+    else:
+        days_remain = 0.0
 
     # Use the agent's computed and LLM-validated risk level as the single source of truth
     # Fallback to _quick_risk only when agent risk_assessment is missing
@@ -1931,9 +1979,34 @@ def get_summary(
     store_id: str,
     business_objective: str = Query(default="balanced"),
 ) -> Dict[str, Any]:
-    """Summary only — benefits from the same store cache."""
-    payload = analyze_store(store_id, business_objective, page=1, page_size=0)
-    return payload["summary"]
+    """
+    Summary only — benefits from the same store cache.
+
+    blocking=False, comme GET /store/{id} : ce résumé alimente l'indicateur
+    « Santé stock » du dashboard, rechargé toutes les 60 s. En blocking=True il
+    parquait la requête pour toute la durée d'une passe froide (mesurée à ~15
+    min sur 100 SKUs), le navigateur abandonnait, et la carte restait figée sur
+    « 0 / 0 produits » sans jamais rien afficher d'autre.
+
+    La réponse porte donc toujours la forme attendue par le frontend, plus un
+    `status` : "ready" (chiffres réels) ou "computing" (première passe en
+    cours — le dashboard doit afficher « analyse en cours », pas un zéro qui se
+    lit comme un magasin sans stock).
+    """
+    cached  = _get_cached(store_id, business_objective)
+    summary = (cached or {}).get("summary") or {}
+    status  = "ready"
+    if not summary:
+        # Rien en cache : on déclenche la passe hors du thread de la requête et
+        # on répond immédiatement « computing ».
+        _warm_store_in_background(store_id, business_objective)
+        return {
+            "totalSkus": 0, "criticalCount": 0, "highCount": 0, "okCount": 0,
+            "allOk": False, "avgCoverageRatio": 0.0,
+            "backLines": ["Analyse du stock en cours…"],
+            "status": "computing",
+        }
+    return {**summary, "status": status}
 
 
 @router.get("/store/{store_id}/critical-trend")
