@@ -130,6 +130,20 @@ slowapi==0.1.9
 statsforecast==1.7.6
 lightgbm==4.5.0
 xgboost==2.1.4
+# Importé directement (hors try/except) par app/inventory/forecasting/backfill.py
+# et par les scripts de génération de baseline sous db/ : sans lui, ces
+# entrypoints crashent a l'import. Toujours installé avant pandas/numpy dans
+# ces modules (ordre de chargement des DLL natives, cf. commentaire en tete
+# de backfill.py). Deja tire transitivement par statsforecast, epingle ici
+# pour que sa version reste explicite.
+coreforecast==0.0.18
+
+# ── Scraping (offres Ooredoo, agent stratege) ──────────────────
+# app/sales/coaching/agents/stratege/scraper.py : import protege par
+# try/except (fallback degrade silencieux si absent), mais necessaire pour
+# que le scraping reel des offres fonctionne. Necessite aussi, une fois
+# installe : `playwright install chromium`.
+playwright==1.61.0
 
 # ── Testing ───────────────────────────────────────────────────
 pytest==8.3.4

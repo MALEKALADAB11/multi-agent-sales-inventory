@@ -14,6 +14,11 @@
 #   scikit-learn / lightgbm / joblib   -> entraînement (scripts/train_*), pas
 #                                        l'inférence : xgboost charge les .ubj.
 #   pytest / coverage                  -> tests, exécutés hors image.
+#   playwright                         -> scraper.py l'importe en lazy (try/except,
+#                                        fallback dégradé), mais ooredoo.tn est
+#                                        injoignable depuis le réseau de déploiement
+#                                        (voir docs/) : ajouterait ~300 Mo (Chromium)
+#                                        pour une source qui timeout de toute façon.
 #
 # Ajouter une dépendance à requirements.txt ? Si un module de app/ l'importe,
 # la répercuter ici avec le même pin.
